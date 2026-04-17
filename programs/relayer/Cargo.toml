@@ -1,0 +1,29 @@
+[package]
+name = "fogo-relayer"
+version = "0.1.0"
+description = "Fogo RWA relayer — stateless PDA-custody relay between Wormhole Gateway, OnRe, and Wormhole NTT on Solana"
+edition = { workspace = true }
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "fogo_relayer"
+
+[features]
+default = []
+idl-build = ["anchor-lang/idl-build"]
+mainnet = []
+devnet = []
+
+[dependencies]
+anchor-lang = { workspace = true }
+anchor-spl = { workspace = true }
+
+[lints.rust.unexpected_cfgs]
+level = "warn"
+check-cfg = [
+  'cfg(feature, values("anchor-debug", "no-entrypoint", "no-log-ix-name", "cpi", "custom-heap", "custom-panic"))',
+  'cfg(target_os, values("solana"))',
+]
+
+[lints.clippy]
+all = "warn"

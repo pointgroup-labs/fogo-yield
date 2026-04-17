@@ -1,0 +1,28 @@
+{
+  "type": "module",
+  "private": true,
+  "packageManager": "pnpm@10.33.0",
+  "scripts": {
+    "cli": "pnpm -F {./packages/cli}",
+    "sdk": "pnpm -F {./packages/sdk}",
+    "lint": "eslint --cache .",
+    "lint:fix": "pnpm lint --fix",
+    "test": "vitest"
+  },
+  "dependencies": {
+    "@anchor-lang/core": "^1.0.0",
+    "@ignitionfi/rwa-sdk": "workspace:*",
+    "@solana/web3.js": "^1.98.4"
+  },
+  "devDependencies": {
+    "@antfu/eslint-config": "^8.1.1",
+    "@solana/spl-token": "^0.4.14",
+    "@types/bn.js": "^5.2.0",
+    "anchor-litesvm": "^0.2.1",
+    "eslint": "^10.2.0",
+    "eslint-plugin-format": "^2.0.1",
+    "litesvm": "^1.0.0",
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.4"
+  }
+}
