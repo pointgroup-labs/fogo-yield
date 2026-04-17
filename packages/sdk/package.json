@@ -1,5 +1,31 @@
 {
-  "name": "@ignitionfi/rwa-sdk",
+  "name": "@fogo-onre/sdk",
+  "type": "module",
   "version": "1.0.0",
-  "description": "Ignition RWA SDK"
+  "description": "Fogo-OnRe SDK — TypeScript client",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@anchor-lang/core": "^1.0.0",
+    "@solana/spl-token": "^0.4.14",
+    "@solana/web3.js": "^1.98.4"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "typescript": "^6.0.2"
+  }
 }

@@ -1,10 +1,10 @@
 [workspace]
-members = ["programs/relayer"]
+members = ["programs/*"]
 resolver = "2"
 
 [workspace.package]
 authors = ["Poitgroup Team"]
-repository = "https://github.com/pointgroup-labs/fogo-rwa"
+repository = "https://github.com/pointgroup-labs/fogo-onre"
 readme = "./README.md"
 edition = "2024"
 
