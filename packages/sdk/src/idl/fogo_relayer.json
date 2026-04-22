@@ -4,13 +4,13 @@
     "name": "relayer",
     "version": "0.1.0",
     "spec": "0.1.0",
-    "description": "Fogo RWA relayer \u2014 stateless PDA-custody relay between Wormhole Gateway, OnRe, and Wormhole NTT on Solana"
+    "description": "Fogo RWA relayer — stateless PDA-custody relay between Wormhole Gateway, OnRe, and Wormhole NTT on Solana"
   },
   "docs": [
-    "Stateless cross-chain relayer between FOGO and Solana (Phase 1 \u2014 no",
+    "Stateless cross-chain relayer between FOGO and Solana (Phase 1 — no",
     "vault).",
     "",
-    "All operational instructions are permissionless \u2014 anyone can crank any",
+    "All operational instructions are permissionless — anyone can crank any",
     "step. Safety comes from the Flow PDA design: each inbound Wormhole",
     "message (Gateway VAA or NTT VAA) carries the originating FOGO user's",
     "wallet in its payload. `claim_usdc` / `unlock_onyc` persist that wallet",
@@ -21,90 +21,76 @@
   ],
   "instructions": [
     {
-      "name": "initialize",
+      "name": "cancel_flow",
       "docs": [
-        "One-time setup: create the relayer config PDA + USDC/ONyc ATAs",
-        "owned by the relayer authority PDA."
+        "Authority-only escape hatch to close a stuck flow PDA and return",
+        "rent to the original payer."
       ],
       "discriminator": [
-        175,
-        175,
-        109,
-        31,
-        13,
-        152,
-        155,
-        237
+        79,
+        181,
+        192,
+        35,
+        231,
+        182,
+        150,
+        225
       ],
       "accounts": [
         {
           "name": "authority",
           "docs": [
-            "Deployer / authority \u2014 pays for account creation and becomes the",
-            "admin key."
+            "Must be the config authority."
           ],
-          "writable": true,
-          "signer": true
+          "signer": true,
+          "relations": [
+            "relayer_config"
+          ]
         },
         {
           "name": "relayer_config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  108,
+                  97,
+                  121,
+                  101,
+                  114,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "flow",
           "docs": [
-            "Relayer config PDA \u2014 stores mint references."
+            "The stuck flow PDA to close. Can be either inbound or outbound —",
+            "the caller must pass the correct PDA address (Anchor validates the",
+            "account discriminator)."
           ],
           "writable": true
         },
         {
-          "name": "relayer_authority",
+          "name": "rent_destination",
           "docs": [
-            "Relayer authority PDA \u2014 owns the token accounts."
-          ]
-        },
-        {
-          "name": "usdc_mint",
-          "docs": [
-            "USDC token mint."
-          ]
-        },
-        {
-          "name": "onyc_mint",
-          "docs": [
-            "ONyc token mint."
-          ]
-        },
-        {
-          "name": "usdc_ata",
-          "docs": [
-            "USDC associated token account owned by the relayer authority PDA."
+            "The original payer who created this flow PDA. Receives the rent refund."
           ],
           "writable": true
-        },
-        {
-          "name": "onyc_ata",
-          "docs": [
-            "ONyc associated token account owned by the relayer authority PDA."
-          ],
-          "writable": true
-        },
-        {
-          "name": "token_program"
-        },
-        {
-          "name": "associated_token_program"
-        },
-        {
-          "name": "system_program"
         }
       ],
-      "args": [
-        {
-          "name": "deposit_fee_bps",
-          "type": "u16"
-        },
-        {
-          "name": "withdraw_fee_bps",
-          "type": "u16"
-        }
-      ]
+      "args": []
     },
     {
       "name": "claim_usdc",
@@ -130,17 +116,201 @@
           "signer": true
         },
         {
-          "name": "relayer_config"
+          "name": "relayer_config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  108,
+                  97,
+                  121,
+                  101,
+                  114,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
         },
         {
-          "name": "relayer_authority"
+          "name": "relayer_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  108,
+                  97,
+                  121,
+                  101,
+                  114
+                ]
+              }
+            ]
+          }
         },
         {
-          "name": "usdc_mint"
+          "name": "redeemer_authority",
+          "docs": [
+            "Redeemer PDA — signs the Token Bridge CPI and the post-CPI sweep."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  100,
+                  101,
+                  101,
+                  109,
+                  101,
+                  114
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "usdc_mint",
+          "relations": [
+            "relayer_config"
+          ]
         },
         {
           "name": "usdc_ata",
-          "writable": true
+          "docs": [
+            "Long-lived USDC ATA owned by the relayer authority PDA; the final",
+            "destination of the claim. Populated by the post-CPI sweep."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "relayer_authority"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "usdc_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "redeemer_usdc_ata",
+          "docs": [
+            "Short-lived USDC intake ATA owned by the redeemer PDA. TB mints",
+            "directly into this account during `CompleteWrappedWithPayload`;",
+            "we then sweep the balance into `usdc_ata` in the same instruction."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "redeemer_authority"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "usdc_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
         },
         {
           "name": "posted_vaa",
@@ -162,71 +332,358 @@
             "One-shot flow receipt. `init` fails if a flow for this claim PDA",
             "already exists (double-claim protection)."
           ],
-          "writable": true
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  105,
+                  110,
+                  102,
+                  108,
+                  105,
+                  103,
+                  104,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "gateway_claim"
+              }
+            ]
+          }
         },
         {
           "name": "token_program"
         },
         {
-          "name": "system_program"
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
         }
       ],
       "args": []
     },
     {
-      "name": "swap_usdc_to_onyc",
+      "name": "initialize",
       "docs": [
-        "Swap the flow's USDC amount into ONyc via OnRe."
+        "One-time setup: create the relayer config PDA + USDC/ONyc ATAs",
+        "owned by the relayer authority PDA."
       ],
       "discriminator": [
-        88,
-        26,
-        182,
-        123,
-        92,
-        54,
-        57,
-        55
+        175,
+        175,
+        109,
+        31,
+        13,
+        152,
+        155,
+        237
       ],
       "accounts": [
         {
-          "name": "relayer_config"
-        },
-        {
-          "name": "relayer_authority"
-        },
-        {
-          "name": "usdc_mint"
-        },
-        {
-          "name": "onyc_mint"
-        },
-        {
-          "name": "usdc_ata",
-          "writable": true
-        },
-        {
-          "name": "onyc_ata",
-          "writable": true
-        },
-        {
-          "name": "gateway_claim",
+          "name": "authority",
           "docs": [
-            "Gateway claim PDA \u2014 seed material for the flow PDA."
+            "Deployer / authority — pays for account creation and becomes the",
+            "admin key."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "relayer_config",
+          "docs": [
+            "Relayer config PDA — stores mint references."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  108,
+                  97,
+                  121,
+                  101,
+                  114,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "relayer_authority",
+          "docs": [
+            "Relayer authority PDA — owns the token accounts."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  108,
+                  97,
+                  121,
+                  101,
+                  114
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "redeemer_authority",
+          "docs": [
+            "Redeemer PDA — serves as Token Bridge's payload-delivery signer in",
+            "`CompleteWrappedWithPayload` AND as the owner of the short-lived USDC",
+            "intake ATA (TB requires `redeemer.key == to.owner`)."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  100,
+                  101,
+                  101,
+                  109,
+                  101,
+                  114
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "usdc_mint",
+          "docs": [
+            "USDC token mint."
           ]
         },
         {
-          "name": "inflight_flow",
+          "name": "onyc_mint",
           "docs": [
-            "The flow PDA created by `claim_usdc`. Must be in `Claimed` status."
+            "ONyc token mint."
+          ]
+        },
+        {
+          "name": "usdc_ata",
+          "docs": [
+            "USDC associated token account owned by the relayer authority PDA."
           ],
-          "writable": true
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "relayer_authority"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "usdc_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "onyc_ata",
+          "docs": [
+            "ONyc associated token account owned by the relayer authority PDA."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "relayer_authority"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "onyc_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "redeemer_usdc_ata",
+          "docs": [
+            "Redeemer-owned USDC intake ATA. `claim_usdc` deposits bridged USDC",
+            "here (TB mints into it during `CompleteWrappedWithPayload`) and",
+            "immediately sweeps it into `usdc_ata` under the redeemer's signature."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "redeemer_authority"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "usdc_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
         },
         {
           "name": "token_program"
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
         }
       ],
-      "args": []
+      "args": [
+        {
+          "name": "deposit_fee_bps",
+          "type": "u16"
+        },
+        {
+          "name": "withdraw_fee_bps",
+          "type": "u16"
+        }
+      ]
     },
     {
       "name": "lock_onyc",
@@ -251,17 +708,112 @@
           "signer": true
         },
         {
-          "name": "relayer_config"
+          "name": "relayer_config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  108,
+                  97,
+                  121,
+                  101,
+                  114,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
         },
         {
-          "name": "relayer_authority"
+          "name": "relayer_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  108,
+                  97,
+                  121,
+                  101,
+                  114
+                ]
+              }
+            ]
+          }
         },
         {
-          "name": "onyc_mint"
+          "name": "onyc_mint",
+          "relations": [
+            "relayer_config"
+          ]
         },
         {
           "name": "onyc_ata",
-          "writable": true
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "relayer_authority"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "onyc_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
         },
         {
           "name": "gateway_claim",
@@ -276,136 +828,33 @@
             "consumes the receipt so a second `lock_onyc` against the same flow",
             "is impossible."
           ],
-          "writable": true
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  105,
+                  110,
+                  102,
+                  108,
+                  105,
+                  103,
+                  104,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "gateway_claim"
+              }
+            ]
+          }
         },
         {
           "name": "rent_destination",
           "docs": [
             "The original payer who created this flow PDA. Receives the rent refund."
-          ],
-          "writable": true
-        },
-        {
-          "name": "token_program"
-        }
-      ],
-      "args": []
-    },
-    {
-      "name": "unlock_onyc",
-      "docs": [
-        "Release ONyc from NTT custody for an inbound withdrawal VAA, and",
-        "record a `Flow` receipt binding the USDC return to the FOGO user",
-        "who initiated the withdrawal."
-      ],
-      "discriminator": [
-        225,
-        208,
-        126,
-        107,
-        209,
-        43,
-        111,
-        166
-      ],
-      "accounts": [
-        {
-          "name": "payer",
-          "writable": true,
-          "signer": true
-        },
-        {
-          "name": "relayer_config"
-        },
-        {
-          "name": "relayer_authority"
-        },
-        {
-          "name": "onyc_mint"
-        },
-        {
-          "name": "onyc_ata",
-          "writable": true
-        },
-        {
-          "name": "ntt_inbox_item",
-          "docs": [
-            "NTT inbox-item PDA. Created by the NTT `redeem` CPI; we use its",
-            "pubkey as unique seed material for the flow PDA."
-          ]
-        },
-        {
-          "name": "outflight_flow",
-          "docs": [
-            "One-shot receipt PDA for the withdrawal leg. `init` fails on",
-            "replay (same NTT inbox \u2192 same PDA \u2192 already exists)."
-          ],
-          "writable": true
-        },
-        {
-          "name": "token_program"
-        },
-        {
-          "name": "system_program"
-        }
-      ],
-      "args": [
-        {
-          "name": "vaa",
-          "type": "bytes"
-        },
-        {
-          "name": "redeem_accounts_len",
-          "type": "u8"
-        }
-      ]
-    },
-    {
-      "name": "swap_onyc_to_usdc",
-      "docs": [
-        "Swap the flow's ONyc amount into USDC via OnRe."
-      ],
-      "discriminator": [
-        113,
-        41,
-        170,
-        211,
-        19,
-        16,
-        31,
-        63
-      ],
-      "accounts": [
-        {
-          "name": "relayer_config"
-        },
-        {
-          "name": "relayer_authority"
-        },
-        {
-          "name": "usdc_mint"
-        },
-        {
-          "name": "onyc_mint"
-        },
-        {
-          "name": "usdc_ata",
-          "writable": true
-        },
-        {
-          "name": "onyc_ata",
-          "writable": true
-        },
-        {
-          "name": "ntt_inbox_item",
-          "docs": [
-            "NTT inbox-item PDA \u2014 seed material for the flow PDA."
-          ]
-        },
-        {
-          "name": "outflight_flow",
-          "docs": [
-            "The flow PDA created by `unlock_onyc`. Must be in `Claimed` status."
           ],
           "writable": true
         },
@@ -438,17 +887,112 @@
           "signer": true
         },
         {
-          "name": "relayer_config"
+          "name": "relayer_config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  108,
+                  97,
+                  121,
+                  101,
+                  114,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
         },
         {
-          "name": "relayer_authority"
+          "name": "relayer_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  108,
+                  97,
+                  121,
+                  101,
+                  114
+                ]
+              }
+            ]
+          }
         },
         {
-          "name": "usdc_mint"
+          "name": "usdc_mint",
+          "relations": [
+            "relayer_config"
+          ]
         },
         {
           "name": "usdc_ata",
-          "writable": true
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "relayer_authority"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "usdc_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
         },
         {
           "name": "ntt_inbox_item",
@@ -462,7 +1006,29 @@
             "The one-shot receipt created by `unlock_onyc`. Closing it on",
             "success returns rent to the original payer and blocks replays."
           ],
-          "writable": true
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  117,
+                  116,
+                  102,
+                  108,
+                  105,
+                  103,
+                  104,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "ntt_inbox_item"
+              }
+            ]
+          }
         },
         {
           "name": "rent_destination",
@@ -478,56 +1044,658 @@
       "args": []
     },
     {
-      "name": "cancel_flow",
+      "name": "swap_onyc_to_usdc",
       "docs": [
-        "Authority-only escape hatch to close a stuck flow PDA and return",
-        "rent to the original payer."
+        "Swap the flow's ONyc amount into USDC via OnRe."
       ],
       "discriminator": [
-        79,
-        181,
-        192,
-        35,
-        231,
-        182,
-        150,
-        225
+        113,
+        41,
+        170,
+        211,
+        19,
+        16,
+        31,
+        63
       ],
       "accounts": [
         {
-          "name": "authority",
-          "docs": [
-            "Must be the config authority."
-          ],
-          "signer": true
+          "name": "relayer_config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  108,
+                  97,
+                  121,
+                  101,
+                  114,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
         },
         {
-          "name": "relayer_config"
+          "name": "relayer_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  108,
+                  97,
+                  121,
+                  101,
+                  114
+                ]
+              }
+            ]
+          }
         },
         {
-          "name": "flow",
-          "docs": [
-            "The stuck flow PDA to close. Can be either inbound or outbound \u2014",
-            "the caller must pass the correct PDA address (Anchor validates the",
-            "account discriminator)."
-          ],
-          "writable": true
+          "name": "usdc_mint",
+          "relations": [
+            "relayer_config"
+          ]
         },
         {
-          "name": "rent_destination",
+          "name": "onyc_mint",
+          "relations": [
+            "relayer_config"
+          ]
+        },
+        {
+          "name": "usdc_ata",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "relayer_authority"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "usdc_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "onyc_ata",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "relayer_authority"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "onyc_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "ntt_inbox_item",
           "docs": [
-            "The original payer who created this flow PDA. Receives the rent refund."
+            "NTT inbox-item PDA — seed material for the flow PDA."
+          ]
+        },
+        {
+          "name": "outflight_flow",
+          "docs": [
+            "The flow PDA created by `unlock_onyc`. Must be in `Claimed` status."
           ],
-          "writable": true
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  117,
+                  116,
+                  102,
+                  108,
+                  105,
+                  103,
+                  104,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "ntt_inbox_item"
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_program"
         }
       ],
       "args": []
     },
     {
+      "name": "swap_usdc_to_onyc",
+      "docs": [
+        "Swap the flow's USDC amount into ONyc via OnRe."
+      ],
+      "discriminator": [
+        88,
+        26,
+        182,
+        123,
+        92,
+        54,
+        57,
+        55
+      ],
+      "accounts": [
+        {
+          "name": "relayer_config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  108,
+                  97,
+                  121,
+                  101,
+                  114,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "relayer_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  108,
+                  97,
+                  121,
+                  101,
+                  114
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "usdc_mint",
+          "relations": [
+            "relayer_config"
+          ]
+        },
+        {
+          "name": "onyc_mint",
+          "relations": [
+            "relayer_config"
+          ]
+        },
+        {
+          "name": "usdc_ata",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "relayer_authority"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "usdc_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "onyc_ata",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "relayer_authority"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "onyc_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "gateway_claim",
+          "docs": [
+            "Gateway claim PDA — seed material for the flow PDA."
+          ]
+        },
+        {
+          "name": "inflight_flow",
+          "docs": [
+            "The flow PDA created by `claim_usdc`. Must be in `Claimed` status."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  105,
+                  110,
+                  102,
+                  108,
+                  105,
+                  103,
+                  104,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "gateway_claim"
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_program"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "unlock_onyc",
+      "docs": [
+        "Release ONyc from NTT custody for an inbound withdrawal VAA, and",
+        "record a `Flow` receipt binding the USDC return to the FOGO user",
+        "who initiated the withdrawal."
+      ],
+      "discriminator": [
+        225,
+        208,
+        126,
+        107,
+        209,
+        43,
+        111,
+        166
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "relayer_config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  108,
+                  97,
+                  121,
+                  101,
+                  114,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "relayer_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  108,
+                  97,
+                  121,
+                  101,
+                  114
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "onyc_mint",
+          "relations": [
+            "relayer_config"
+          ]
+        },
+        {
+          "name": "onyc_ata",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "relayer_authority"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "onyc_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "ntt_inbox_item",
+          "docs": [
+            "NTT inbox-item PDA. Created by the NTT `redeem` CPI; we use its",
+            "pubkey as unique seed material for the flow PDA."
+          ]
+        },
+        {
+          "name": "ntt_transceiver_message",
+          "docs": [
+            "NTT `ValidatedTransceiverMessage` for this inbound transfer — same",
+            "account that the caller must pass to the `redeem` CPI in",
+            "`remaining_accounts`. We parse `fogo_sender` directly from its",
+            "already-validated bytes. The `owner` constraint pins the writer to",
+            "the NTT program (which for OnRe's deployment is also the transceiver",
+            "program), so nothing outside NTT can have crafted this data."
+          ]
+        },
+        {
+          "name": "outflight_flow",
+          "docs": [
+            "One-shot receipt PDA for the withdrawal leg. `init` fails on",
+            "replay (same NTT inbox → same PDA → already exists)."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  117,
+                  116,
+                  102,
+                  108,
+                  105,
+                  103,
+                  104,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "ntt_inbox_item"
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_program"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "redeem_accounts_len",
+          "type": "u8"
+        }
+      ]
+    },
+    {
       "name": "update_fees",
       "docs": [
-        "Update the flat fee amounts for deposit and withdrawal flows.",
-        "Authority-only."
+        "Update the deposit and withdrawal fee basis points. Authority-only."
       ],
       "discriminator": [
         225,
@@ -542,11 +1710,37 @@
       "accounts": [
         {
           "name": "authority",
-          "signer": true
+          "signer": true,
+          "relations": [
+            "relayer_config"
+          ]
         },
         {
           "name": "relayer_config",
-          "writable": true
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  108,
+                  97,
+                  121,
+                  101,
+                  114,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
         }
       ],
       "args": [
@@ -579,13 +1773,55 @@
       "accounts": [
         {
           "name": "authority",
-          "signer": true
+          "signer": true,
+          "relations": [
+            "relayer_config"
+          ]
         },
         {
-          "name": "relayer_config"
+          "name": "relayer_config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  108,
+                  97,
+                  121,
+                  101,
+                  114,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
         },
         {
-          "name": "relayer_authority"
+          "name": "relayer_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  108,
+                  97,
+                  121,
+                  101,
+                  114
+                ]
+              }
+            ]
+          }
         },
         {
           "name": "mint"
@@ -595,7 +1831,60 @@
           "docs": [
             "Source: relayer authority's ATA for the given mint."
           ],
-          "writable": true
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "relayer_authority"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
         },
         {
           "name": "to_ata",
@@ -644,13 +1933,159 @@
       ]
     }
   ],
+  "events": [
+    {
+      "name": "OnycLocked",
+      "discriminator": [
+        204,
+        229,
+        7,
+        145,
+        121,
+        187,
+        201,
+        215
+      ]
+    },
+    {
+      "name": "OnycUnlocked",
+      "discriminator": [
+        66,
+        7,
+        6,
+        253,
+        214,
+        174,
+        42,
+        160
+      ]
+    },
+    {
+      "name": "UsdcClaimed",
+      "discriminator": [
+        213,
+        24,
+        255,
+        203,
+        163,
+        162,
+        154,
+        137
+      ]
+    },
+    {
+      "name": "UsdcSentToUser",
+      "discriminator": [
+        175,
+        37,
+        177,
+        185,
+        231,
+        238,
+        242,
+        73
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "InvalidVaa",
+      "msg": "VAA verification failed or VAA is invalid"
+    },
+    {
+      "code": 6001,
+      "name": "InvalidAccountSplit",
+      "msg": "remaining_accounts split point is out of range"
+    },
+    {
+      "code": 6002,
+      "name": "AuthorityNotInAccounts",
+      "msg": "Relayer authority PDA not present in forwarded CPI accounts"
+    },
+    {
+      "code": 6003,
+      "name": "VaaPayloadTooShort",
+      "msg": "VAA payload is shorter than the expected fogo_sender field"
+    },
+    {
+      "code": 6004,
+      "name": "ZeroFogoSender",
+      "msg": "Parsed fogo_sender is the zero address"
+    },
+    {
+      "code": 6005,
+      "name": "UnauthorizedAuthority",
+      "msg": "Caller is not the authority"
+    },
+    {
+      "code": 6006,
+      "name": "FlowStatusMismatch",
+      "msg": "Flow is not in the expected status for this operation"
+    },
+    {
+      "code": 6007,
+      "name": "BalanceUnderflow",
+      "msg": "Post-CPI balance is less than pre-CPI balance"
+    },
+    {
+      "code": 6008,
+      "name": "ZeroAmountFlow",
+      "msg": "Bridge or swap produced zero tokens"
+    },
+    {
+      "code": 6009,
+      "name": "FeeBpsTooHigh",
+      "msg": "Fee basis points exceed maximum (10000 = 100%)"
+    },
+    {
+      "code": 6010,
+      "name": "FeeOverflow",
+      "msg": "Fee computation overflow"
+    },
+    {
+      "code": 6011,
+      "name": "MissingSessionAuthority",
+      "msg": "NTT session authority PDA not found in remaining_accounts"
+    },
+    {
+      "code": 6012,
+      "name": "InvalidTransceiverMessage",
+      "msg": "NTT ValidatedTransceiverMessage account is malformed or too short"
+    },
+    {
+      "code": 6013,
+      "name": "TransceiverMessageMismatch",
+      "msg": "ntt_transceiver_message does not match the account consumed by the NTT redeem CPI"
+    },
+    {
+      "code": 6014,
+      "name": "InboxItemMismatch",
+      "msg": "ntt_inbox_item does not match the account consumed by the NTT CPIs"
+    },
+    {
+      "code": 6015,
+      "name": "RecipientAtaMismatch",
+      "msg": "Destination token account does not match the ATA consumed by the NTT release CPI"
+    },
+    {
+      "code": 6016,
+      "name": "PostedVaaMismatch",
+      "msg": "posted_vaa does not match the VAA consumed by the Token Bridge CPI"
+    },
+    {
+      "code": 6017,
+      "name": "GatewayClaimMismatch",
+      "msg": "gateway_claim does not match the claim PDA consumed by the Token Bridge CPI"
+    }
+  ],
   "types": [
     {
       "name": "Flow",
       "docs": [
         "One-shot receipt binding an inbound bridge message to a FOGO user wallet.",
         "",
-        "Used by both deposit and withdrawal legs \u2014 direction is implicit in the",
+        "Used by both deposit and withdrawal legs — direction is implicit in the",
         "PDA seed prefix (`FLOW_INBOUND_SEED` vs `FLOW_OUTBOUND_SEED`).",
         "",
         "Created by `claim_usdc` or `unlock_onyc` when the relayer processes an",
@@ -666,7 +2101,7 @@
         "PDA seeds: `[FLOW_*_SEED, bridge_claim_pda.key()]`, where",
         "`bridge_claim_pda` is the per-VAA claim account created by Wormhole",
         "Gateway or NTT. This delegates uniqueness and replay protection to the",
-        "bridge program itself \u2014 no hashing needed."
+        "bridge program itself — no hashing needed."
       ],
       "type": {
         "kind": "struct",
@@ -737,12 +2172,89 @@
       }
     },
     {
+      "name": "OnycLocked",
+      "docs": [
+        "Emitted by `lock_onyc` after NTT locks the flow's ONyc amount and",
+        "initiates the bONyc transfer back to FOGO. No fee is applied on the",
+        "outbound leg (it was already taken on the inbound `claim_usdc`), so",
+        "`amount` is the single relevant figure."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "flow",
+            "type": "pubkey"
+          },
+          {
+            "name": "gateway_claim",
+            "type": "pubkey"
+          },
+          {
+            "name": "fogo_sender",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "OnycUnlocked",
+      "docs": [
+        "Emitted by `unlock_onyc` after the NTT redeem + release CPIs land ONyc",
+        "in the relayer ATA and the withdrawal fee is applied. Fields mirror",
+        "`UsdcClaimed` — same semantics, opposite direction."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "flow",
+            "type": "pubkey"
+          },
+          {
+            "name": "ntt_inbox_item",
+            "type": "pubkey"
+          },
+          {
+            "name": "fogo_sender",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "gross_amount",
+            "type": "u64"
+          },
+          {
+            "name": "fee_amount",
+            "type": "u64"
+          },
+          {
+            "name": "net_amount",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
       "name": "RelayerConfig",
       "docs": [
-        "Relayer configuration \u2014 the only long-lived state in this program.",
+        "Relayer configuration — the only long-lived state in this program.",
         "",
         "The `authority` is a cold/admin key used only for governance (e.g.",
-        "updating config). All operational instructions are permissionless \u2014",
+        "updating config). All operational instructions are permissionless —",
         "anyone can crank them because recipients are VAA-bound, amounts are",
         "flow-bound, and CPI targets are compile-time constants."
       ],
@@ -787,16 +2299,96 @@
           {
             "name": "deposit_fee_bps",
             "docs": [
-              "Fee in basis points (1 bps = 0.01%) charged on each deposit flow (USDC \u2192 ONyc)."
+              "Fee in basis points (1 bps = 0.01%) charged on each deposit flow (USDC → ONyc)."
             ],
             "type": "u16"
           },
           {
             "name": "withdraw_fee_bps",
             "docs": [
-              "Fee in basis points (1 bps = 0.01%) charged on each withdrawal flow (ONyc \u2192 USDC)."
+              "Fee in basis points (1 bps = 0.01%) charged on each withdrawal flow (ONyc → USDC)."
             ],
             "type": "u16"
+          }
+        ]
+      }
+    },
+    {
+      "name": "UsdcClaimed",
+      "docs": [
+        "Emitted by `claim_usdc` after the Gateway CPI lands USDC in the relayer",
+        "ATA and the deposit fee is applied.",
+        "",
+        "`gross_amount` = amount TB actually minted (pre-fee).",
+        "`fee_amount`   = deposit fee retained by the relayer (gross - net).",
+        "`net_amount`   = amount recorded on the `Flow` PDA (== value of the",
+        "eventual ONyc swap on the next step)."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "flow",
+            "type": "pubkey"
+          },
+          {
+            "name": "gateway_claim",
+            "type": "pubkey"
+          },
+          {
+            "name": "fogo_sender",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "gross_amount",
+            "type": "u64"
+          },
+          {
+            "name": "fee_amount",
+            "type": "u64"
+          },
+          {
+            "name": "net_amount",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "UsdcSentToUser",
+      "docs": [
+        "Emitted by `send_usdc_to_user` after the Gateway outbound transfer is",
+        "submitted. No fee applied on this leg (taken at `unlock_onyc`), so",
+        "`amount` is the single relevant figure."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "flow",
+            "type": "pubkey"
+          },
+          {
+            "name": "ntt_inbox_item",
+            "type": "pubkey"
+          },
+          {
+            "name": "fogo_sender",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "amount",
+            "type": "u64"
           }
         ]
       }

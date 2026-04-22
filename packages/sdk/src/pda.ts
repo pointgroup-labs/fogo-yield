@@ -3,6 +3,7 @@ import {
   CONFIG_SEED,
   FLOW_INBOUND_SEED,
   FLOW_OUTBOUND_SEED,
+  REDEEMER_SEED,
   RELAYER_PROGRAM_ID,
   RELAYER_SEED,
 } from './constants'
@@ -13,6 +14,16 @@ export function findConfigPda(programId: PublicKey = RELAYER_PROGRAM_ID) {
 
 export function findAuthorityPda(programId: PublicKey = RELAYER_PROGRAM_ID) {
   return PublicKey.findProgramAddressSync([RELAYER_SEED], programId)
+}
+
+/**
+ * Redeemer PDA — seeds=["redeemer"] under the relayer program id. Signs the
+ * Token Bridge `CompleteWrappedWithPayload` CPI and owns the short-lived
+ * USDC intake ATA that TB mints into. `claim_usdc` sweeps from that intake
+ * ATA into the authority-owned long-lived ATA in the same transaction.
+ */
+export function findRedeemerAuthorityPda(programId: PublicKey = RELAYER_PROGRAM_ID) {
+  return PublicKey.findProgramAddressSync([REDEEMER_SEED], programId)
 }
 
 export function findInflightFlowPda(
