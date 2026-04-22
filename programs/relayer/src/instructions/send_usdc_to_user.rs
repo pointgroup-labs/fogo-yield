@@ -33,7 +33,7 @@ pub fn handler<'info>(ctx: Context<'info, SendUsdcToUser<'info>>) -> Result<()> 
     );
 
     let amount = flow.amount;
-    require!(amount > 0, RelayerError::InsufficientUsdcBalance);
+    require!(amount > 0, RelayerError::ZeroAmountFlow);
 
     let recipient = flow.fogo_sender;
 
@@ -53,6 +53,7 @@ pub fn handler<'info>(ctx: Context<'info, SendUsdcToUser<'info>>) -> Result<()> 
     )?;
 
     emit!(UsdcSentToUser {
+        flow: ctx.accounts.outflight_flow.key(),
         ntt_inbox_item: ctx.accounts.ntt_inbox_item.key(),
         fogo_sender: recipient,
         amount,

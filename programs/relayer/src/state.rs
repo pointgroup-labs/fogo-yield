@@ -43,6 +43,34 @@ impl RelayerConfig {
         require!(self.withdraw_fee_bps <= 10_000, RelayerError::FeeBpsTooHigh);
         Ok(())
     }
+
+    /// Subtract the deposit-leg fee (bps) from `gross`. Returns
+    /// `(net, fee)`. Fails with `FeeOverflow` on arithmetic overflow and
+    /// `ZeroAmountFlow` if the net is zero.
+    pub fn apply_deposit_fee(&self, gross: u64) -> Result<(u64, u64)> {
+        apply_fee_bps(gross, self.deposit_fee_bps)
+    }
+
+    /// Subtract the withdrawal-leg fee (bps) from `gross`. See
+    /// `apply_deposit_fee` for the return tuple and error semantics.
+    pub fn apply_withdraw_fee(&self, gross: u64) -> Result<(u64, u64)> {
+        apply_fee_bps(gross, self.withdraw_fee_bps)
+    }
+}
+
+/// `fee = floor(gross * bps / 10_000); net = gross - fee`. Returns
+/// `(net, fee)`.
+fn apply_fee_bps(gross: u64, bps: u16) -> Result<(u64, u64)> {
+    let fee = (gross as u128)
+        .checked_mul(bps as u128)
+        .ok_or(RelayerError::FeeOverflow)?
+        / 10_000;
+    let fee_u64 = fee as u64;
+    let net = gross
+        .checked_sub(fee_u64)
+        .ok_or(RelayerError::FeeOverflow)?;
+    require!(net > 0, RelayerError::ZeroAmountFlow);
+    Ok((net, fee_u64))
 }
 
 /// Status of a flow through the relayer pipeline.

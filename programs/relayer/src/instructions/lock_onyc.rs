@@ -1,29 +1,31 @@
 use anchor_lang::prelude::*;
+use anchor_lang::solana_program::program::invoke_signed;
 use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
 
 use crate::constants::{
     CONFIG_SEED, FLOW_INBOUND_SEED, FOGO_WORMHOLE_CHAIN_ID, NTT_PROGRAM_ID, NTT_TRANSFER_LOCK_IX,
-    RELAYER_SEED,
+    RELAYER_SEED, SPL_TOKEN_APPROVE_IX_TAG,
 };
 use crate::cpi::invoke_relayer_signed;
 use crate::error::RelayerError;
 use crate::events::OnycLocked;
+use crate::ntt::{derive_session_authority, NttTransferArgs};
 use crate::state::{Flow, FlowStatus, RelayerConfig};
-
-/// Wormhole NTT `transfer_lock` args.
-#[derive(AnchorSerialize, AnchorDeserialize)]
-struct NttTransferArgs {
-    amount: u64,
-    recipient_chain: u16,
-    recipient_address: [u8; 32],
-    should_queue: bool,
-}
 
 /// Lock the flow's ONyc amount via Wormhole NTT, sending bONyc back to
 /// the FOGO wallet recorded in the `Flow` PDA.
 ///
+/// ONyc is canonical on Solana (issued by OnRe), so the NTT manager runs
+/// in Locking mode: tokens are transferred into NTT's custody account
+/// rather than burned. The FOGO side mints/burns the wrapped bONyc.
+///
 /// Permissionless. The recipient is bound to the flow PDA's `fogo_sender`.
 /// Closing the PDA returns rent to the payer and blocks replays.
+///
+/// NTT's `transfer_lock` requires the caller to first approve the NTT
+/// session_authority PDA as a delegate on the source token account, so
+/// we issue an SPL `Approve` CPI (signed by the relayer authority PDA)
+/// before forwarding to NTT.
 pub fn handler<'info>(ctx: Context<'info, LockOnyc<'info>>) -> Result<()> {
     let flow = &mut ctx.accounts.inflight_flow;
     require!(
@@ -32,25 +34,73 @@ pub fn handler<'info>(ctx: Context<'info, LockOnyc<'info>>) -> Result<()> {
     );
 
     let amount = flow.amount;
-    require!(amount > 0, RelayerError::InsufficientOnycBalance);
+    require!(amount > 0, RelayerError::ZeroAmountFlow);
 
     let recipient = flow.fogo_sender;
+
+    let transfer_args = NttTransferArgs {
+        amount,
+        recipient_chain: FOGO_WORMHOLE_CHAIN_ID,
+        recipient_address: recipient,
+        should_queue: false,
+    };
+
+    // NTT binds its session-authority PDA to a hash of the transfer args;
+    // recompute it locally so we can pre-approve the right delegate.
+    let (session_authority, _) =
+        derive_session_authority(&ctx.accounts.relayer_authority.key(), &transfer_args);
+
+    // Approve the session_authority as delegate on the ONyc ATA,
+    // signed by the relayer authority PDA.
+    let bump = [ctx.accounts.relayer_config.relayer_authority_bump];
+    let signer_seeds: &[&[u8]] = &[RELAYER_SEED, &bump];
+
+    let approve_ix = instruction::Instruction {
+        program_id: ctx.accounts.token_program.key(),
+        accounts: vec![
+            AccountMeta::new(ctx.accounts.onyc_ata.key(), false),
+            AccountMeta::new_readonly(session_authority, false),
+            AccountMeta::new_readonly(ctx.accounts.relayer_authority.key(), true),
+        ],
+        data: {
+            // SPL Token Approve instruction: tag(1) + amount(u64 LE)
+            let mut d = Vec::with_capacity(9);
+            d.push(SPL_TOKEN_APPROVE_IX_TAG);
+            d.extend_from_slice(&amount.to_le_bytes());
+            d
+        },
+    };
+
+    // Find the session_authority account in remaining_accounts so the runtime
+    // can resolve the approve instruction's account references.
+    let session_auth_info = ctx
+        .remaining_accounts
+        .iter()
+        .find(|a| a.key() == session_authority)
+        .ok_or(RelayerError::MissingSessionAuthority)?;
+
+    invoke_signed(
+        &approve_ix,
+        &[
+            ctx.accounts.onyc_ata.to_account_info(),
+            session_auth_info.to_account_info(),
+            ctx.accounts.relayer_authority.to_account_info(),
+            ctx.accounts.token_program.to_account_info(),
+        ],
+        &[signer_seeds],
+    )?;
 
     invoke_relayer_signed(
         NTT_PROGRAM_ID,
         &NTT_TRANSFER_LOCK_IX,
-        &NttTransferArgs {
-            amount,
-            recipient_chain: FOGO_WORMHOLE_CHAIN_ID,
-            recipient_address: recipient,
-            should_queue: false,
-        },
+        &transfer_args,
         ctx.remaining_accounts,
         &ctx.accounts.relayer_authority.to_account_info(),
         ctx.accounts.relayer_config.relayer_authority_bump,
     )?;
 
     emit!(OnycLocked {
+        flow: ctx.accounts.inflight_flow.key(),
         gateway_claim: ctx.accounts.gateway_claim.key(),
         fogo_sender: recipient,
         amount,

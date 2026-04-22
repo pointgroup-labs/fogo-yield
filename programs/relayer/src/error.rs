@@ -2,12 +2,6 @@ use anchor_lang::prelude::*;
 
 #[error_code]
 pub enum RelayerError {
-    #[msg("Relayer PDA has insufficient USDC balance for this operation")]
-    InsufficientUsdcBalance,
-
-    #[msg("Relayer PDA has insufficient ONyc balance for this operation")]
-    InsufficientOnycBalance,
-
     #[msg("VAA verification failed or VAA is invalid")]
     InvalidVaa,
 
@@ -40,4 +34,25 @@ pub enum RelayerError {
 
     #[msg("Fee computation overflow")]
     FeeOverflow,
+
+    #[msg("NTT session authority PDA not found in remaining_accounts")]
+    MissingSessionAuthority,
+
+    #[msg("NTT ValidatedTransceiverMessage account is malformed or too short")]
+    InvalidTransceiverMessage,
+
+    #[msg("ntt_transceiver_message does not match the account consumed by the NTT redeem CPI")]
+    TransceiverMessageMismatch,
+
+    #[msg("ntt_inbox_item does not match the account consumed by the NTT CPIs")]
+    InboxItemMismatch,
+
+    #[msg("Destination token account does not match the ATA consumed by the NTT release CPI")]
+    RecipientAtaMismatch,
+
+    #[msg("posted_vaa does not match the VAA consumed by the Token Bridge CPI")]
+    PostedVaaMismatch,
+
+    #[msg("gateway_claim does not match the claim PDA consumed by the Token Bridge CPI")]
+    GatewayClaimMismatch,
 }

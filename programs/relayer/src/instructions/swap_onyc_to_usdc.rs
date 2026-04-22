@@ -1,10 +1,9 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
 
-use crate::constants::{CONFIG_SEED, FLOW_OUTBOUND_SEED, ONRE_PROGRAM_ID, ONRE_TAKE_OFFER_IX, RELAYER_SEED};
-use crate::cpi::invoke_relayer_signed;
-use crate::error::RelayerError;
-use crate::state::{Flow, FlowStatus, RelayerConfig};
+use crate::constants::{CONFIG_SEED, FLOW_OUTBOUND_SEED, RELAYER_SEED};
+use crate::onre::execute_onre_swap;
+use crate::state::{Flow, RelayerConfig};
 
 /// Swap the flow's ONyc amount into USDC via OnRe.
 ///
@@ -13,36 +12,13 @@ use crate::state::{Flow, FlowStatus, RelayerConfig};
 /// `remaining_accounts` must contain OnRe's full account list for
 /// `take_offer_permissionless` with the reverse-direction offer PDA.
 pub fn handler<'info>(ctx: Context<'info, SwapOnycToUsdc<'info>>) -> Result<()> {
-    let flow = &mut ctx.accounts.outflight_flow;
-    require!(
-        flow.status == FlowStatus::Claimed,
-        RelayerError::FlowStatusMismatch
-    );
-
-    let amount = flow.amount;
-    require!(amount > 0, RelayerError::InsufficientOnycBalance);
-
-    // Snapshot pre-swap USDC balance
-    let pre_usdc = ctx.accounts.usdc_ata.amount;
-
-    invoke_relayer_signed(
-        ONRE_PROGRAM_ID,
-        &ONRE_TAKE_OFFER_IX,
-        &amount,
-        ctx.remaining_accounts,
+    execute_onre_swap(
+        &mut ctx.accounts.outflight_flow,
+        &mut ctx.accounts.usdc_ata,
         &ctx.accounts.relayer_authority.to_account_info(),
-        ctx.accounts.relayer_config.relayer_authority_bump,
-    )?;
-
-    // Delta = USDC received from this swap
-    ctx.accounts.usdc_ata.reload()?;
-    flow.amount = ctx.accounts.usdc_ata.amount
-        .checked_sub(pre_usdc)
-        .ok_or(RelayerError::BalanceUnderflow)?;
-    require!(flow.amount > 0, RelayerError::ZeroAmountFlow);
-    flow.status = FlowStatus::Swapped;
-
-    Ok(())
+        &ctx.accounts.relayer_config,
+        ctx.remaining_accounts,
+    )
 }
 
 #[derive(Accounts)]

@@ -40,7 +40,7 @@ use anchor_lang::prelude::*;
 use anchor_lang::solana_program::instruction::{AccountMeta, Instruction};
 use anchor_lang::solana_program::program::invoke_signed;
 
-use crate::constants::RELAYER_SEED;
+use crate::constants::{REDEEMER_SEED, RELAYER_SEED};
 use crate::error::RelayerError;
 
 /// Invoke an external program, signed by the relayer authority PDA.
@@ -50,6 +50,11 @@ use crate::error::RelayerError;
 /// tag for native-Solana-style programs (Wormhole Gateway).
 ///
 /// Instruction data = `discriminator` ++ `Borsh(args)`.
+///
+/// Use this for OnRe, NTT, and outbound Gateway CPIs — anywhere a single
+/// PDA (the relayer authority) is the only signer. For the Wormhole
+/// Gateway `CompleteWrappedWithPayload` path, use
+/// `invoke_relayer_signed_with_redeemer` instead.
 pub fn invoke_relayer_signed<'info, A: AnchorSerialize>(
     program_id: Pubkey,
     discriminator: &[u8],
@@ -58,37 +63,96 @@ pub fn invoke_relayer_signed<'info, A: AnchorSerialize>(
     authority: &AccountInfo<'info>,
     authority_bump: u8,
 ) -> Result<()> {
-    let authority_key = *authority.key;
+    let (metas, data) =
+        build_ix_metas_and_data(discriminator, args, remaining_accounts, authority.key, None)?;
 
-    // Build metas from the caller-provided layout. The authority PDA must
-    // appear somewhere in `remaining_accounts`; we force its signer flag.
+    let auth_bump_arr = [authority_bump];
+    let auth_seeds: &[&[u8]] = &[RELAYER_SEED, &auth_bump_arr];
+
+    let ix = Instruction {
+        program_id,
+        accounts: metas,
+        data,
+    };
+    invoke_signed(&ix, remaining_accounts, &[auth_seeds])?;
+    Ok(())
+}
+
+/// Like `invoke_relayer_signed`, but additionally signs as the redeemer
+/// PDA (seeds = `[REDEEMER_SEED]` under this program ID).
+///
+/// Wormhole Token Bridge's `CompleteWrappedWithPayload` requires a second
+/// PDA — the "redeemer" — to co-sign, because TB uses it to prove the
+/// payload was delivered to the intended receiver program. This helper is
+/// used exclusively by `claim_usdc`; every other CPI uses the plain
+/// `invoke_relayer_signed`.
+#[allow(clippy::too_many_arguments)]
+pub fn invoke_relayer_signed_with_redeemer<'info, A: AnchorSerialize>(
+    program_id: Pubkey,
+    discriminator: &[u8],
+    args: &A,
+    remaining_accounts: &[AccountInfo<'info>],
+    authority: &AccountInfo<'info>,
+    authority_bump: u8,
+    redeemer: Pubkey,
+    redeemer_bump: u8,
+) -> Result<()> {
+    let (metas, data) = build_ix_metas_and_data(
+        discriminator,
+        args,
+        remaining_accounts,
+        authority.key,
+        Some(redeemer),
+    )?;
+
+    let auth_bump_arr = [authority_bump];
+    let auth_seeds: &[&[u8]] = &[RELAYER_SEED, &auth_bump_arr];
+    let red_bump_arr = [redeemer_bump];
+    let red_seeds: &[&[u8]] = &[REDEEMER_SEED, &red_bump_arr];
+
+    let ix = Instruction {
+        program_id,
+        accounts: metas,
+        data,
+    };
+    invoke_signed(&ix, remaining_accounts, &[auth_seeds, red_seeds])?;
+    Ok(())
+}
+
+/// Walk `remaining_accounts`, force the signer flag on the authority PDA
+/// (and redeemer PDA if supplied), and assemble the raw instruction data
+/// buffer. Fails if a required PDA is missing from the forwarded list.
+fn build_ix_metas_and_data<'info, A: AnchorSerialize>(
+    discriminator: &[u8],
+    args: &A,
+    remaining_accounts: &[AccountInfo<'info>],
+    authority_key: &Pubkey,
+    redeemer_key: Option<Pubkey>,
+) -> Result<(Vec<AccountMeta>, Vec<u8>)> {
     let mut authority_seen = false;
+    let mut redeemer_seen = false;
     let mut metas: Vec<AccountMeta> = Vec::with_capacity(remaining_accounts.len());
+
     for a in remaining_accounts {
-        let is_authority = *a.key == authority_key;
+        let is_authority = a.key == authority_key;
+        let is_redeemer = redeemer_key.is_some_and(|k| *a.key == k);
         authority_seen |= is_authority;
+        redeemer_seen |= is_redeemer;
         metas.push(AccountMeta {
             pubkey: *a.key,
-            is_signer: a.is_signer || is_authority,
+            is_signer: a.is_signer || is_authority || is_redeemer,
             is_writable: a.is_writable,
         });
     }
+
     require!(authority_seen, RelayerError::AuthorityNotInAccounts);
+    if redeemer_key.is_some() {
+        require!(redeemer_seen, RelayerError::AuthorityNotInAccounts);
+    }
 
     let mut data = Vec::with_capacity(discriminator.len() + 64);
     data.extend_from_slice(discriminator);
     args.serialize(&mut data)?;
 
-    let bump = [authority_bump];
-    let signer_seeds: &[&[u8]] = &[RELAYER_SEED, &bump];
-    invoke_signed(
-        &Instruction {
-            program_id,
-            accounts: metas,
-            data,
-        },
-        remaining_accounts,
-        &[signer_seeds],
-    )?;
-    Ok(())
+    Ok((metas, data))
 }

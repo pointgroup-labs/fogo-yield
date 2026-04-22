@@ -6,7 +6,7 @@ resolver = "2"
 authors = ["Poitgroup Team"]
 repository = "https://github.com/pointgroup-labs/fogo-onre"
 readme = "./README.md"
-edition = "2024"
+edition = "2021"
 
 [workspace.dependencies]
 anchor-lang = "1.0.0"

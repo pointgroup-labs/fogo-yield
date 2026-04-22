@@ -4,14 +4,16 @@ use anchor_spl::{
     token_interface::{Mint, TokenAccount, TokenInterface},
 };
 
-use crate::constants::{CONFIG_SEED, RELAYER_SEED};
+use crate::constants::{CONFIG_SEED, REDEEMER_SEED, RELAYER_SEED};
 use crate::state::RelayerConfig;
 
 /// Initialize the relayer program.
 ///
-/// Creates the `RelayerConfig` PDA, and the USDC + ONyc token accounts
-/// owned by the relayer authority PDA. This instruction is called once
-/// at deployment time.
+/// Creates the `RelayerConfig` PDA, the USDC + ONyc token accounts owned by
+/// the relayer authority PDA, and a short-lived USDC intake ATA owned by
+/// the redeemer PDA (used as the `to` account in Token Bridge
+/// `CompleteWrappedWithPayload` CPIs — see `claim_usdc`). One-shot at
+/// deployment time.
 pub fn handler(ctx: Context<Initialize>, deposit_fee_bps: u16, withdraw_fee_bps: u16) -> Result<()> {
     let config = &mut ctx.accounts.relayer_config;
     config.authority = ctx.accounts.authority.key();
@@ -24,9 +26,10 @@ pub fn handler(ctx: Context<Initialize>, deposit_fee_bps: u16, withdraw_fee_bps:
     config.validate()?;
 
     msg!(
-        "Relayer initialized. USDC ATA: {}. ONyc ATA: {}.",
+        "Relayer initialized. USDC ATA: {}. ONyc ATA: {}. Redeemer USDC intake ATA: {}.",
         ctx.accounts.usdc_ata.key(),
         ctx.accounts.onyc_ata.key(),
+        ctx.accounts.redeemer_usdc_ata.key(),
     );
 
     Ok(())
@@ -57,6 +60,16 @@ pub struct Initialize<'info> {
     )]
     pub relayer_authority: UncheckedAccount<'info>,
 
+    /// Redeemer PDA — serves as Token Bridge's payload-delivery signer in
+    /// `CompleteWrappedWithPayload` AND as the owner of the short-lived USDC
+    /// intake ATA (TB requires `redeemer.key == to.owner`).
+    /// CHECK: PDA derived from REDEEMER_SEED; no data stored.
+    #[account(
+        seeds = [REDEEMER_SEED],
+        bump,
+    )]
+    pub redeemer_authority: UncheckedAccount<'info>,
+
     /// USDC token mint.
     pub usdc_mint: InterfaceAccount<'info, Mint>,
 
@@ -82,6 +95,18 @@ pub struct Initialize<'info> {
         associated_token::token_program = token_program,
     )]
     pub onyc_ata: InterfaceAccount<'info, TokenAccount>,
+
+    /// Redeemer-owned USDC intake ATA. `claim_usdc` deposits bridged USDC
+    /// here (TB mints into it during `CompleteWrappedWithPayload`) and
+    /// immediately sweeps it into `usdc_ata` under the redeemer's signature.
+    #[account(
+        init,
+        payer = authority,
+        associated_token::mint = usdc_mint,
+        associated_token::authority = redeemer_authority,
+        associated_token::token_program = token_program,
+    )]
+    pub redeemer_usdc_ata: InterfaceAccount<'info, TokenAccount>,
 
     pub token_program: Interface<'info, TokenInterface>,
     pub associated_token_program: Program<'info, AssociatedToken>,

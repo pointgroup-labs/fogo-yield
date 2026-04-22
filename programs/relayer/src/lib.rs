@@ -7,6 +7,8 @@ pub mod cpi;
 pub mod error;
 pub mod events;
 pub mod instructions;
+pub mod ntt;
+pub mod onre;
 pub mod state;
 pub mod vaa;
 
@@ -62,10 +64,9 @@ pub mod relayer {
     /// who initiated the withdrawal.
     pub fn unlock_onyc<'info>(
         ctx: Context<'info, UnlockOnyc<'info>>,
-        vaa: Vec<u8>,
         redeem_accounts_len: u8,
     ) -> Result<()> {
-        instructions::unlock_onyc::handler(ctx, vaa, redeem_accounts_len)
+        instructions::unlock_onyc::handler(ctx, redeem_accounts_len)
     }
 
     /// Swap the flow's ONyc amount into USDC via OnRe.
@@ -87,8 +88,7 @@ pub mod relayer {
         instructions::cancel_flow::handler(ctx)
     }
 
-    /// Update the flat fee amounts for deposit and withdrawal flows.
-    /// Authority-only.
+    /// Update the deposit and withdrawal fee basis points. Authority-only.
     pub fn update_fees(ctx: Context<UpdateFees>, deposit_fee_bps: u16, withdraw_fee_bps: u16) -> Result<()> {
         instructions::update_fees::handler(ctx, deposit_fee_bps, withdraw_fee_bps)
     }
