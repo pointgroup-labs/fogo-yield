@@ -50,11 +50,7 @@ impl NttTransferArgs {
 pub fn derive_session_authority(sender: &Pubkey, args: &NttTransferArgs) -> (Pubkey, u8) {
     let hash = args.args_hash();
     Pubkey::find_program_address(
-        &[
-            NTT_SESSION_AUTHORITY_SEED,
-            sender.as_ref(),
-            hash.as_ref(),
-        ],
+        &[NTT_SESSION_AUTHORITY_SEED, sender.as_ref(), hash.as_ref()],
         &NTT_PROGRAM_ID,
     )
 }
@@ -87,6 +83,7 @@ pub const VALIDATED_TRANSCEIVER_MESSAGE_DISC: [u8; 8] =
 /// layout of `ValidatedTransceiverMessage<NativeTokenTransfer<_>>`:
 ///   disc(8) + from_chain(2) + source_ntt_manager(32)
 ///   + recipient_ntt_manager(32) + NttManagerMessage.id(32) = 106.
+///
 /// The next 32 bytes are `NttManagerMessage.sender` — the originating
 /// FOGO user wallet passed through NTT on the source chain.
 pub const TRANSCEIVER_MESSAGE_SENDER_OFFSET: usize = 106;

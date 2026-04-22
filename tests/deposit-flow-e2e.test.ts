@@ -1,5 +1,5 @@
 /**
- * E2E test for the full deposit flow: claim_usdc → swap_usdc_to_onyc → lock_onyc.
+ * E2E test for the full deposit flow: claim_usdc > swap_usdc_to_onyc > lock_onyc.
  *
  * Uses real OnRe, NTT, and Wormhole Token Bridge program binaries with
  * mainnet-captured fixtures (TB Config, MintSigner) plus synthesized TB
@@ -8,9 +8,6 @@
  * verification by writing the post-verification account directly.
  */
 
-import fs from 'node:fs'
-import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 import {
   findAuthorityPda,
   findInflightFlowPda,
@@ -18,32 +15,32 @@ import {
   FOGO_WORMHOLE_CHAIN_ID,
   GATEWAY_PROGRAM_ID,
   nttTransferArgsHash,
-  ONRE_PROGRAM_ID,
   RelayerClient,
 } from '@fogo-onre/sdk'
 import {
-  ASSOCIATED_TOKEN_PROGRAM_ID,
   getAssociatedTokenAddressSync,
-  TOKEN_PROGRAM_ID,
 } from '@solana/spl-token'
-import { Keypair, PublicKey, SystemProgram, SYSVAR_INSTRUCTIONS_PUBKEY } from '@solana/web3.js'
+import { Keypair, PublicKey } from '@solana/web3.js'
 import { Clock, LiteSVM } from 'litesvm'
 import {
-  createMint,
+  createAta,
+  createMintWithAuthority,
   createProvider,
   createSvm,
+  createTokenAccount,
   createWrappedMint,
   findOnreMintAuthorityPda,
-  findOnreOfferPda,
   findOnrePermissionlessAuthorityPda,
   findOnreVaultAuthorityPda,
   findTokenAuthorityPda,
+  loadAndPatchNttConfig,
+  loadAndPatchOnreOffer,
   loadFixture,
-  OFFER_TOKEN_IN_MINT_OFFSET,
-  OFFER_TOKEN_OUT_MINT_OFFSET,
+  NTT_INBOX_RL_FIXTURE,
+  NTT_OUTBOX_RL_FIXTURE,
+  NTT_PEER_FIXTURE,
   ONRE_BOSS_PUBKEY,
   ONRE_MINT_AUTHORITY_FIXTURE,
-  ONRE_OFFER_FIXTURE,
   ONRE_PERM_AUTHORITY_FIXTURE,
   ONRE_STATE_FIXTURE,
   ONRE_VAULT_AUTHORITY_FIXTURE,
@@ -53,139 +50,6 @@ import {
   setupTokenBridgeConfig,
   setupWrappedMeta,
 } from './utils'
-
-// ---------------------------------------------------------------------------
-// NTT fixture addresses (same as lock-onyc-e2e)
-// ---------------------------------------------------------------------------
-
-const NTT_CONFIG_FIXTURE = 'BM8Bb4nMdMgWCRMGsX6GNspU2ez8gb8WGjW1tpYjFLN1'
-const NTT_PEER_FIXTURE = 'Cnabq7SzA2oqcxn4RGEcNeUS9J1uzptkNvyRmUemgRQ7'
-const NTT_INBOX_RL_FIXTURE = '9sLBr3r7VkvwHVm6N3FBRwBj4ogM22bJkocVc2hfhXdR'
-const NTT_OUTBOX_RL_FIXTURE = '8TRJb54ydBnVe5QcrU7GhDL6xzm3FdhuPm4BdSJ4J22v'
-
-// NTT Config byte offsets
-const CONFIG_MINT_OFFSET = 42
-const CONFIG_MODE_OFFSET = 106
-const CONFIG_CUSTODY_OFFSET_1 = 128
-const CONFIG_CUSTODY_OFFSET_2 = 160
-
-// ---------------------------------------------------------------------------
-// Fixtures directory
-// ---------------------------------------------------------------------------
-
-const FIXTURES_DIR = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  'fixtures/accounts',
-)
-
-function readFixtureData(address: string): Uint8Array {
-  const filePath = path.join(FIXTURES_DIR, `${address}.json`)
-  const json = JSON.parse(fs.readFileSync(filePath, 'utf-8'))
-  return new Uint8Array(Buffer.from(json.account.data[0], 'base64'))
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function createMintWithAuthority(
-  svm: LiteSVM,
-  payer: Keypair,
-  mintAuthority: PublicKey,
-  decimals = 6,
-): Keypair {
-  const mint = createMint(svm, payer, decimals)
-  const acct = svm.getAccount(mint.publicKey)!
-  const data = new Uint8Array(acct.data)
-  data.set(mintAuthority.toBytes(), 4)
-  svm.setAccount(mint.publicKey, { ...acct, data })
-  return mint
-}
-
-/**
- * Create a raw SPL Token account at a specific address.
- */
-function createTokenAccount(
-  svm: LiteSVM,
-  address: PublicKey,
-  mint: PublicKey,
-  owner: PublicKey,
-  amount: bigint = 0n,
-): void {
-  const data = new Uint8Array(165)
-  data.set(mint.toBytes(), 0) // mint
-  data.set(owner.toBytes(), 32) // owner
-  const view = new DataView(data.buffer, data.byteOffset)
-  view.setBigUint64(64, amount, true) // amount
-  data[108] = 1 // state = Initialized
-  svm.setAccount(address, {
-    executable: false,
-    owner: TOKEN_PROGRAM_ID,
-    lamports: 2_039_280,
-    data,
-    rentEpoch: 0,
-  })
-}
-
-/**
- * Load OnRe offer fixture, patch mint fields, and place at the PDA
- * derived from the test mints.
- */
-function loadAndPatchOnreOffer(
-  svm: LiteSVM,
-  testUsdcMint: PublicKey,
-  testOnycMint: PublicKey,
-): PublicKey {
-  // Read the raw mainnet fixture data
-  const data = readFixtureData(ONRE_OFFER_FIXTURE)
-
-  // Patch token_in_mint and token_out_mint to test mints
-  data.set(testUsdcMint.toBytes(), OFFER_TOKEN_IN_MINT_OFFSET)
-  data.set(testOnycMint.toBytes(), OFFER_TOKEN_OUT_MINT_OFFSET)
-
-  // Patch the last pricing vector (at offset 152) to have a very long duration
-  // so it's active at the test's clock time.
-  // Vector layout (40 bytes): start_time(8) + effective_start(8) + base_price(8) + apr(8) + duration(8)
-  // Set duration at offset 184 to 10 years (315_360_000 seconds)
-  const view = new DataView(data.buffer, data.byteOffset)
-  view.setBigUint64(184, 315_360_000n, true)
-
-  // Derive the new offer PDA from test mints
-  const [offerPda] = findOnreOfferPda(testUsdcMint, testOnycMint)
-
-  svm.setAccount(offerPda, {
-    executable: false,
-    owner: ONRE_PROGRAM_ID,
-    lamports: 5_122_560,
-    data,
-    rentEpoch: 0,
-  })
-
-  return offerPda
-}
-
-/**
- * Load and patch NTT config fixture (same as lock-onyc-e2e).
- */
-function loadAndPatchNttConfig(
-  svm: LiteSVM,
-  onycMint: PublicKey,
-  custodyAta: PublicKey,
-): void {
-  loadFixture(svm, NTT_CONFIG_FIXTURE)
-  const configPda = new PublicKey(NTT_CONFIG_FIXTURE)
-  const acct = svm.getAccount(configPda)!
-  const data = new Uint8Array(acct.data)
-  data.set(onycMint.toBytes(), CONFIG_MINT_OFFSET)
-  data[CONFIG_MODE_OFFSET] = 0 // Locking — ONyc is canonical, locked into custody
-  data.set(custodyAta.toBytes(), CONFIG_CUSTODY_OFFSET_1)
-  data.set(custodyAta.toBytes(), CONFIG_CUSTODY_OFFSET_2)
-  svm.setAccount(configPda, { ...acct, data })
-}
-
-// ---------------------------------------------------------------------------
-// Test
-// ---------------------------------------------------------------------------
 
 describe('deposit flow e2e (claim_usdc → OnRe swap → NTT transfer_burn)', () => {
   let svm: LiteSVM
@@ -215,7 +79,9 @@ describe('deposit flow e2e (claim_usdc → OnRe swap → NTT transfer_burn)', ()
   // Gross USDC amount delivered by the VAA. `claim_usdc` deducts the
   // 50 bps deposit fee and stores the net on the Flow PDA.
   const depositAmount = 500_000n // 0.5 USDC gross
-  const expectedNet = depositAmount * (10000n - 50n) / 10000n // 0.4975 USDC
+  // The deposit fee (50 bps) is now applied POST-swap on the ONyc output
+  // inside `swap_usdc_to_onyc`, not on the inbound USDC.
+  const expectedNetOnyc = (out: bigint) => (out * (10000n - 50n)) / 10000n
 
   beforeEach(async () => {
     svm = createSvm()
@@ -251,12 +117,17 @@ describe('deposit flow e2e (claim_usdc → OnRe swap → NTT transfer_burn)', ()
     // moves ONyc into the custody ATA when bridging out.
     onycMint = createMintWithAuthority(svm, authority, onreMintAuthorityPda, 6)
 
+    // External ONyc fee vault — authority-owned ATA, distinct from the
+    // relayer's operating ONyc ATA created by `initialize`.
+    const feeVault = createAta(svm, authority, onycMint.publicKey, authority.publicKey)
+
     // Initialize relayer
     await client
       .initialize({
         authority: authority.publicKey,
         usdcMint: usdcMint.publicKey,
         onycMint: onycMint.publicKey,
+        feeVault,
         depositFeeBps: 50,
         withdrawFeeBps: 100,
       })
@@ -399,14 +270,17 @@ describe('deposit flow e2e (claim_usdc → OnRe swap → NTT transfer_burn)', ()
       throw e
     }
 
-    // Verify Flow PDA exists with status=Claimed and net amount.
+    // Verify Flow PDA exists with status=Claimed and gross amount.
+    // (Fees moved to POST-swap on the ONyc output inside swap_usdc_to_onyc;
+    // claim_usdc is now a pure pass-through.)
     const gatewayClaim = gatewayClaimPda
     const flowAfterClaim = await client.fetchInflightFlow(gatewayClaim)
     expect(flowAfterClaim.status).toEqual({ claimed: {} })
-    expect(BigInt(flowAfterClaim.amount.toString())).toEqual(expectedNet)
+    expect(BigInt(flowAfterClaim.amount.toString())).toEqual(depositAmount)
 
-    // Verify relayer USDC ATA was funded by the CPI (gross amount; the fee
-    // is implicit via the Flow's `amount = gross - fee` accounting).
+    // Verify relayer USDC ATA was funded by the CPI (full gross amount —
+    // the deposit fee is taken from the ONyc output during the swap, not
+    // from USDC at claim time).
     const usdcAtaAcct = svm.getAccount(usdcAta)!
     const usdcAtaBal = new DataView(
       usdcAtaAcct.data.buffer,
@@ -414,74 +288,17 @@ describe('deposit flow e2e (claim_usdc → OnRe swap → NTT transfer_burn)', ()
     ).getBigUint64(64, true)
     expect(usdcAtaBal).toEqual(depositAmount)
 
-    console.log(`Claim succeeded: ${depositAmount} USDC bridged, ${expectedNet} net to flow`)
+    console.log(`Claim succeeded: ${depositAmount} USDC bridged, recorded as gross on flow`)
 
     // -------------------------------------------------------------------
-    // Step 1: swap_usdc_to_onyc (OnRe CPI). Uses Flow.amount (= expectedNet).
+    // Step 1: swap_usdc_to_onyc (OnRe CPI). Uses Flow.amount (= depositAmount gross).
+    //
+    // The SDK assembles OnRe's full 22-entry remainingAccounts list when
+    // `onre: {}` is passed (mainnet defaults: state PDA + boss pubkey +
+    // derived ATAs all live in `@fogo-onre/sdk`). All vault/perm/boss ATAs
+    // referenced inside the list were already seeded into LiteSVM in the
+    // top-level `beforeAll`, so no per-test prep is needed here.
     // -------------------------------------------------------------------
-
-    const [offerPda] = findOnreOfferPda(usdcMint.publicKey, onycMint.publicKey)
-
-    const vaultUsdcAta = getAssociatedTokenAddressSync(usdcMint.publicKey, onreVaultAuthorityPda, true)
-    const vaultOnycAta = getAssociatedTokenAddressSync(onycMint.publicKey, onreVaultAuthorityPda, true)
-    const permUsdcAta = getAssociatedTokenAddressSync(usdcMint.publicKey, onrePermAuthorityPda, true)
-    const permOnycAta = getAssociatedTokenAddressSync(onycMint.publicKey, onrePermAuthorityPda, true)
-    const bossUsdcAta = getAssociatedTokenAddressSync(usdcMint.publicKey, ONRE_BOSS_PUBKEY, true)
-
-    const onreRemainingAccounts = [
-      // 1. offer (mut)
-      { pubkey: offerPda, isSigner: false, isWritable: true },
-      // 2. state
-      { pubkey: new PublicKey(ONRE_STATE_FIXTURE), isSigner: false, isWritable: false },
-      // 3. boss
-      { pubkey: ONRE_BOSS_PUBKEY, isSigner: false, isWritable: false },
-      // 4. vault_authority
-      { pubkey: onreVaultAuthorityPda, isSigner: false, isWritable: false },
-      // 5. vault_token_in_account (mut)
-      { pubkey: vaultUsdcAta, isSigner: false, isWritable: true },
-      // 6. vault_token_out_account (mut)
-      { pubkey: vaultOnycAta, isSigner: false, isWritable: true },
-      // 7. permissionless_authority
-      { pubkey: onrePermAuthorityPda, isSigner: false, isWritable: false },
-      // 8. permissionless_token_in_account (mut)
-      { pubkey: permUsdcAta, isSigner: false, isWritable: true },
-      // 9. permissionless_token_out_account (mut)
-      { pubkey: permOnycAta, isSigner: false, isWritable: true },
-      // 10. token_in_mint (mut)
-      { pubkey: usdcMint.publicKey, isSigner: false, isWritable: true },
-      // 11. token_in_program
-      { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
-      // 12. token_out_mint (mut)
-      { pubkey: onycMint.publicKey, isSigner: false, isWritable: true },
-      // 13. token_out_program
-      { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
-      // 14. user_token_in_account (mut) — relayer USDC ATA
-      { pubkey: usdcAta, isSigner: false, isWritable: true },
-      // 15. user_token_out_account (init_if_needed) — relayer ONyc ATA
-      { pubkey: onycAta, isSigner: false, isWritable: true },
-      // 16. boss_token_in_account (mut)
-      { pubkey: bossUsdcAta, isSigner: false, isWritable: true },
-      // 17. mint_authority
-      { pubkey: onreMintAuthorityPda, isSigner: false, isWritable: false },
-      // 18. instructions_sysvar
-      { pubkey: SYSVAR_INSTRUCTIONS_PUBKEY, isSigner: false, isWritable: false },
-      // 19. user (signer) — relayer_authority PDA
-      { pubkey: relayerAuthorityPda, isSigner: false, isWritable: true },
-      // 20. associated_token_program
-      { pubkey: ASSOCIATED_TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
-      // 21. system_program
-      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-      // OnRe program itself must be in account_infos for CPI
-      { pubkey: ONRE_PROGRAM_ID, isSigner: false, isWritable: false },
-    ]
-
-    // Debug: verify all OnRe accounts exist
-    for (const { pubkey } of onreRemainingAccounts) {
-      const acct = svm.getAccount(pubkey)
-      if (!acct) {
-        console.log(`MISSING OnRe ACCOUNT: ${pubkey.toBase58()}`)
-      }
-    }
 
     try {
       await client
@@ -489,8 +306,8 @@ describe('deposit flow e2e (claim_usdc → OnRe swap → NTT transfer_burn)', ()
           usdcMint: usdcMint.publicKey,
           onycMint: onycMint.publicKey,
           gatewayClaim,
+          onre: {},
         })
-        .remainingAccounts(onreRemainingAccounts)
         .rpc()
     } catch (e: any) {
       console.log('SWAP ERROR:', e.message)
@@ -506,7 +323,7 @@ describe('deposit flow e2e (claim_usdc → OnRe swap → NTT transfer_burn)', ()
     expect(flowAfterSwap.amount.toNumber()).toBeGreaterThan(0)
 
     const onycReceived = BigInt(flowAfterSwap.amount.toString())
-    console.log(`Swap succeeded: ${expectedNet} USDC → ${onycReceived} ONyc`)
+    console.log(`Swap succeeded: ${depositAmount} USDC → ${onycReceived} ONyc (net after deposit fee: ${expectedNetOnyc(onycReceived)})`)
 
     // -------------------------------------------------------------------
     // Step 2: lock_onyc (NTT CPI — SDK builds the 14-account list)

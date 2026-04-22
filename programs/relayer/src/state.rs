@@ -15,11 +15,24 @@ pub struct RelayerConfig {
     /// Admin key for governance operations.
     pub authority: Pubkey,
 
+    /// Pending admin key, set by `configure(new_authority=Some(pk))`.
+    /// Becomes `authority` only after a separate `accept_authority`
+    /// transaction signed by this key. `None` when no rotation is
+    /// in flight. Two-step design accommodates multisig→multisig
+    /// rotations where the two parties cannot atomically co-sign
+    /// (e.g. two independent Squads vaults).
+    pub pending_authority: Option<Pubkey>,
+
     /// USDC token mint on Solana.
     pub usdc_mint: Pubkey,
 
     /// ONyc token mint on Solana.
     pub onyc_mint: Pubkey,
+
+    /// Single fee vault — PDA-addressed token account holding ALL
+    /// accumulated fees (both deposit-leg and withdrawal-leg, denominated
+    /// in ONyc).
+    pub fee_vault: Pubkey,
 
     /// Bump seed for the config PDA.
     pub bump: u8,

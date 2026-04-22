@@ -5,6 +5,7 @@ use anchor_spl::{
 };
 
 use crate::constants::{CONFIG_SEED, REDEEMER_SEED, RELAYER_SEED};
+use crate::error::RelayerError;
 use crate::state::RelayerConfig;
 
 /// Initialize the relayer program.
@@ -14,11 +15,17 @@ use crate::state::RelayerConfig;
 /// the redeemer PDA (used as the `to` account in Token Bridge
 /// `CompleteWrappedWithPayload` CPIs — see `claim_usdc`). One-shot at
 /// deployment time.
-pub fn handler(ctx: Context<Initialize>, deposit_fee_bps: u16, withdraw_fee_bps: u16) -> Result<()> {
+pub fn handler(
+    ctx: Context<Initialize>,
+    deposit_fee_bps: u16,
+    withdraw_fee_bps: u16,
+) -> Result<()> {
     let config = &mut ctx.accounts.relayer_config;
     config.authority = ctx.accounts.authority.key();
+    config.pending_authority = None;
     config.usdc_mint = ctx.accounts.usdc_mint.key();
     config.onyc_mint = ctx.accounts.onyc_mint.key();
+    config.fee_vault = ctx.accounts.fee_vault.key();
     config.bump = ctx.bumps.relayer_config;
     config.relayer_authority_bump = ctx.bumps.relayer_authority;
     config.deposit_fee_bps = deposit_fee_bps;
@@ -26,10 +33,11 @@ pub fn handler(ctx: Context<Initialize>, deposit_fee_bps: u16, withdraw_fee_bps:
     config.validate()?;
 
     msg!(
-        "Relayer initialized. USDC ATA: {}. ONyc ATA: {}. Redeemer USDC intake ATA: {}.",
+        "Relayer initialized. USDC ATA: {}. ONyc ATA: {}. Redeemer USDC intake ATA: {}. Fee vault: {}.",
         ctx.accounts.usdc_ata.key(),
         ctx.accounts.onyc_ata.key(),
         ctx.accounts.redeemer_usdc_ata.key(),
+        ctx.accounts.fee_vault.key(),
     );
 
     Ok(())
@@ -107,6 +115,18 @@ pub struct Initialize<'info> {
         associated_token::token_program = token_program,
     )]
     pub redeemer_usdc_ata: InterfaceAccount<'info, TokenAccount>,
+
+    /// Single fee vault — any pre-existing ONyc token account, supplied by
+    /// the deployer at init time. The anti-aliasing constraint prevents the
+    /// caller from passing the relayer's own ONyc ATA, which would silently
+    /// no-op every fee transfer (self-transfer) and let user funds and fees
+    /// keep commingling — defeating the whole point of the vault split.
+    #[account(
+        token::mint = onyc_mint,
+        token::token_program = token_program,
+        constraint = fee_vault.key() != onyc_ata.key() @ RelayerError::FeeVaultAliasesUserAta,
+    )]
+    pub fee_vault: InterfaceAccount<'info, TokenAccount>,
 
     pub token_program: Interface<'info, TokenInterface>,
     pub associated_token_program: Program<'info, AssociatedToken>,

@@ -132,13 +132,14 @@ pub fn handler<'info>(ctx: Context<'info, ClaimUsdc<'info>>) -> Result<()> {
         ctx.accounts.usdc_mint.decimals,
     )?;
 
-    let (net_amount, fee_amount) = ctx.accounts.relayer_config.apply_deposit_fee(amount)?;
+    require!(amount > 0, RelayerError::ZeroAmountFlow);
+
     let flow_key = ctx.accounts.inflight_flow.key();
 
     let flow = &mut ctx.accounts.inflight_flow;
     flow.fogo_sender = fogo_sender;
     flow.status = FlowStatus::Claimed;
-    flow.amount = net_amount;
+    flow.amount = amount;
     flow.payer = ctx.accounts.payer.key();
     flow.bump = ctx.bumps.inflight_flow;
 
@@ -146,9 +147,7 @@ pub fn handler<'info>(ctx: Context<'info, ClaimUsdc<'info>>) -> Result<()> {
         flow: flow_key,
         gateway_claim: ctx.accounts.gateway_claim.key(),
         fogo_sender,
-        gross_amount: amount,
-        fee_amount,
-        net_amount,
+        amount,
     });
 
     Ok(())

@@ -15,6 +15,39 @@
 import type { LiteSVM } from 'litesvm'
 import { NTT_PROGRAM_ID } from '@fogo-onre/sdk'
 import { PublicKey } from '@solana/web3.js'
+import { loadFixture } from './fixture-loader'
+
+// ---------------------------------------------------------------------------
+// Mainnet NTT fixture addresses (real on-chain accounts cloned into LiteSVM)
+// ---------------------------------------------------------------------------
+
+/** NTT Config PDA (seeds=["config"]) */
+export const NTT_CONFIG_FIXTURE = 'BM8Bb4nMdMgWCRMGsX6GNspU2ez8gb8WGjW1tpYjFLN1'
+/** NTT Peer PDA for FOGO chain 51 (seeds=["peer", chain_id_be]) */
+export const NTT_PEER_FIXTURE = 'Cnabq7SzA2oqcxn4RGEcNeUS9J1uzptkNvyRmUemgRQ7'
+/** NTT InboxRateLimit PDA for FOGO chain 51 */
+export const NTT_INBOX_RL_FIXTURE = '9sLBr3r7VkvwHVm6N3FBRwBj4ogM22bJkocVc2hfhXdR'
+/** NTT OutboxRateLimit PDA */
+export const NTT_OUTBOX_RL_FIXTURE = '8TRJb54ydBnVe5QcrU7GhDL6xzm3FdhuPm4BdSJ4J22v'
+
+// ---------------------------------------------------------------------------
+// NTT Config byte offsets (empirically verified from mainnet fixture)
+// ---------------------------------------------------------------------------
+
+/** Offset of the mint pubkey in NTT Config account data */
+export const CONFIG_MINT_OFFSET = 42
+/** Offset of the mode byte (0=Locking, 1=Burning) */
+export const CONFIG_MODE_OFFSET = 106
+/** Offset of the first custody pubkey in NTT Config account data */
+export const CONFIG_CUSTODY_OFFSET_1 = 128
+/** Offset of the second custody pubkey in NTT Config account data */
+export const CONFIG_CUSTODY_OFFSET_2 = 160
+
+/**
+ * Offset of the peer's `address` field in `NttManagerPeer`. Layout:
+ *   disc(8) + bump(1) + address([u8;32]) + token_decimals(1)
+ */
+export const PEER_ADDRESS_OFFSET = 9
 
 // ---------------------------------------------------------------------------
 // Anchor discriminators (sha256("account:<Name>")[..8])
@@ -638,4 +671,52 @@ export function setRegisteredTransceiver(
     rentEpoch: 0,
   })
   return pda
+}
+
+// ---------------------------------------------------------------------------
+// Mainnet-fixture loader + patcher
+// ---------------------------------------------------------------------------
+
+/**
+ * Load the real mainnet NTT Config fixture and patch it so the test's
+ * dynamically-created `onycMint` and `custodyAta` are cemented into the
+ * config (and the mode is forced to Locking — ONyc is canonical on Solana).
+ *
+ * The on-chain layout has TWO custody slots (likely a historical artifact);
+ * both are patched to the same ATA so all NTT code paths see the same
+ * custody account.
+ */
+export function loadAndPatchNttConfig(
+  svm: LiteSVM,
+  onycMint: PublicKey,
+  custodyAta: PublicKey,
+): void {
+  loadFixture(svm, NTT_CONFIG_FIXTURE)
+  const configPda = new PublicKey(NTT_CONFIG_FIXTURE)
+  const acct = svm.getAccount(configPda)
+  if (!acct) {
+    throw new Error('loadAndPatchNttConfig: NTT config not found after loading fixture')
+  }
+  const data = new Uint8Array(acct.data)
+  data.set(onycMint.toBytes(), CONFIG_MINT_OFFSET)
+  data[CONFIG_MODE_OFFSET] = NttMode.Locking
+  data.set(custodyAta.toBytes(), CONFIG_CUSTODY_OFFSET_1)
+  data.set(custodyAta.toBytes(), CONFIG_CUSTODY_OFFSET_2)
+  svm.setAccount(configPda, { ...acct, data })
+}
+
+/**
+ * Read the peer's 32-byte `address` field from the loaded mainnet
+ * `NTT_PEER_FIXTURE`, so inbound message synthesis can use the real
+ * source-NTT-manager pubkey instead of a placeholder.
+ */
+export function readPeerAddress(svm: LiteSVM): Uint8Array {
+  const acct = svm.getAccount(new PublicKey(NTT_PEER_FIXTURE))
+  if (!acct) {
+    throw new Error(
+      'readPeerAddress: NTT_PEER_FIXTURE not loaded into LiteSVM '
+      + '(call loadFixture first)',
+    )
+  }
+  return new Uint8Array(acct.data).slice(PEER_ADDRESS_OFFSET, PEER_ADDRESS_OFFSET + 32)
 }

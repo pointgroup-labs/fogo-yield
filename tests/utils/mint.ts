@@ -1,7 +1,6 @@
 import type { LiteSVM } from 'litesvm'
 import {
   createAssociatedTokenAccountIdempotentInstruction,
-  createAssociatedTokenAccountInstruction,
   createInitializeMint2Instruction,
   createMintToInstruction,
   getAssociatedTokenAddressSync,
@@ -69,9 +68,64 @@ export function createAta(
   const ata = getAssociatedTokenAddressSync(mint, owner, true)
   const tx = buildTx(svm, payer.publicKey)
   tx.add(
-    createAssociatedTokenAccountInstruction(payer.publicKey, ata, owner, mint),
+    createAssociatedTokenAccountIdempotentInstruction(payer.publicKey, ata, owner, mint),
   )
   tx.sign(payer)
   svm.sendTransaction(tx)
   return ata
+}
+
+/**
+ * Create an SPL mint and patch its `mint_authority` to a specific PDA.
+ * SPL Mint layout: mint_authority_option(4) + mint_authority(32) + ...
+ *
+ * Used by NTT-flow tests so the test mint mirrors mainnet ONyc (whose mint
+ * authority is OnRe's mint_authority PDA on real mainnet).
+ */
+export function createMintWithAuthority(
+  svm: LiteSVM,
+  payer: Keypair,
+  mintAuthority: PublicKey,
+  decimals = 6,
+): Keypair {
+  const mint = createMint(svm, payer, decimals)
+  const acct = svm.getAccount(mint.publicKey)
+  if (!acct) {
+    throw new Error('createMintWithAuthority: mint not found after creation')
+  }
+  const data = new Uint8Array(acct.data)
+  data.set(mintAuthority.toBytes(), 4)
+  svm.setAccount(mint.publicKey, { ...acct, data })
+  return mint
+}
+
+/**
+ * Inject a raw, pre-initialized SPL Token account at an arbitrary address.
+ * Bypasses the ATA program — use when the test needs a token account at a
+ * non-canonical address (e.g. a PDA owned by another program).
+ *
+ * SPL TokenAccount layout (165 bytes): mint(32) + owner(32) + amount(u64) +
+ *   delegate_option(36) + state(1) + ... — only the first 109 bytes matter
+ *   for read-only consumers; the rest stays zero.
+ */
+export function createTokenAccount(
+  svm: LiteSVM,
+  address: PublicKey,
+  mint: PublicKey,
+  owner: PublicKey,
+  amount: bigint = 0n,
+): void {
+  const data = new Uint8Array(165)
+  data.set(mint.toBytes(), 0)
+  data.set(owner.toBytes(), 32)
+  const view = new DataView(data.buffer, data.byteOffset)
+  view.setBigUint64(64, amount, true)
+  data[108] = 1 // state = Initialized
+  svm.setAccount(address, {
+    executable: false,
+    owner: TOKEN_PROGRAM_ID,
+    lamports: 2_039_280,
+    data,
+    rentEpoch: 0,
+  })
 }

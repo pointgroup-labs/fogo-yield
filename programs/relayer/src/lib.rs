@@ -33,8 +33,12 @@ pub mod relayer {
 
     /// One-time setup: create the relayer config PDA + USDC/ONyc ATAs
     /// owned by the relayer authority PDA.
-    pub fn initialize(ctx: Context<Initialize>, deposit_fee_bps: u16, withdraw_fee_bps: u16) -> Result<()> {
-        instructions::initialize::handler(ctx, deposit_fee_bps, withdraw_fee_bps)
+    pub fn initialize(
+        ctx: Context<Initialize>,
+        deposit_fee_bps: u16,
+        withdraw_fee_bps: u16,
+    ) -> Result<()> {
+        initialize::handler(ctx, deposit_fee_bps, withdraw_fee_bps)
     }
 
     // ── Deposit leg: FOGO user → Solana → back to FOGO user ─────────
@@ -43,18 +47,18 @@ pub mod relayer {
     /// a `Flow` receipt that binds the eventual bONyc return to that same
     /// user's FOGO wallet.
     pub fn claim_usdc<'info>(ctx: Context<'info, ClaimUsdc<'info>>) -> Result<()> {
-        instructions::claim_usdc::handler(ctx)
+        claim_usdc::handler(ctx)
     }
 
     /// Swap the flow's USDC amount into ONyc via OnRe.
     pub fn swap_usdc_to_onyc<'info>(ctx: Context<'info, SwapUsdcToOnyc<'info>>) -> Result<()> {
-        instructions::swap_usdc_to_onyc::handler(ctx)
+        swap_usdc_to_onyc::handler(ctx)
     }
 
     /// Lock the flow's ONyc amount via Wormhole NTT, sending bONyc back
     /// to the FOGO wallet recorded in the `Flow` PDA. Consumes the PDA.
     pub fn lock_onyc<'info>(ctx: Context<'info, LockOnyc<'info>>) -> Result<()> {
-        instructions::lock_onyc::handler(ctx)
+        lock_onyc::handler(ctx)
     }
 
     // ── Withdrawal leg: FOGO user → Solana → back to FOGO user ──────
@@ -66,30 +70,55 @@ pub mod relayer {
         ctx: Context<'info, UnlockOnyc<'info>>,
         redeem_accounts_len: u8,
     ) -> Result<()> {
-        instructions::unlock_onyc::handler(ctx, redeem_accounts_len)
+        unlock_onyc::handler(ctx, redeem_accounts_len)
     }
 
     /// Swap the flow's ONyc amount into USDC via OnRe.
     pub fn swap_onyc_to_usdc<'info>(ctx: Context<'info, SwapOnycToUsdc<'info>>) -> Result<()> {
-        instructions::swap_onyc_to_usdc::handler(ctx)
+        swap_onyc_to_usdc::handler(ctx)
     }
 
     /// Send the flow's USDC amount back to the FOGO user recorded in
     /// the `Flow` PDA. Consumes the PDA.
     pub fn send_usdc_to_user<'info>(ctx: Context<'info, SendUsdcToUser<'info>>) -> Result<()> {
-        instructions::send_usdc_to_user::handler(ctx)
+        send_usdc_to_user::handler(ctx)
     }
 
     // ── Admin ───────────────────────────────────────────────────────────
 
-    /// Update the deposit and withdrawal fee basis points. Authority-only.
-    pub fn update_fees(ctx: Context<UpdateFees>, deposit_fee_bps: u16, withdraw_fee_bps: u16) -> Result<()> {
-        instructions::update_fees::handler(ctx, deposit_fee_bps, withdraw_fee_bps)
+    /// Update admin-mutable relayer config. Pass `None` for fee args you
+    /// don't want to change; the `fee_vault` account is optional and
+    /// only validated/written when supplied. `new_authority`:
+    /// `Some(pk)` proposes `pk` as the next authority (writes
+    /// `pending_authority`; current `authority` unchanged); `None`
+    /// leaves the proposal slot alone; `Some(Pubkey::default())`
+    /// cancels any in-flight proposal. Authority-only.
+    pub fn configure(
+        ctx: Context<Configure>,
+        deposit_fee_bps: Option<u16>,
+        withdraw_fee_bps: Option<u16>,
+        new_authority: Option<Pubkey>,
+    ) -> Result<()> {
+        configure::handler(ctx, deposit_fee_bps, withdraw_fee_bps, new_authority)
     }
 
-    /// Withdraw accumulated fees from the relayer's token accounts to a
-    /// destination wallet. Authority-only.
-    pub fn withdraw_fees(ctx: Context<WithdrawFees>, amount: u64) -> Result<()> {
-        instructions::withdraw_fees::handler(ctx, amount)
+    /// Two-step authority rotation, step two. Signer must equal
+    /// `relayer_config.pending_authority`; on success that key
+    /// atomically becomes `authority` and the pending slot clears.
+    /// The current authority does NOT participate, by design — the
+    /// two-step pattern lets two independent multisigs rotate
+    /// without atomic cross-multisig coordination.
+    pub fn accept_authority(ctx: Context<AcceptAuthority>) -> Result<()> {
+        accept_authority::handler(ctx)
+    }
+
+    /// Authority-only escape hatch to extract stranded balances from the
+    /// relayer-PDA-owned USDC/ONyc ATAs (pre-upgrade commingled fees,
+    /// dust, accidental direct transfers, etc.). Operational flows always
+    /// move exact `Flow.amount` so anything credited outside a tracked
+    /// flow would otherwise be locked forever. See `sweep.rs` for the
+    /// full trust-model rationale.
+    pub fn sweep(ctx: Context<Sweep>, amount: u64) -> Result<()> {
+        sweep::handler(ctx, amount)
     }
 }

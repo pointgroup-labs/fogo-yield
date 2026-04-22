@@ -55,4 +55,13 @@ pub enum RelayerError {
 
     #[msg("gateway_claim does not match the claim PDA consumed by the Token Bridge CPI")]
     GatewayClaimMismatch,
+
+    #[msg("fee_vault must not alias the relayer's ONyc operating ATA")]
+    FeeVaultAliasesUserAta,
+
+    #[msg("No pending authority — nothing to accept")]
+    NoPendingAuthority,
+
+    #[msg("Signer does not match relayer_config.pending_authority")]
+    PendingAuthorityMismatch,
 }

@@ -2,6 +2,7 @@ import type { Provider } from '@anchor-lang/core'
 import type { PublicKey } from '@solana/web3.js'
 import type { TokenBridgeClaimContext, TokenBridgeTransferContext } from './gateway'
 import type { NttRedeemContext, NttTransferLockContext } from './ntt'
+import type { OnreSwapContext } from './onre'
 import type { Relayer } from './types/fogo_relayer'
 import { BN, Program } from '@anchor-lang/core'
 
@@ -17,7 +18,6 @@ import { FOGO_WORMHOLE_CHAIN_ID, NTT_PROGRAM_ID } from './constants'
 import {
   buildClaimWrappedRemainingAccounts,
   buildTransferWrappedRemainingAccounts,
-
 } from './gateway'
 import IDL from './idl/fogo_relayer.json'
 import {
@@ -28,31 +28,17 @@ import {
   findRegisteredTransceiverPda,
   findSessionAuthorityPda,
   findTokenAuthorityPda,
-
   nttTransferArgsHash,
 } from './ntt'
-import { findAuthorityPda, findConfigPda, findInflightFlowPda, findOutflightFlowPda, findRedeemerAuthorityPda } from './pda'
+import { buildOnreSwapRemainingAccounts } from './onre'
+import {
+  findAuthorityPda,
+  findConfigPda,
+  findInflightFlowPda,
+  findOutflightFlowPda,
+  findRedeemerAuthorityPda,
+} from './pda'
 
-// ---------------------------------------------------------------------------
-// Client
-// ---------------------------------------------------------------------------
-
-/**
- * High-level wrapper around the relayer Anchor program.
- *
- * NOTE: `@anchor-lang/core@1.0.0` converts IDL account names from snake_case
- * to camelCase at runtime, but the generated TypeScript types still reference
- * the original snake_case names. We cast `.accounts()` args to `any` to bridge
- * this mismatch.
- *
- * Each CPI-heavy method (`claimUsdc`, `lockOnyc`, `unlockOnyc`,
- * `sendUsdcToUser`) builds its full `remainingAccounts` array internally —
- * callers pass high-level inputs and named-field context objects rather than
- * positional `AccountMeta[]` lists. The two NTT methods are exercised by
- * `tests/{lock,unlock}-onyc-e2e.test.ts` against the real NTT binary; the
- * two Gateway methods rely on Wormhole-published PDA seeds and are NOT
- * yet covered by an e2e test (see `gateway.ts` `@unverified` notes).
- */
 export class RelayerClient {
   readonly program: Program<Relayer>
   readonly configPda: PublicKey
@@ -66,23 +52,20 @@ export class RelayerClient {
     ;[this.redeemerAuthorityPda] = findRedeemerAuthorityPda(this.program.programId)
   }
 
-  // -------------------------------------------------------------------------
-  // Helpers
-  // -------------------------------------------------------------------------
-
-  private ata(mint: PublicKey, owner: PublicKey = this.authorityPda) {
-    return getAssociatedTokenAddressSync(mint, owner, true)
-  }
-
-  // -------------------------------------------------------------------------
-  // Admin
-  // -------------------------------------------------------------------------
-
-  /** One-time setup: create config PDA + ATAs. */
+  /**
+   * One-time setup: create config PDA + ATAs.
+   *
+   * `feeVault` MUST be a pre-existing token account holding the ONyc mint
+   * AND MUST NOT alias the relayer-owned ONyc ATA — otherwise every fee
+   * transfer becomes a no-op self-transfer (commingling user funds with
+   * fees in the operating ATA, which is the bug the segregated vault
+   * exists to prevent). The relayer program enforces both checks at init.
+   */
   initialize(params: {
     authority: PublicKey
     usdcMint: PublicKey
     onycMint: PublicKey
+    feeVault: PublicKey
     depositFeeBps: number
     withdrawFeeBps: number
   }) {
@@ -98,49 +81,137 @@ export class RelayerClient {
         usdcAta: this.ata(params.usdcMint),
         onycAta: this.ata(params.onycMint),
         redeemerUsdcAta: this.ata(params.usdcMint, this.redeemerAuthorityPda),
+        feeVault: params.feeVault,
         tokenProgram: TOKEN_PROGRAM_ID,
         associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
         systemProgram: SystemProgram.programId,
       } as any)
   }
 
-  /** Update fee basis points. Authority-only. */
-  updateFees(params: {
-    authority: PublicKey
-    depositFeeBps: number
-    withdrawFeeBps: number
-  }) {
-    return (this.program.methods as any)
-      .updateFees(params.depositFeeBps, params.withdrawFeeBps)
+  /**
+   * Update admin-mutable config. All fields are optional:
+   *
+   * - `depositFeeBps` / `withdrawFeeBps`: omit or pass `null` to leave
+   *    unchanged.
+   * - `feeVault`: omit or pass `null` to leave the stored vault unchanged.
+   *    When provided, the on-chain mint check + handler-side anti-aliasing
+   *    check (`fee_vault != onyc_ata`) re-validate the new vault.
+   * - `newAuthority`: two-step authority rotation (propose step).
+   *    `undefined`/`null` leaves the proposal slot unchanged. A
+   *    `PublicKey` proposes that key as the next authority — current
+   *    authority is unchanged until the proposed key signs
+   *    `acceptAuthority` in a separate transaction. Pass
+   *    `PublicKey.default` to cancel any in-flight proposal. A typo
+   *    is harmless: until acceptance, the current authority retains
+   *    full control and can overwrite or cancel.
+   * - `authority`: defaults to the provider's wallet pubkey.
+   * - `onycMint`: lazily fetched from `relayer_config` when omitted.
+   *    Pass it explicitly to avoid the network round-trip when you
+   *    already have it cached.
+   *
+   * Authority-only. Returns a builder; chain `.rpc()` to send.
+   *
+   * @example
+   *   // Fee-only update — fully default ergonomics
+   *   await (await client.configure({ depositFeeBps: 200 })).rpc()
+   *   // Vault rotation with everything explicit
+   *   await (await client.configure({
+   *     authority, onycMint, feeVault: newVault,
+   *   })).rpc()
+   *   // Propose authority rotation (step 1 of 2)
+   *   await (await client.configure({ newAuthority: nextAuthorityPk })).rpc()
+   *   // Then later: nextAuthority signer accepts (step 2 of 2)
+   *   await (await client.acceptAuthority({ pendingAuthority })).rpc()
+   */
+  async configure(params: {
+    authority?: PublicKey
+    onycMint?: PublicKey
+    feeVault?: PublicKey | null
+    depositFeeBps?: number | null
+    withdrawFeeBps?: number | null
+    newAuthority?: PublicKey | null
+  } = {}) {
+    const authority = params.authority
+      ?? (this.program.provider as any).wallet?.publicKey
+      ?? (this.program.provider as any).publicKey
+    if (!authority) {
+      throw new Error('configure: no authority provided and provider has no wallet')
+    }
+
+    // `onyc_mint` is still mandatory on-chain (`has_one = onyc_mint` on
+    // relayer_config runs unconditionally). Lazy-fetch from config when
+    // the caller didn't pass it.
+    const onycMint = params.onycMint ?? ((await this.fetchConfig()).onycMint as PublicKey)
+
+    return this.program.methods
+      .configure(
+        params.depositFeeBps ?? null,
+        params.withdrawFeeBps ?? null,
+        params.newAuthority ?? null,
+      )
       .accounts({
-        authority: params.authority,
+        authority,
+        relayerConfig: this.configPda,
+        relayerAuthority: this.authorityPda,
+        onycMint,
+        onycAta: this.ata(onycMint),
+        feeVault: params.feeVault ?? null,
+        tokenProgram: TOKEN_PROGRAM_ID,
+      } as any)
+  }
+
+  /**
+   * Step two of authority rotation. The signer must equal
+   * `relayer_config.pending_authority` (proposed via a prior
+   * `configure({ newAuthority })` call). On success, the pending key
+   * atomically becomes the new `authority` and the pending slot
+   * clears. The current authority does not need to participate.
+   *
+   * @param params.pendingAuthority - defaults to provider wallet pubkey
+   */
+  async acceptAuthority(params: {
+    pendingAuthority?: PublicKey
+  } = {}) {
+    const pending = params.pendingAuthority
+      ?? (this.program.provider as any).wallet?.publicKey
+      ?? (this.program.provider as any).publicKey
+    if (!pending) {
+      throw new Error('acceptAuthority: no pendingAuthority provided and provider has no wallet')
+    }
+    return this.program.methods
+      .acceptAuthority()
+      .accounts({
+        pendingAuthority: pending,
         relayerConfig: this.configPda,
       } as any)
   }
 
-  /** Withdraw accumulated fees to a destination ATA. Authority-only. */
-  withdrawFees(params: {
+  /**
+   * Authority-only escape hatch to recover stranded balances from the
+   * relayer-PDA-owned USDC/ONyc ATAs. Operational flows always move the
+   * exact `Flow.amount` recorded by the inbound bridge step, so anything
+   * credited outside a tracked flow (pre-upgrade commingled fees, dust,
+   * accidental direct transfers, slippage gains) would otherwise be
+   * locked behind the PDA signature.
+   */
+  sweep(params: {
     authority: PublicKey
     mint: PublicKey
-    toAta: PublicKey
+    to: PublicKey
     amount: BN
   }) {
-    return (this.program.methods as any)
-      .withdrawFees(params.amount)
+    return this.program.methods
+      .sweep(params.amount)
       .accounts({
         authority: params.authority,
         relayerConfig: this.configPda,
         relayerAuthority: this.authorityPda,
         mint: params.mint,
-        fromAta: this.ata(params.mint),
-        toAta: params.toAta,
+        from: this.ata(params.mint),
+        to: params.to,
         tokenProgram: TOKEN_PROGRAM_ID,
       } as any)
   }
-
-  // -------------------------------------------------------------------------
-  // Deposit flow (USDC → ONyc → bONyc back to FOGO)
-  // -------------------------------------------------------------------------
 
   /**
    * Claim bridged USDC and create an inflight flow PDA. The SDK builds the
@@ -160,7 +231,7 @@ export class RelayerClient {
   }) {
     const [inflightFlow] = findInflightFlowPda(params.gatewayClaim, this.program.programId)
     const redeemerUsdcAta = this.ata(params.usdcMint, this.redeemerAuthorityPda)
-    const builder = (this.program.methods as any)
+    const builder = this.program.methods
       .claimUsdc()
       .accounts({
         payer: params.payer,
@@ -197,14 +268,25 @@ export class RelayerClient {
     )
   }
 
-  /** Swap USDC to ONyc via OnRe. */
+  /**
+   * Swap USDC to ONyc via OnRe (deposit leg). The SDK assembles OnRe's
+   * 22-entry `remainingAccounts` list when `onre` is supplied. Omit it for
+   * failure-path tests that exercise relayer-side validation before the CPI.
+   */
   swapUsdcToOnyc(params: {
     usdcMint: PublicKey
     onycMint: PublicKey
     gatewayClaim: PublicKey
+    /**
+     * OnRe context overrides. Pass an empty object `{}` to use mainnet
+     * defaults (state PDA, boss pubkey, derived ATAs). Omit entirely to
+     * leave `remainingAccounts` empty for callers that need to chain
+     * their own.
+     */
+    onre?: OnreSwapContext
   }) {
     const [inflightFlow] = findInflightFlowPda(params.gatewayClaim, this.program.programId)
-    return (this.program.methods as any)
+    const builder = this.program.methods
       .swapUsdcToOnyc()
       .accounts({
         relayerConfig: this.configPda,
@@ -217,6 +299,20 @@ export class RelayerClient {
         inflightFlow,
         tokenProgram: TOKEN_PROGRAM_ID,
       } as any)
+
+    if (!params.onre) {
+      return builder
+    }
+    return builder.remainingAccounts(
+      buildOnreSwapRemainingAccounts({
+        tokenInMint: params.usdcMint,
+        tokenOutMint: params.onycMint,
+        userTokenInAccount: this.ata(params.usdcMint),
+        userTokenOutAccount: this.ata(params.onycMint),
+        user: this.authorityPda,
+        ctx: params.onre,
+      }),
+    )
   }
 
   /**
@@ -248,7 +344,7 @@ export class RelayerClient {
      */
     ntt?: NttTransferLockContext
   }) {
-    const builder = (this.program.methods as any)
+    const builder = this.program.methods
       .lockOnyc()
       .accounts({
         payer: params.payer,
@@ -265,6 +361,7 @@ export class RelayerClient {
     if (!params.ntt) {
       return builder
     }
+
     if (!params.flowAmount || !params.flowFogoSender || !params.outboxItem) {
       throw new Error('lockOnyc: when `ntt` is provided, `flowAmount`, `flowFogoSender`, and `outboxItem` are also required')
     }
@@ -282,10 +379,6 @@ export class RelayerClient {
       }),
     )
   }
-
-  // -------------------------------------------------------------------------
-  // Withdrawal flow (bONyc → ONyc → USDC back to FOGO)
-  // -------------------------------------------------------------------------
 
   /**
    * Unlock ONyc from NTT (redeem + release_inbound_unlock) and create an
@@ -317,7 +410,7 @@ export class RelayerClient {
         })
       : null
 
-    const builder = (this.program.methods as any)
+    const builder = this.program.methods
       .unlockOnyc(built ? built.redeemAccountsLen : (params.redeemAccountsLen ?? 0))
       .accounts({
         payer: params.payer,
@@ -335,14 +428,22 @@ export class RelayerClient {
     return built ? builder.remainingAccounts(built.remainingAccounts) : builder
   }
 
-  /** Swap ONyc to USDC via OnRe. */
+  /**
+   * Swap ONyc to USDC via OnRe (withdrawal leg). The SDK assembles OnRe's
+   * 22-entry `remainingAccounts` list when `onre` is supplied. Omit it for
+   * failure-path tests that exercise relayer-side validation before the CPI.
+   */
   swapOnycToUsdc(params: {
     usdcMint: PublicKey
     onycMint: PublicKey
     nttInboxItem: PublicKey
+    /**
+     * OnRe context overrides. Same semantics as `swapUsdcToOnyc.onre`.
+     */
+    onre?: OnreSwapContext
   }) {
     const [outflightFlow] = findOutflightFlowPda(params.nttInboxItem, this.program.programId)
-    return (this.program.methods as any)
+    const builder = this.program.methods
       .swapOnycToUsdc()
       .accounts({
         relayerConfig: this.configPda,
@@ -355,6 +456,21 @@ export class RelayerClient {
         outflightFlow,
         tokenProgram: TOKEN_PROGRAM_ID,
       } as any)
+
+    if (!params.onre) {
+      return builder
+    }
+    return builder.remainingAccounts(
+      buildOnreSwapRemainingAccounts({
+        // Withdrawal direction: ONyc in, USDC out.
+        tokenInMint: params.onycMint,
+        tokenOutMint: params.usdcMint,
+        userTokenInAccount: this.ata(params.onycMint),
+        userTokenOutAccount: this.ata(params.usdcMint),
+        user: this.authorityPda,
+        ctx: params.onre,
+      }),
+    )
   }
 
   /**
@@ -378,7 +494,7 @@ export class RelayerClient {
     message?: PublicKey
   }) {
     const [outflightFlow] = findOutflightFlowPda(params.nttInboxItem, this.program.programId)
-    const builder = (this.program.methods as any)
+    const builder = this.program.methods
       .sendUsdcToUser()
       .accounts({
         payer: params.payer,
@@ -411,10 +527,6 @@ export class RelayerClient {
       }),
     )
   }
-
-  // -------------------------------------------------------------------------
-  // Internal NTT account builders (proven layouts — see lock/unlock e2e tests)
-  // -------------------------------------------------------------------------
 
   /**
    * Build the concatenated `redeem ‖ release ‖ NTT_PROGRAM_ID` account list
@@ -540,10 +652,6 @@ export class RelayerClient {
     ]
   }
 
-  // -------------------------------------------------------------------------
-  // Account fetchers
-  // -------------------------------------------------------------------------
-
   /** Fetch the relayer config account. */
   async fetchConfig() {
     return (this.program.account as any).relayerConfig.fetch(this.configPda)
@@ -559,5 +667,11 @@ export class RelayerClient {
   async fetchOutflightFlow(nttInboxItem: PublicKey) {
     const [pda] = findOutflightFlowPda(nttInboxItem, this.program.programId)
     return (this.program.account as any).flow.fetch(pda)
+  }
+
+  // Helpers
+
+  private ata(mint: PublicKey, owner: PublicKey = this.authorityPda) {
+    return getAssociatedTokenAddressSync(mint, owner, true)
   }
 }

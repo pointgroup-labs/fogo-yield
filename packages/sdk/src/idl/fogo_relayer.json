@@ -21,6 +21,65 @@
   ],
   "instructions": [
     {
+      "name": "accept_authority",
+      "docs": [
+        "Two-step authority rotation, step two. Signer must equal",
+        "`relayer_config.pending_authority`; on success that key",
+        "atomically becomes `authority` and the pending slot clears.",
+        "The current authority does NOT participate, by design — the",
+        "two-step pattern lets two independent multisigs rotate",
+        "without atomic cross-multisig coordination."
+      ],
+      "discriminator": [
+        107,
+        86,
+        198,
+        91,
+        33,
+        12,
+        107,
+        160
+      ],
+      "accounts": [
+        {
+          "name": "pending_authority",
+          "docs": [
+            "The proposed new authority. Must equal",
+            "`relayer_config.pending_authority`."
+          ],
+          "signer": true
+        },
+        {
+          "name": "relayer_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  108,
+                  97,
+                  121,
+                  101,
+                  114,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "claim_usdc",
       "docs": [
         "Claim USDC bridged from a FOGO user via Wormhole Gateway. Creates",
@@ -292,6 +351,188 @@
         }
       ],
       "args": []
+    },
+    {
+      "name": "configure",
+      "docs": [
+        "Update admin-mutable relayer config. Pass `None` for fee args you",
+        "don't want to change; the `fee_vault` account is optional and",
+        "only validated/written when supplied. `new_authority`:",
+        "`Some(pk)` proposes `pk` as the next authority (writes",
+        "`pending_authority`; current `authority` unchanged); `None`",
+        "leaves the proposal slot alone; `Some(Pubkey::default())`",
+        "cancels any in-flight proposal. Authority-only."
+      ],
+      "discriminator": [
+        245,
+        7,
+        108,
+        117,
+        95,
+        196,
+        54,
+        217
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "relayer_config"
+          ]
+        },
+        {
+          "name": "relayer_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  108,
+                  97,
+                  121,
+                  101,
+                  114,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "relayer_authority",
+          "docs": [
+            "Relayer authority PDA — owns `onyc_ata`. Re-derived here so the",
+            "associated-token derivation on `onyc_ata` resolves and the",
+            "anti-aliasing constraint can compare a fully-typed ATA pubkey."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  108,
+                  97,
+                  121,
+                  101,
+                  114
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "onyc_mint",
+          "relations": [
+            "relayer_config"
+          ]
+        },
+        {
+          "name": "onyc_ata",
+          "docs": [
+            "The relayer's operating ONyc ATA — referenced solely to enforce",
+            "`fee_vault != onyc_ata`. Not mutated."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "relayer_authority"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "onyc_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "fee_vault",
+          "docs": [
+            "New fee vault destination. `None` to leave the stored vault",
+            "unchanged. When `Some`, must hold ONyc; the anti-aliasing check",
+            "(`fee_vault != onyc_ata`) runs in the handler since Anchor's",
+            "constraint-attribute expressions can't cleanly disambiguate",
+            "`Option::as_ref` against `InterfaceAccount`'s `AsRef` impls."
+          ],
+          "optional": true
+        },
+        {
+          "name": "token_program"
+        }
+      ],
+      "args": [
+        {
+          "name": "deposit_fee_bps",
+          "type": {
+            "option": "u16"
+          }
+        },
+        {
+          "name": "withdraw_fee_bps",
+          "type": {
+            "option": "u16"
+          }
+        },
+        {
+          "name": "new_authority",
+          "type": {
+            "option": "pubkey"
+          }
+        }
+      ]
     },
     {
       "name": "initialize",
@@ -589,6 +830,16 @@
               ]
             }
           }
+        },
+        {
+          "name": "fee_vault",
+          "docs": [
+            "Single fee vault — any pre-existing ONyc token account, supplied by",
+            "the deployer at init time. The anti-aliasing constraint prevents the",
+            "caller from passing the relayer's own ONyc ATA, which would silently",
+            "no-op every fee transfer (self-transfer) and let user funds and fees",
+            "keep commingling — defeating the whole point of the vault split."
+          ]
         },
         {
           "name": "token_program"
@@ -1159,6 +1410,18 @@
           }
         },
         {
+          "name": "fee_vault",
+          "docs": [
+            "Single fee vault — receives the pre-swap withdrawal fee. Pinned by",
+            "`has_one = fee_vault` on `relayer_config`. Can be any pre-existing",
+            "ONyc token account (configured at `initialize` time)."
+          ],
+          "writable": true,
+          "relations": [
+            "relayer_config"
+          ]
+        },
+        {
           "name": "ntt_inbox_item",
           "docs": [
             "NTT inbox-item PDA — seed material for the flow PDA."
@@ -1387,6 +1650,19 @@
           }
         },
         {
+          "name": "fee_vault",
+          "docs": [
+            "Single fee vault — receives the post-swap deposit fee. Pinned by",
+            "`has_one = fee_vault` on `relayer_config`. Can be any pre-existing",
+            "ONyc token account (configured at `initialize` time); does not need",
+            "to be relayer-owned."
+          ],
+          "writable": true,
+          "relations": [
+            "relayer_config"
+          ]
+        },
+        {
           "name": "gateway_claim",
           "docs": [
             "Gateway claim PDA — seed material for the flow PDA."
@@ -1425,6 +1701,167 @@
         }
       ],
       "args": []
+    },
+    {
+      "name": "sweep",
+      "docs": [
+        "Authority-only escape hatch to extract stranded balances from the",
+        "relayer-PDA-owned USDC/ONyc ATAs (pre-upgrade commingled fees,",
+        "dust, accidental direct transfers, etc.). Operational flows always",
+        "move exact `Flow.amount` so anything credited outside a tracked",
+        "flow would otherwise be locked forever. See `sweep.rs` for the",
+        "full trust-model rationale."
+      ],
+      "discriminator": [
+        40,
+        23,
+        234,
+        175,
+        14,
+        61,
+        154,
+        177
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "relayer_config"
+          ]
+        },
+        {
+          "name": "relayer_config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  108,
+                  97,
+                  121,
+                  101,
+                  114,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "relayer_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  108,
+                  97,
+                  121,
+                  101,
+                  114
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint",
+          "docs": [
+            "The mint of the tokens being swept. Constrained at runtime to be",
+            "either `usdc_mint` or `onyc_mint` from `relayer_config`."
+          ]
+        },
+        {
+          "name": "from",
+          "docs": [
+            "Source — the relayer-authority-owned ATA for `mint`. The",
+            "associated-token derivation pins this implicitly."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "relayer_authority"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "to",
+          "docs": [
+            "Destination — any token account holding `mint`. Authority's",
+            "discretion (typically the configured `fee_vault` for ONyc, or a",
+            "treasury account for USDC)."
+          ],
+          "writable": true
+        },
+        {
+          "name": "token_program"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
     },
     {
       "name": "unlock_onyc",
@@ -1619,218 +2056,6 @@
           "type": "u8"
         }
       ]
-    },
-    {
-      "name": "update_fees",
-      "docs": [
-        "Update the deposit and withdrawal fee basis points. Authority-only."
-      ],
-      "discriminator": [
-        225,
-        27,
-        13,
-        6,
-        69,
-        84,
-        172,
-        191
-      ],
-      "accounts": [
-        {
-          "name": "authority",
-          "signer": true,
-          "relations": [
-            "relayer_config"
-          ]
-        },
-        {
-          "name": "relayer_config",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  114,
-                  101,
-                  108,
-                  97,
-                  121,
-                  101,
-                  114,
-                  95,
-                  99,
-                  111,
-                  110,
-                  102,
-                  105,
-                  103
-                ]
-              }
-            ]
-          }
-        }
-      ],
-      "args": [
-        {
-          "name": "deposit_fee_bps",
-          "type": "u16"
-        },
-        {
-          "name": "withdraw_fee_bps",
-          "type": "u16"
-        }
-      ]
-    },
-    {
-      "name": "withdraw_fees",
-      "docs": [
-        "Withdraw accumulated fees from the relayer's token accounts to a",
-        "destination wallet. Authority-only."
-      ],
-      "discriminator": [
-        198,
-        212,
-        171,
-        109,
-        144,
-        215,
-        174,
-        89
-      ],
-      "accounts": [
-        {
-          "name": "authority",
-          "signer": true,
-          "relations": [
-            "relayer_config"
-          ]
-        },
-        {
-          "name": "relayer_config",
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  114,
-                  101,
-                  108,
-                  97,
-                  121,
-                  101,
-                  114,
-                  95,
-                  99,
-                  111,
-                  110,
-                  102,
-                  105,
-                  103
-                ]
-              }
-            ]
-          }
-        },
-        {
-          "name": "relayer_authority",
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  114,
-                  101,
-                  108,
-                  97,
-                  121,
-                  101,
-                  114
-                ]
-              }
-            ]
-          }
-        },
-        {
-          "name": "mint"
-        },
-        {
-          "name": "from_ata",
-          "docs": [
-            "Source: relayer authority's ATA for the given mint."
-          ],
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "account",
-                "path": "relayer_authority"
-              },
-              {
-                "kind": "account",
-                "path": "token_program"
-              },
-              {
-                "kind": "account",
-                "path": "mint"
-              }
-            ],
-            "program": {
-              "kind": "const",
-              "value": [
-                140,
-                151,
-                37,
-                143,
-                78,
-                36,
-                137,
-                241,
-                187,
-                61,
-                16,
-                41,
-                20,
-                142,
-                13,
-                131,
-                11,
-                90,
-                19,
-                153,
-                218,
-                255,
-                16,
-                132,
-                4,
-                142,
-                123,
-                216,
-                219,
-                233,
-                248,
-                89
-              ]
-            }
-          }
-        },
-        {
-          "name": "to_ata",
-          "docs": [
-            "Destination: any token account for the same mint."
-          ],
-          "writable": true
-        },
-        {
-          "name": "token_program"
-        }
-      ],
-      "args": [
-        {
-          "name": "amount",
-          "type": "u64"
-        }
-      ]
     }
   ],
   "accounts": [
@@ -1876,6 +2101,19 @@
       ]
     },
     {
+      "name": "OnycSwapped",
+      "discriminator": [
+        220,
+        205,
+        135,
+        206,
+        94,
+        131,
+        34,
+        57
+      ]
+    },
+    {
       "name": "OnycUnlocked",
       "discriminator": [
         66,
@@ -1912,6 +2150,19 @@
         238,
         242,
         73
+      ]
+    },
+    {
+      "name": "UsdcSwapped",
+      "discriminator": [
+        146,
+        221,
+        3,
+        190,
+        76,
+        26,
+        133,
+        81
       ]
     }
   ],
@@ -2005,6 +2256,21 @@
       "code": 6017,
       "name": "GatewayClaimMismatch",
       "msg": "gateway_claim does not match the claim PDA consumed by the Token Bridge CPI"
+    },
+    {
+      "code": 6018,
+      "name": "FeeVaultAliasesUserAta",
+      "msg": "fee_vault must not alias the relayer's ONyc operating ATA"
+    },
+    {
+      "code": 6019,
+      "name": "NoPendingAuthority",
+      "msg": "No pending authority — nothing to accept"
+    },
+    {
+      "code": 6020,
+      "name": "PendingAuthorityMismatch",
+      "msg": "Signer does not match relayer_config.pending_authority"
     }
   ],
   "types": [
@@ -2103,9 +2369,7 @@
       "name": "OnycLocked",
       "docs": [
         "Emitted by `lock_onyc` after NTT locks the flow's ONyc amount and",
-        "initiates the bONyc transfer back to FOGO. No fee is applied on the",
-        "outbound leg (it was already taken on the inbound `claim_usdc`), so",
-        "`amount` is the single relevant figure."
+        "initiates the bONyc transfer back to FOGO."
       ],
       "type": {
         "kind": "struct",
@@ -2135,11 +2399,44 @@
       }
     },
     {
+      "name": "OnycSwapped",
+      "docs": [
+        "Emitted by `swap_usdc_to_onyc` after the OnRe swap completes and the",
+        "post-swap deposit fee has been moved to the fee vault.",
+        "",
+        "`gross_amount` = ONyc received from OnRe (pre-fee).",
+        "`fee_amount`   = deposit fee retained by the relayer (gross - net).",
+        "`net_amount`   = ONyc recorded on the `Flow` PDA (== amount the eventual",
+        "`lock_onyc` will ship back to FOGO)."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "flow",
+            "type": "pubkey"
+          },
+          {
+            "name": "gross_amount",
+            "type": "u64"
+          },
+          {
+            "name": "fee_amount",
+            "type": "u64"
+          },
+          {
+            "name": "net_amount",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
       "name": "OnycUnlocked",
       "docs": [
         "Emitted by `unlock_onyc` after the NTT redeem + release CPIs land ONyc",
-        "in the relayer ATA and the withdrawal fee is applied. Fields mirror",
-        "`UsdcClaimed` — same semantics, opposite direction."
+        "in the relayer ATA. No fee logic on this leg — fees are taken at",
+        "`swap_onyc_to_usdc`."
       ],
       "type": {
         "kind": "struct",
@@ -2162,15 +2459,7 @@
             }
           },
           {
-            "name": "gross_amount",
-            "type": "u64"
-          },
-          {
-            "name": "fee_amount",
-            "type": "u64"
-          },
-          {
-            "name": "net_amount",
+            "name": "amount",
             "type": "u64"
           }
         ]
@@ -2197,6 +2486,20 @@
             "type": "pubkey"
           },
           {
+            "name": "pending_authority",
+            "docs": [
+              "Pending admin key, set by `configure(new_authority=Some(pk))`.",
+              "Becomes `authority` only after a separate `accept_authority`",
+              "transaction signed by this key. `None` when no rotation is",
+              "in flight. Two-step design accommodates multisig→multisig",
+              "rotations where the two parties cannot atomically co-sign",
+              "(e.g. two independent Squads vaults)."
+            ],
+            "type": {
+              "option": "pubkey"
+            }
+          },
+          {
             "name": "usdc_mint",
             "docs": [
               "USDC token mint on Solana."
@@ -2207,6 +2510,15 @@
             "name": "onyc_mint",
             "docs": [
               "ONyc token mint on Solana."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "fee_vault",
+            "docs": [
+              "Single fee vault — PDA-addressed token account holding ALL",
+              "accumulated fees (both deposit-leg and withdrawal-leg, denominated",
+              "in ONyc)."
             ],
             "type": "pubkey"
           },
@@ -2245,12 +2557,7 @@
       "name": "UsdcClaimed",
       "docs": [
         "Emitted by `claim_usdc` after the Gateway CPI lands USDC in the relayer",
-        "ATA and the deposit fee is applied.",
-        "",
-        "`gross_amount` = amount TB actually minted (pre-fee).",
-        "`fee_amount`   = deposit fee retained by the relayer (gross - net).",
-        "`net_amount`   = amount recorded on the `Flow` PDA (== value of the",
-        "eventual ONyc swap on the next step)."
+        "ATA. No fee logic on this leg — fees are taken at `swap_usdc_to_onyc`."
       ],
       "type": {
         "kind": "struct",
@@ -2273,15 +2580,7 @@
             }
           },
           {
-            "name": "gross_amount",
-            "type": "u64"
-          },
-          {
-            "name": "fee_amount",
-            "type": "u64"
-          },
-          {
-            "name": "net_amount",
+            "name": "amount",
             "type": "u64"
           }
         ]
@@ -2291,8 +2590,7 @@
       "name": "UsdcSentToUser",
       "docs": [
         "Emitted by `send_usdc_to_user` after the Gateway outbound transfer is",
-        "submitted. No fee applied on this leg (taken at `unlock_onyc`), so",
-        "`amount` is the single relevant figure."
+        "submitted."
       ],
       "type": {
         "kind": "struct",
@@ -2316,6 +2614,44 @@
           },
           {
             "name": "amount",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "UsdcSwapped",
+      "docs": [
+        "Emitted by `swap_onyc_to_usdc` after the pre-swap fee has been moved",
+        "to the fee vault and the OnRe swap completes.",
+        "",
+        "`gross_amount`  = ONyc input to the swap step (pre-fee, == flow.amount",
+        "from `unlock_onyc`).",
+        "`fee_amount`    = withdrawal fee in ONyc (taken pre-swap).",
+        "`net_amount`    = ONyc actually swapped (gross - fee).",
+        "`usdc_received` = USDC received from OnRe (recorded on the Flow PDA)."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "flow",
+            "type": "pubkey"
+          },
+          {
+            "name": "gross_amount",
+            "type": "u64"
+          },
+          {
+            "name": "fee_amount",
+            "type": "u64"
+          },
+          {
+            "name": "net_amount",
+            "type": "u64"
+          },
+          {
+            "name": "usdc_received",
             "type": "u64"
           }
         ]

@@ -31,7 +31,6 @@ export interface FlowData {
  * Total: 82 bytes
  */
 export function serializeFlow(flow: FlowData): Uint8Array {
-  const RELAYER_PROGRAM_ID = new PublicKey('Re1ayRHhmeqByGjgT5uLFExZCvQ8sv6LK74xowK8pJH')
   const data = new Uint8Array(8 + 32 + 1 + 8 + 32 + 1) // 82 bytes
   const view = new DataView(data.buffer)
 

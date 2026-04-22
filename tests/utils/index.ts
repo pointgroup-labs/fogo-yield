@@ -1,10 +1,11 @@
-export { expectError, extractErrorCode } from './errors'
-export { loadAllFixtures, loadFixture, loadFixtures } from './fixture-loader'
-export { createAta, createMint, mintTo } from './mint'
+export { expectError, expectFailure, extractErrorCode, failedInProgram, logMatches } from './errors'
+export { loadAllFixtures, loadFixture, loadFixtures, readFixtureBytes } from './fixture-loader'
+export { createAta, createMint, createMintWithAuthority, createTokenAccount, mintTo } from './mint'
 export { FlowStatus, serializeFlow, setFlowAccount } from './mock-accounts'
 export { buildPostedVaaData, setPostedVaa } from './mock-vaa'
 export * from './ntt-accounts'
 export * from './onre-accounts'
+export { loadAndPatchOnreOffer } from './onre-fixtures'
 export { createProvider, createSvm } from './svm'
 export {
   createWrappedMint,

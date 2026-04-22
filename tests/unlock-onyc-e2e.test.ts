@@ -29,61 +29,21 @@ import { getAssociatedTokenAddressSync, TOKEN_PROGRAM_ID } from '@solana/spl-tok
 import { Keypair, PublicKey } from '@solana/web3.js'
 import {
   computeInboxItemHash,
+  createAta,
   createMint,
+  createMintWithAuthority,
   createProvider,
   createSvm,
   findValidatedTransceiverMessagePda,
+  loadAndPatchNttConfig,
   loadFixture,
+  NTT_INBOX_RL_FIXTURE,
+  NTT_OUTBOX_RL_FIXTURE,
+  NTT_PEER_FIXTURE,
+  readPeerAddress,
   setRegisteredTransceiver,
   setValidatedTransceiverMessage,
 } from './utils'
-
-// Real mainnet NTT fixture addresses (loaded and patched, same as lock-onyc-e2e)
-const NTT_CONFIG_FIXTURE = 'BM8Bb4nMdMgWCRMGsX6GNspU2ez8gb8WGjW1tpYjFLN1'
-const NTT_PEER_FIXTURE = 'Cnabq7SzA2oqcxn4RGEcNeUS9J1uzptkNvyRmUemgRQ7'
-const NTT_INBOX_RL_FIXTURE = '9sLBr3r7VkvwHVm6N3FBRwBj4ogM22bJkocVc2hfhXdR'
-const NTT_OUTBOX_RL_FIXTURE = '8TRJb54ydBnVe5QcrU7GhDL6xzm3FdhuPm4BdSJ4J22v'
-
-// NTT Config byte offsets — same as lock-onyc-e2e
-const CONFIG_MINT_OFFSET = 42
-const CONFIG_MODE_OFFSET = 106
-const CONFIG_CUSTODY_OFFSET_1 = 128
-const CONFIG_CUSTODY_OFFSET_2 = 160
-
-// NttManagerPeer layout: disc(8) + bump(1) + address([u8;32]@9) + token_decimals(1)
-const PEER_ADDRESS_OFFSET = 9
-
-function createMintWithAuthority(
-  svm: LiteSVM,
-  payer: Keypair,
-  mintAuthority: PublicKey,
-  decimals = 6,
-): Keypair {
-  const mint = createMint(svm, payer, decimals)
-  const acct = svm.getAccount(mint.publicKey)!
-  const data = new Uint8Array(acct.data)
-  data.set(mintAuthority.toBytes(), 4)
-  svm.setAccount(mint.publicKey, { ...acct, data })
-  return mint
-}
-
-function loadAndPatchNttConfig(svm: LiteSVM, onycMint: PublicKey, custodyAta: PublicKey): void {
-  loadFixture(svm, NTT_CONFIG_FIXTURE)
-  const configPda = new PublicKey(NTT_CONFIG_FIXTURE)
-  const acct = svm.getAccount(configPda)!
-  const data = new Uint8Array(acct.data)
-  data.set(onycMint.toBytes(), CONFIG_MINT_OFFSET)
-  data[CONFIG_MODE_OFFSET] = 0 // Locking
-  data.set(custodyAta.toBytes(), CONFIG_CUSTODY_OFFSET_1)
-  data.set(custodyAta.toBytes(), CONFIG_CUSTODY_OFFSET_2)
-  svm.setAccount(configPda, { ...acct, data })
-}
-
-/** Read the peer's `address` field so our message uses the real source_ntt_manager. */
-function readPeerAddress(svm: LiteSVM): Uint8Array {
-  const acct = svm.getAccount(new PublicKey(NTT_PEER_FIXTURE))!
-  return new Uint8Array(acct.data).slice(PEER_ADDRESS_OFFSET, PEER_ADDRESS_OFFSET + 32)
-}
 
 describe('unlock_onyc e2e (NTT redeem + release_inbound_unlock, Locking mode)', () => {
   let svm: LiteSVM
@@ -110,11 +70,14 @@ describe('unlock_onyc e2e (NTT redeem + release_inbound_unlock, Locking mode)', 
     usdcMint = createMint(svm, authority, 6)
     onycMint = createMintWithAuthority(svm, authority, nttTokenAuthorityPda, 6)
 
+    const feeVault = createAta(svm, authority, onycMint.publicKey, authority.publicKey)
+
     await client
       .initialize({
         authority: authority.publicKey,
         usdcMint: usdcMint.publicKey,
         onycMint: onycMint.publicKey,
+        feeVault,
         depositFeeBps: 50,
         withdrawFeeBps: 100,
       })
@@ -254,9 +217,10 @@ describe('unlock_onyc e2e (NTT redeem + release_inbound_unlock, Locking mode)', 
     const status = flowData[40]
     expect(status).toBe(0) // FlowStatus.Claimed (variant 0 in declaration order)
     const recordedAmount = new DataView(flowData.buffer, flowData.byteOffset).getBigUint64(41, true)
-    // withdraw_fee_bps = 100 → net = amount * 99 / 100
-    const expectedNet = (amount * 9900n) / 10_000n
-    expect(recordedAmount).toBe(expectedNet)
+    // unlock_onyc is now a pure pass-through — the withdrawal fee is
+    // applied later (pre-swap) inside `swap_onyc_to_usdc`. Flow.amount
+    // here equals the gross amount released from NTT custody.
+    expect(recordedAmount).toBe(amount)
 
     // Assert: ONyc landed in relayer's ATA
     const relayerAtaAcct = svm.getAccount(onycAta)!

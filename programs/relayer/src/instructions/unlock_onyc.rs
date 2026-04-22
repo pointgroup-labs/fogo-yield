@@ -2,8 +2,8 @@ use anchor_lang::prelude::*;
 use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
 
 use crate::constants::{
-    CONFIG_SEED, FLOW_OUTBOUND_SEED, NTT_PROGRAM_ID, NTT_REDEEM_IX,
-    NTT_RELEASE_INBOUND_UNLOCK_IX, RELAYER_SEED,
+    CONFIG_SEED, FLOW_OUTBOUND_SEED, NTT_PROGRAM_ID, NTT_REDEEM_IX, NTT_RELEASE_INBOUND_UNLOCK_IX,
+    RELAYER_SEED,
 };
 use crate::cpi::invoke_relayer_signed;
 use crate::error::RelayerError;
@@ -143,16 +143,20 @@ pub fn handler<'info>(
 
     // Delta = what this specific VAA released.
     ctx.accounts.onyc_ata.reload()?;
-    let amount = ctx.accounts.onyc_ata.amount
+    let amount = ctx
+        .accounts
+        .onyc_ata
+        .amount
         .checked_sub(pre_balance)
         .ok_or(RelayerError::BalanceUnderflow)?;
-    let (net_amount, fee_amount) = ctx.accounts.relayer_config.apply_withdraw_fee(amount)?;
+    require!(amount > 0, RelayerError::ZeroAmountFlow);
+
     let flow_key = ctx.accounts.outflight_flow.key();
 
     let flow = &mut ctx.accounts.outflight_flow;
     flow.fogo_sender = fogo_sender;
     flow.status = FlowStatus::Claimed;
-    flow.amount = net_amount;
+    flow.amount = amount;
     flow.payer = ctx.accounts.payer.key();
     flow.bump = ctx.bumps.outflight_flow;
 
@@ -160,9 +164,7 @@ pub fn handler<'info>(
         flow: flow_key,
         ntt_inbox_item: ctx.accounts.ntt_inbox_item.key(),
         fogo_sender,
-        gross_amount: amount,
-        fee_amount,
-        net_amount,
+        amount,
     });
 
     Ok(())

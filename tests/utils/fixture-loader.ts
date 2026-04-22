@@ -81,3 +81,15 @@ export function loadAllFixtures(svm: LiteSVM): Map<string, PublicKey> {
   const addresses = files.map(f => path.basename(f, '.json'))
   return loadFixtures(svm, addresses)
 }
+
+/**
+ * Read the raw account-data bytes from a fixture file WITHOUT injecting it
+ * into LiteSVM. Used when the caller needs to patch the bytes (mint pubkeys,
+ * pricing fields, etc.) before placing them under a different PDA than the
+ * fixture's original pubkey — e.g. derived from test mints.
+ */
+export function readFixtureBytes(address: string): Uint8Array {
+  const filePath = path.join(FIXTURES_DIR, `${address}.json`)
+  const json: FixtureJson = JSON.parse(fs.readFileSync(filePath, 'utf-8'))
+  return new Uint8Array(Buffer.from(json.account.data[0], 'base64'))
+}
