@@ -1,0 +1,99 @@
+# CI for fogo-onre.
+#
+# Two jobs run in parallel:
+#   - rust:       fmt + clippy + unit tests for the on-chain program. Skips
+#                 `anchor build --verifiable` (Docker-heavy, slow on PRs).
+#                 Verified builds happen via the deploy workflow only.
+#   - typescript: pnpm install + lint + vitest. Catches IDL drift, SDK
+#                 regressions, and the relayer-side e2e LiteSVM tests.
+#
+# Note: there is no automated CI alarm on changes to the CPI program IDs
+# or instruction tags in `programs/relayer/src/constants.rs`. A malicious
+# or accidental swap would compile and pass every test. Reviewer attention
+# on `constants.rs` diffs is the only line of defense — see
+# `docs/SECURITY_MODEL.md` §7 and `docs/PRE_DEPLOY_CHECKLIST.md` §1.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    name: rust (fmt + clippy + unit tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Rust toolchain version is pinned by `rust-toolchain.toml`; the
+      # action reads it automatically.
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: cargo fmt --all -- --check
+        run: cargo fmt --all -- --check
+
+      # `-D warnings` promotes any clippy lint to an error so they can't
+      # accumulate on main. If a lint is genuinely unfixable, prefer an
+      # `#[allow(...)]` with a comment over relaxing CI.
+      - name: cargo clippy --workspace
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      # `--lib` runs the in-tree unit tests without needing the Anchor
+      # IDL build pipeline.
+      - name: cargo test --lib
+        run: cargo test -p fogo-relayer --lib
+
+  typescript:
+    name: typescript (lint + tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          # Match `packageManager` field in package.json. Bumping pnpm
+          # requires updating both places.
+          version: 10.33.0
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: pnpm install
+        # --frozen-lockfile guarantees CI fails on lockfile drift instead
+        # of silently regenerating, which would mask dependency changes.
+        run: pnpm install --frozen-lockfile
+
+      - name: pnpm lint (non-blocking)
+        # The codebase has ~2700 pre-existing style/max-statements-per-line
+        # errors from before CI existed. Cleaning them up is its own task
+        # (`pnpm lint --fix` auto-resolves most). Until that lands, lint
+        # surfaces as a warning-only step so CI doesn't block on
+        # unrelated style debt.
+        # TODO(deploy): once lint is clean, drop `continue-on-error`.
+        continue-on-error: true
+        run: pnpm lint
+
+      # Runs the LiteSVM e2e tests for every relayer instruction. Vitest
+      # hides the benign `bigint: Failed to load bindings` warning from
+      # @solana/spl-token's transitive bigint-buffer dep — see
+      # PRE_DEPLOY_CHECKLIST.md.
+      - name: pnpm test
+        run: pnpm test
