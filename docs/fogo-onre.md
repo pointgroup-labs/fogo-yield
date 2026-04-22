@@ -344,16 +344,16 @@ No admin instructions. No upgrade authority. No persistent state beyond PDA toke
 
 ## Assumptions to Validate Before Building
 
-| #   | Assumption                                                     | Validation                                                            | Blocks                                       |
-| --- | -------------------------------------------------------------- | --------------------------------------------------------------------- | -------------------------------------------- |
-| 1   | OnRe will coordinate on NTT deployment for ONyc                | Confirm with OnRe. Required for bONyc on FOGO.                        | Entire design                                |
-| 2   | OnRe has a permissionless ONyc->USDC offer (reverse direction) | Query offer PDA for the ONyc/USDC pair. Confirm with OnRe.            | Withdrawal flow                              |
-| 3   | OnRe's permissionless offers work with PDA callers (no KYC)    | Test with PDA signer via CPI on devnet. Confirm with OnRe.            | Relayer program                              |
-| 4   | Gateway + OnRe + NTT CPIs fit in one Solana tx                 | Prototype on devnet. Measure accounts and CU.                         | Relayer instruction design (atomic vs split) |
-| 5   | OnRe price vector updates are infrequent                       | Confirm with OnRe. If frequent, need automated Queries.               | Price vector update mechanism                |
-| 6   | Wormhole Queries can verify OnRe state from FOGO on-chain      | Test on FOGO testnet. Fallback: governance-only vector updates.       | Price vector trust model                     |
-| 7   | OnRe ONyc->USDC offer has sufficient normal liquidity          | Monitor over time. Size reserve target accordingly.                   | Withdrawal reliability                       |
-| 8   | Wormhole Gateway FOGO-side contract supports CPI from vault    | Test on FOGO testnet. If not, `deploy_capital` becomes a two-tx flow. | Deploy capital instruction                   |
+| # | Assumption                                                     | Validation                                                            | Blocks                                       |
+| - | -------------------------------------------------------------- | --------------------------------------------------------------------- | -------------------------------------------- |
+| 1 | OnRe will coordinate on NTT deployment for ONyc                | Confirm with OnRe. Required for bONyc on FOGO.                        | Entire design                                |
+| 2 | OnRe has a permissionless ONyc->USDC offer (reverse direction) | Query offer PDA for the ONyc/USDC pair. Confirm with OnRe.            | Withdrawal flow                              |
+| 3 | OnRe's permissionless offers work with PDA callers (no KYC)    | Test with PDA signer via CPI on devnet. Confirm with OnRe.            | Relayer program                              |
+| 4 | Gateway + OnRe + NTT CPIs fit in one Solana tx                 | Prototype on devnet. Measure accounts and CU.                         | Relayer instruction design (atomic vs split) |
+| 5 | OnRe price vector updates are infrequent                       | Confirm with OnRe. If frequent, need automated Queries.               | Price vector update mechanism                |
+| 6 | Wormhole Queries can verify OnRe state from FOGO on-chain      | Test on FOGO testnet. Fallback: governance-only vector updates.       | Price vector trust model                     |
+| 7 | OnRe ONyc->USDC offer has sufficient normal liquidity          | Monitor over time. Size reserve target accordingly.                   | Withdrawal reliability                       |
+| 8 | Wormhole Gateway FOGO-side contract supports CPI from vault    | Test on FOGO testnet. If not, `deploy_capital` becomes a two-tx flow. | Deploy capital instruction                   |
 
 ## UX States
 
@@ -436,3 +436,56 @@ FOGO needs yield infrastructure. Instead of building one-off integrations per pr
 ### Composability
 
 Every vault share token is a standard SPL token. It plugs into any FOGO protocol: lending collateral, AMM liquidity, DAO treasuries, or as backing in another vault (vault-of-vaults).
+
+## Operations: upgrade-in-place rollout for the two-stage `claim_usdc` flow
+
+The `claim_usdc` instruction uses a two-stage token flow: Token Bridge mints
+into a short-lived USDC ATA owned by a dedicated `redeemer` PDA (seeds =
+`[b"redeemer"]` under the relayer program id), and the same instruction
+sweeps the balance into the long-lived authority-owned USDC ATA. Fresh
+deployments provision the intake ATA inside `initialize`.
+
+Existing deployments that predate this change need the intake ATA created
+exactly once before the next `claim_usdc`. **No program instruction is
+required** — an ATA address is deterministic from `(mint, owner)` and the
+Associated Token Account program accepts any funder. Run:
+
+```ts
+import {
+  createAssociatedTokenAccountInstruction,
+  getAssociatedTokenAddressSync,
+} from '@solana/spl-token'
+import { findRedeemerAuthorityPda, RELAYER_PROGRAM_ID } from '@fogo-onre/sdk'
+import { PublicKey, Transaction } from '@solana/web3.js'
+
+const USDC_MINT = new PublicKey(/* wrapped-USDC.s mint on Solana */)
+const [redeemerPda] = findRedeemerAuthorityPda(RELAYER_PROGRAM_ID)
+const redeemerUsdcAta = getAssociatedTokenAddressSync(USDC_MINT, redeemerPda, true)
+
+const ix = createAssociatedTokenAccountInstruction(
+  payer.publicKey,  // anyone — ATA creation does not require the owner to sign
+  redeemerUsdcAta,
+  redeemerPda,      // owner
+  USDC_MINT,
+)
+// Send as a single-instruction tx signed only by `payer`.
+```
+
+CLI equivalent:
+
+```bash
+spl-token create-account <USDC_MINT> \
+  --owner <REDEEMER_PDA> \
+  --fee-payer <any-keypair>
+```
+
+The operation is idempotent in the sense that the ATA program errors if
+the ATA already exists; re-running is safe and a no-op. Verify afterward
+that `redeemerUsdcAta` exists, is owned by the SPL Token program, has
+`mint == USDC_MINT`, and has `owner == redeemerPda`.
+
+No upgrade authority is needed. The flow works on both upgradable and
+immutable deployments — the instruction surface of the relayer is
+unchanged; only its internal account handling evolved to read this
+pre-existing ATA.
+
