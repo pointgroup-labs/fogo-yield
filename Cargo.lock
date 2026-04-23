@@ -605,6 +605,7 @@ dependencies = [
  "anchor-lang",
  "anchor-spl",
  "solana-keccak-hasher",
+ "solana-sha256-hasher",
 ]
 
 [[package]]

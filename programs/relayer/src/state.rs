@@ -71,11 +71,21 @@ fn apply_fee_bps(gross: u64, bps: u16) -> Result<(u64, u64)> {
 }
 
 #[derive(InitSpace, AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(test, derive(Debug))]
 pub enum FlowStatus {
-    /// Inbound bridge complete, awaiting swap.
+    /// Inbound bridge complete, awaiting swap. Borsh tag = 0 (DO NOT REORDER).
     Claimed,
-    /// Swap complete, awaiting outbound bridge.
+    /// Swap complete, awaiting outbound bridge. Borsh tag = 1 (DO NOT REORDER).
     Swapped,
+    /// Withdraw chain only: ONyc forwarded to OnRe via
+    /// `create_redemption_request`; awaiting `redemption_admin` fulfillment
+    /// (out-of-band) and a `claim_redemption_usdc` cranker call. Borsh tag = 2.
+    ///
+    /// **Appended (not inserted)** to preserve tags 0/1 for any already-
+    /// allocated `Flow` PDAs from prior deploys. The
+    /// `flow_status_borsh_tag_invariant` test guards this property.
+    /// See `docs/WITHDRAW_REDESIGN.md` §2.1.
+    RedemptionPending,
 }
 
 /// One-shot receipt binding an inbound bridge message to a FOGO user wallet.
@@ -85,6 +95,11 @@ pub enum FlowStatus {
 /// PDA seeds: `[FLOW_*_SEED, bridge_claim_pda.key()]`. Uniqueness and replay
 /// protection are delegated to the per-VAA claim account created by Wormhole
 /// Gateway / NTT — no hashing needed here.
+///
+/// **Field set is byte-stable across the withdraw redesign**. Withdraw-chain
+/// redemption tracking lives in the sidecar `RedemptionTracker` PDA below
+/// rather than as new fields here, to preserve compatibility with any
+/// already-allocated `Flow` PDAs.
 #[account]
 #[derive(InitSpace)]
 pub struct Flow {
@@ -97,6 +112,44 @@ pub struct Flow {
     pub amount: u64,
 
     /// Receives rent on close.
+    pub payer: Pubkey,
+
+    pub bump: u8,
+}
+
+/// Sidecar PDA paired 1:1 with an outbound `Flow` during the
+/// `RedemptionPending` window of the withdraw chain.
+///
+/// PDA seeds: `[REDEMPTION_TRACKER_SEED, flow_pda]`. Created by
+/// `request_redemption_onyc`; closed by `claim_redemption_usdc` (rent →
+/// `payer`). Never exists on the deposit chain — every byte of cost is
+/// borne only by withdraw flows that actually engage OnRe redemption.
+///
+/// See `docs/WITHDRAW_REDESIGN.md` §2.2.
+#[account]
+#[derive(InitSpace)]
+pub struct RedemptionTracker {
+    /// Outbound `Flow` PDA this tracker is bound to. Belt-and-braces against
+    /// the seed-derivation check (the seed already binds them).
+    pub flow: Pubkey,
+
+    /// OnRe `RedemptionRequest` PDA we created. The relayer polls for its
+    /// closure as the fulfillment signal — when this account no longer
+    /// exists on chain, OnRe's `redemption_admin` has fulfilled.
+    pub redemption_request: Pubkey,
+
+    /// Relayer's USDC ATA balance snapshotted *before*
+    /// `create_redemption_request` fires. `claim_redemption_usdc` computes
+    /// the post-fulfillment delta against this. The §2.4 race-safety
+    /// strategy may make this insufficient on its own — see open question.
+    pub usdc_ata_pre_balance: u64,
+
+    /// ONyc amount net-of-fee that we sent to OnRe. Audit trail; also feeds
+    /// any future `expected_usdc` race-safety check (§2.4 option B).
+    pub onyc_amount_in: u64,
+
+    /// Pays for init, receives rent on close. Set to whoever called
+    /// `request_redemption_onyc` (cranker).
     pub payer: Pubkey,
 
     pub bump: u8,
@@ -227,5 +280,92 @@ mod tests {
         };
         let e = cfg.validate().unwrap_err();
         assert_eq!(err_code(e), code_of(RelayerError::FeeBpsTooHigh));
+    }
+
+    /// **Backward-compatibility guard.** Borsh serialises an enum variant as
+    /// its source-order index (1 byte for ≤256 variants). The relayer
+    /// program ID is shared across mainnet/devnet/localnet, so any
+    /// already-allocated `Flow` PDA from a prior deploy stores its
+    /// `FlowStatus` as 0 (`Claimed`) or 1 (`Swapped`). Reordering the
+    /// enum — even just inserting `RedemptionPending` between them —
+    /// would shift `Swapped` to tag 2 and silently corrupt every existing
+    /// PDA on read. This test fails before any such reorder ships.
+    #[test]
+    fn flow_status_borsh_tag_invariant() {
+        // For payload-less enums in Rust, `as u8` returns the source-order
+        // discriminant, which is exactly what borsh emits as the variant tag.
+        assert_eq!(FlowStatus::Claimed as u8, 0, "Claimed must stay tag 0");
+        assert_eq!(FlowStatus::Swapped as u8, 1, "Swapped must stay tag 1");
+        assert_eq!(
+            FlowStatus::RedemptionPending as u8,
+            2,
+            "RedemptionPending must be appended (tag 2), not inserted"
+        );
+    }
+
+    /// `RedemptionTracker` shape guard: the sidecar must hold the four
+    /// withdraw-chain fields that `claim_redemption_usdc` will rely on.
+    /// Borsh round-trip is exercised end-to-end via Anchor's account loader
+    /// in the LiteSVM tests.
+    #[test]
+    fn redemption_tracker_holds_withdraw_chain_state() {
+        let flow = Pubkey::new_unique();
+        let req = Pubkey::new_unique();
+        let tracker = RedemptionTracker {
+            flow,
+            redemption_request: req,
+            usdc_ata_pre_balance: 1_000_000,
+            onyc_amount_in: 999_500,
+            payer: Pubkey::new_unique(),
+            bump: 253,
+        };
+        assert_eq!(tracker.flow, flow);
+        assert_eq!(tracker.redemption_request, req);
+        assert_eq!(tracker.usdc_ata_pre_balance, 1_000_000);
+        assert_eq!(tracker.onyc_amount_in, 999_500);
+    }
+
+    /// `Flow` byte-stability guard. The withdraw redesign deliberately
+    /// avoids touching `Flow`'s fields so already-allocated PDAs stay
+    /// loadable. If anyone ever changes this, `Flow::INIT_SPACE` shifts
+    /// and that's the cue to design a versioned migration first.
+    ///
+    /// Numbers: 32 (fogo_sender) + 1 (FlowStatus tag) + 8 (amount) + 32
+    /// (payer) + 1 (bump) = 74. (Anchor's 8-byte account discriminator is
+    /// added separately by `init` and not counted here.)
+    #[test]
+    fn flow_init_space_is_unchanged_by_redesign() {
+        assert_eq!(Flow::INIT_SPACE, 74, "Flow layout must not shift");
+    }
+
+    /// Compile-time-style guard for the OnRe instruction discriminators.
+    /// Every constant in `constants.rs` that claims to be a sighash is
+    /// re-derived here from `sha256("global:" + name)[..8]`. If OnRe ever
+    /// renames an instruction (or someone fat-fingers a constant), this
+    /// test fires before any CPI ships.
+    ///
+    /// Spec ref: `docs/WITHDRAW_REDESIGN.md` §4.1.
+    #[test]
+    fn onre_instruction_discriminators_match_anchor_sighash() {
+        use crate::constants::{ONRE_CREATE_REDEMPTION_REQUEST_IX, ONRE_TAKE_OFFER_IX};
+
+        fn sighash(name: &str) -> [u8; 8] {
+            let preimage = format!("global:{name}");
+            let digest = solana_sha256_hasher::hashv(&[preimage.as_bytes()]);
+            let mut out = [0u8; 8];
+            out.copy_from_slice(&digest.to_bytes()[..8]);
+            out
+        }
+
+        assert_eq!(
+            sighash("take_offer_permissionless"),
+            ONRE_TAKE_OFFER_IX,
+            "ONRE_TAKE_OFFER_IX no longer matches sha256('global:take_offer_permissionless')[..8]"
+        );
+        assert_eq!(
+            sighash("create_redemption_request"),
+            ONRE_CREATE_REDEMPTION_REQUEST_IX,
+            "ONRE_CREATE_REDEMPTION_REQUEST_IX no longer matches sha256('global:create_redemption_request')[..8]"
+        );
     }
 }

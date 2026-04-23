@@ -19,6 +19,12 @@ anchor-lang = { workspace = true }
 anchor-spl = { workspace = true }
 solana-keccak-hasher = "3.1"
 
+[dev-dependencies]
+# Test-only: used by the discriminator-derivation guard in `state.rs` to
+# recompute `sha256("global:<ix_name>")[..8]` and assert it matches the
+# on-chain constants. Not a runtime dep — keeps the deployed program lean.
+solana-sha256-hasher = "3.1"
+
 [lints.rust.unexpected_cfgs]
 level = "warn"
 check-cfg = [
