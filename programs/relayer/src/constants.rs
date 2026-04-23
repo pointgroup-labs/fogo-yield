@@ -48,6 +48,17 @@ pub const ONRE_TAKE_OFFER_IX: [u8; 8] = [37, 190, 224, 77, 197, 39, 203, 230];
 // for its closure (signal that OnRe `redemption_admin` has fulfilled it).
 pub const ONRE_CREATE_REDEMPTION_REQUEST_IX: [u8; 8] = [201, 53, 181, 254, 115, 137, 70, 151];
 
+/// Position of the `redemption_request` account in OnRe's
+/// `create_redemption_request` `Accounts` struct (zero-based). The relayer
+/// forwards OnRe's account list verbatim through `ctx.remaining_accounts`,
+/// so this is also the index of the `RedemptionRequest` PDA inside our
+/// `remaining_accounts`. After the CPI returns Ok, OnRe's `init` constraint
+/// has seed-validated this account, so we can trust its key as the real PDA
+/// without an explicit Anchor slot in our own `Accounts` struct (which would
+/// otherwise be a cranker-controlled second source of truth — the bug fixed
+/// in commit "fix(relayer): bind tracker.redemption_request to CPI account").
+pub const ONRE_CREATE_REDEMPTION_REQUEST_REDEMPTION_REQUEST_INDEX: usize = 2;
+
 /// `RedemptionOffer` PDA seed under OnRe. Note: seed order is
 /// `[seed, ONyc_mint, USDC_mint]` — the *opposite* of the deposit `Offer`
 /// PDA (`[b"offer", USDC_mint, ONyc_mint]`). Don't reuse `OFFER_SEED` here.

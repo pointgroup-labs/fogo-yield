@@ -18,7 +18,8 @@ use anchor_spl::token_interface::{
 };
 
 use crate::constants::{
-    CONFIG_SEED, FLOW_OUTBOUND_SEED, ONRE_CREATE_REDEMPTION_REQUEST_IX, ONRE_PROGRAM_ID,
+    CONFIG_SEED, FLOW_OUTBOUND_SEED, ONRE_CREATE_REDEMPTION_REQUEST_IX,
+    ONRE_CREATE_REDEMPTION_REQUEST_REDEMPTION_REQUEST_INDEX, ONRE_PROGRAM_ID,
     REDEMPTION_TRACKER_SEED, RELAYER_SEED,
 };
 use crate::cpi::invoke_relayer_signed;
@@ -75,6 +76,15 @@ pub fn handler<'info>(ctx: Context<'info, RequestRedemptionOnyc<'info>>) -> Resu
     ctx.accounts.usdc_ata.reload()?;
     let usdc_pre = ctx.accounts.usdc_ata.amount;
 
+    // Bounds check: OnRe's `create_redemption_request` `Accounts` struct has
+    // 11 entries; we forward them verbatim through `remaining_accounts`. The
+    // CPI itself enforces every account is correct, but we need the
+    // `redemption_request` slot specifically (post-CPI) so guard the read.
+    require!(
+        ctx.remaining_accounts.len() > ONRE_CREATE_REDEMPTION_REQUEST_REDEMPTION_REQUEST_INDEX,
+        RelayerError::InvalidAccountSplit
+    );
+
     invoke_relayer_signed(
         ONRE_PROGRAM_ID,
         &ONRE_CREATE_REDEMPTION_REQUEST_IX,
@@ -84,13 +94,25 @@ pub fn handler<'info>(ctx: Context<'info, RequestRedemptionOnyc<'info>>) -> Resu
         ctx.accounts.relayer_config.relayer_authority_bump,
     )?;
 
-    // Tracker init: PDA address comes from the cranker (must equal the
-    // `RedemptionRequest` account OnRe just created — OnRe enforces seed
-    // derivation server-side via its own `init` constraint, so if the
-    // CPI succeeded then this key is guaranteed to be the real PDA).
+    // Source-of-truth binding: the `RedemptionRequest` PDA we record on the
+    // tracker MUST be the account OnRe actually consumed in the CPI we just
+    // made — otherwise a malicious cranker could pass key X in a separate
+    // explicit slot while OnRe creates the real PDA at key Y, then later
+    // present X as the "fulfilled" account (uninitialised accounts trivially
+    // pass the lamports==0 / data_is_empty / system-owned check). We pull
+    // the key directly from `remaining_accounts` at OnRe's known slot index.
+    // OnRe's `init` constraint inside the CPI seed-validates this account,
+    // so if `invoke_relayer_signed` returned Ok the key here is provably the
+    // real RedemptionRequest PDA.
+    let redemption_request_key = *ctx.remaining_accounts
+        [ONRE_CREATE_REDEMPTION_REQUEST_REDEMPTION_REQUEST_INDEX]
+        .key;
+
+    // Tracker init: PDA address sourced from the CPI's actual remaining
+    // account, not from a separate cranker-controlled slot. See note above.
     let tracker = &mut ctx.accounts.redemption_tracker;
     tracker.flow = flow_key;
-    tracker.redemption_request = ctx.accounts.redemption_request.key();
+    tracker.redemption_request = redemption_request_key;
     tracker.usdc_ata_pre_balance = usdc_pre;
     tracker.onyc_amount_in = net;
     tracker.payer = ctx.accounts.payer.key();
@@ -181,12 +203,6 @@ pub struct RequestRedemptionOnyc<'info> {
         bump,
     )]
     pub redemption_tracker: Account<'info, RedemptionTracker>,
-
-    /// CHECK: the OnRe `RedemptionRequest` PDA. Cranker must also include
-    /// this account at the slot OnRe's `create_redemption_request` expects
-    /// inside `remaining_accounts` (index 2 in OnRe's account list). OnRe
-    /// validates the seeds during `init`, so a wrong key fails the CPI.
-    pub redemption_request: UncheckedAccount<'info>,
 
     pub token_program: Interface<'info, TokenInterface>,
     pub system_program: Program<'info, System>,

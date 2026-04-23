@@ -373,4 +373,22 @@ mod tests {
             "ONRE_CREATE_REDEMPTION_REQUEST_IX no longer matches sha256('global:create_redemption_request')[..8]"
         );
     }
+
+    /// Pins the OnRe `create_redemption_request` `redemption_request` slot
+    /// index. `request_redemption_onyc` reads `tracker.redemption_request`
+    /// from `ctx.remaining_accounts[<this index>]` post-CPI and trusts OnRe's
+    /// `init` constraint to seed-validate it. If OnRe ever reorders the
+    /// `Accounts` struct (extremely unlikely — would be a breaking change for
+    /// every integrator), this index shifts and we'd silently bind the wrong
+    /// account. This test reminds us to update the constant in lockstep.
+    ///
+    /// Source of truth (verified at session start, 2026-04):
+    /// `onre-finance/onre-sol::programs/onreapp/src/instructions/redemption/
+    /// create_redemption_request.rs` — `state(0), redemption_offer(1),
+    /// redemption_request(2), redeemer(3), ...`
+    #[test]
+    fn onre_create_redemption_request_redemption_request_index_pinned() {
+        use crate::constants::ONRE_CREATE_REDEMPTION_REQUEST_REDEMPTION_REQUEST_INDEX;
+        assert_eq!(ONRE_CREATE_REDEMPTION_REQUEST_REDEMPTION_REQUEST_INDEX, 2);
+    }
 }
