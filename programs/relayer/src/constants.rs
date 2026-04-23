@@ -61,9 +61,11 @@ pub const ONRE_REDEMPTION_REQUEST_SEED: &[u8] = b"redemption_request";
 /// Single global PDA owning every redemption-vault token account on OnRe.
 pub const ONRE_REDEMPTION_OFFER_VAULT_AUTHORITY_SEED: &[u8] = b"redemption_offer_vault_authority";
 
-/// Relayer-side sidecar PDA seed: `[seed, flow_pda]`. One `RedemptionTracker`
-/// per outbound `Flow`, exists only while `flow.status == RedemptionPending`.
-/// See `state::RedemptionTracker` and `docs/WITHDRAW_REDESIGN.md` §2.2.
+/// Singleton sidecar PDA seed: `[seed]`. Exactly one `RedemptionTracker`
+/// can exist at a time across the whole program, doubling as the in-flight
+/// mutex (init fails while it exists). Bound to the active outbound `Flow`
+/// via `tracker.flow`. See `state::RedemptionTracker` and
+/// `docs/WITHDRAW_REDESIGN.md` §2.2.
 pub const REDEMPTION_TRACKER_SEED: &[u8] = b"redemption_tracker";
 
 /// SPL Token `Approve` (variant 4) — needed for the NTT session-authority

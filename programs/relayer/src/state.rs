@@ -117,20 +117,24 @@ pub struct Flow {
     pub bump: u8,
 }
 
-/// Sidecar PDA paired 1:1 with an outbound `Flow` during the
-/// `RedemptionPending` window of the withdraw chain.
+/// Singleton sidecar PDA tracking the in-flight withdraw-chain redemption.
 ///
-/// PDA seeds: `[REDEMPTION_TRACKER_SEED, flow_pda]`. Created by
-/// `request_redemption_onyc`; closed by `claim_redemption_usdc` (rent →
-/// `payer`). Never exists on the deposit chain — every byte of cost is
-/// borne only by withdraw flows that actually engage OnRe redemption.
+/// PDA seeds: `[REDEMPTION_TRACKER_SEED]` (no per-flow discriminator —
+/// only one withdraw redemption may be in flight across the whole program
+/// at a time). The PDA's existence is the in-flight mutex: `init` in
+/// `request_redemption_onyc` fails if another redemption is mid-flight,
+/// preventing the USDC-delta race where two flows would otherwise read the
+/// combined balance change as their own.
+///
+/// Created by `request_redemption_onyc`; closed by `claim_redemption_usdc`
+/// (rent → `payer`). Never exists on the deposit chain.
 ///
 /// See `docs/WITHDRAW_REDESIGN.md` §2.2.
 #[account]
 #[derive(InitSpace)]
 pub struct RedemptionTracker {
-    /// Outbound `Flow` PDA this tracker is bound to. Belt-and-braces against
-    /// the seed-derivation check (the seed already binds them).
+    /// Outbound `Flow` PDA this tracker is bound to. Pinned by
+    /// `claim_redemption_usdc` via `tracker.flow == flow.key()`.
     pub flow: Pubkey,
 
     /// OnRe `RedemptionRequest` PDA we created. The relayer polls for its
@@ -140,16 +144,17 @@ pub struct RedemptionTracker {
 
     /// Relayer's USDC ATA balance snapshotted *before*
     /// `create_redemption_request` fires. `claim_redemption_usdc` computes
-    /// the post-fulfillment delta against this. The §2.4 race-safety
-    /// strategy may make this insufficient on its own — see open question.
+    /// the post-fulfillment delta against this. Safe under the singleton
+    /// constraint above — no sibling redemption can pollute the delta.
     pub usdc_ata_pre_balance: u64,
 
-    /// ONyc amount net-of-fee that we sent to OnRe. Audit trail; also feeds
-    /// any future `expected_usdc` race-safety check (§2.4 option B).
+    /// ONyc amount net-of-fee that we sent to OnRe. Audit-trail field;
+    /// not consumed by `claim_redemption_usdc` today, but emitted in events.
     pub onyc_amount_in: u64,
 
     /// Pays for init, receives rent on close. Set to whoever called
-    /// `request_redemption_onyc` (cranker).
+    /// `request_redemption_onyc`; may differ from the `claim_redemption_usdc`
+    /// caller.
     pub payer: Pubkey,
 
     pub bump: u8,

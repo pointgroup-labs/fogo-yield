@@ -118,46 +118,47 @@ total size is unchanged.
 Deposit chain still uses `Claimed → Swapped` (no behavior change).
 Withdraw chain becomes `Claimed → RedemptionPending → Swapped`.
 
-### 2.2 Sidecar `RedemptionTracker` PDA (replaces the original "new Flow fields" plan)
+### 2.2 Sidecar `RedemptionTracker` PDA — singleton (replaces both the original "new Flow fields" plan AND the per-flow tracker plan)
+
+**Implementation note (Apr 2026):** the per-flow seed `[seed, flow_pda]`
+originally proposed in commit `b489a26` was collapsed to a singleton
+`[seed]` in the implementation (commits below). Rationale: a separate
+in-flight mutex would have been needed anyway for the §2.4 race, and a
+singleton-seeded tracker doubles as the mutex (Anchor `init` errors on
+existing PDA). One PDA, one source of truth, smaller surface.
 
 Rather than extending `Flow` (incompatible with live PDAs), the
-withdraw-chain state lives in a sidecar account that exists only while
-a flow is `RedemptionPending`:
+withdraw-chain state lives in a singleton account that exists only
+while a withdraw redemption is in flight:
 
 ```rust
 #[account]
 #[derive(InitSpace)]
 pub struct RedemptionTracker {
-    /// Outbound `Flow` PDA this tracker is paired with — 1:1 binding
-    /// enforced by both the seed derivation AND a stored field for
-    /// belt-and-braces.
+    /// Outbound `Flow` PDA this tracker is bound to. Verified in
+    /// `claim_redemption_usdc` via `tracker.flow == flow.key()`.
     pub flow: Pubkey,
 
-    /// OnRe `RedemptionRequest` PDA. The relayer polls for its closure
-    /// as the fulfillment signal (see §2.3.2).
+    /// OnRe `RedemptionRequest` PDA. Closed by OnRe admin on fulfillment.
     pub redemption_request: Pubkey,
 
     /// Relayer's USDC ATA balance snapshotted *before*
-    /// `create_redemption_request` fires. `claim_redemption_usdc`
-    /// computes the post-fulfillment delta against this.
+    /// `create_redemption_request` fires. Singleton constraint guarantees
+    /// no concurrent redemption pollutes this delta.
     pub usdc_ata_pre_balance: u64,
 
-    /// ONyc amount net of fee that was sent to OnRe — for audit trail
-    /// and for the §2.4 race-safety check (`expected_usdc` strategy).
+    /// ONyc amount net-of-fee that we sent to OnRe — audit trail / events.
     pub onyc_amount_in: u64,
 
-    /// Pays for init, receives rent on close (= cranker who called
-    /// `request_redemption_onyc`).
+    /// Pays for init, receives rent on close.
     pub payer: Pubkey,
 
     pub bump: u8,
 }
 ```
 
-**Seeds**: `[REDEMPTION_TRACKER_SEED, flow_pda]` — exactly one tracker
-per `Flow`. The same cranker-permissionless model as the rest of the
-program (anyone can pay for init; recipient is bound by Flow's
-fogo_sender, not by the cranker).
+**Seeds**: `[REDEMPTION_TRACKER_SEED]` — singleton. Bound to the active
+`Flow` via `tracker.flow`.
 
 **Lifecycle**:
 - Created in `request_redemption_onyc` alongside the
@@ -165,15 +166,18 @@ fogo_sender, not by the cranker).
   single tx; if the OnRe CPI fails, both revert.
 - Closed in `claim_redemption_usdc` (rent → `tracker.payer`) alongside
   the `flow.status = Swapped` write.
+- While it exists, a second `request_redemption_onyc` errors at the
+  Anchor `init` constraint — this is the in-flight mutex.
 
-**Why a sidecar is strictly better than mutating `Flow`**:
+**Why singleton + sidecar instead of per-flow + separate mutex**:
 1. Zero compatibility risk for any existing Flow PDA.
 2. Deposit-chain Flow PDAs cost zero extra bytes — the tracker only
-   exists for withdraw flows that actually hit OnRe redemption.
-3. Reverting path (a) in favor of path (b) is one
-   `delete RedemptionTracker` away — no Flow migration needed.
-4. The `RedemptionTracker::INIT_SPACE` audit surface is bounded to a
-   single account and trivially countable.
+   exists during withdraw fulfillment.
+3. One PDA, not two — fewer accounts in the cranker tx, fewer audit
+   surfaces, simpler trust analysis.
+4. Throughput tradeoff: one in-flight withdraw redemption at a time.
+   This matches OnRe's natural admin-fulfillment cadence (sequential)
+   so we lose no real parallelism.
 
 ### 2.3 Replace `swap_onyc_to_usdc` with two instructions
 
@@ -231,23 +235,22 @@ Steps:
 After this, the existing `send_usdc_to_user` instruction works
 unchanged — it only reads `flow.fogo_sender` and `flow.amount`.
 
-### 2.4 Concurrency safety
+### 2.4 Concurrency safety — resolved by singleton
 
-Multiple withdraw flows can be `RedemptionPending` simultaneously —
-each has a distinct `RedemptionRequest` PDA (OnRe increments
-`request_counter` per request) and a distinct `RedemptionTracker`
-(seeded by Flow). Step 2.3.2's USDC delta calculation is the only
-race-prone part: if two flows race on `claim_redemption_usdc` while the
-USDC ATA receives funds for both, both might see the combined delta.
+The original concern: if two flows race on `claim_redemption_usdc`
+while the USDC ATA receives funds for both, both might see the combined
+delta and over-attribute USDC to one flow.
 
-**Mitigation options** (open question §6):
-- **Mutex PDA**: serialise all `claim_redemption_usdc` calls. Simple
-  but bottlenecks throughput.
-- **`expected_usdc` snapshot in tracker**: store
-  `tracker.expected_usdc = price * onyc_amount_in` computed from the
-  `RedemptionOffer`'s current price vector before the CPI. Step 2.3.2
-  verifies `delta >= tracker.expected_usdc`. Precise, but requires us
-  to duplicate OnRe's pricing logic on-chain.
+**Resolved by §2.2's singleton tracker.** While `RedemptionTracker`
+exists (between `request_redemption_onyc` and `claim_redemption_usdc`),
+no second `request_redemption_onyc` can fire — Anchor's `init`
+constraint errors on the existing PDA. So at delta-computation time
+there is exactly one OnRe fulfillment whose USDC could have arrived
+since `tracker.usdc_ata_pre_balance` was snapshotted. The simple ATA
+delta is safe without duplicating OnRe's pricing logic.
+
+Throughput cost: one in-flight withdraw redemption at a time. OnRe's
+admin fulfills sequentially anyway, so this is no real loss.
 
 ### 2.5 New `RelayerError` variants
 

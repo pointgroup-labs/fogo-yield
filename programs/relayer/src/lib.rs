@@ -67,8 +67,21 @@ pub mod relayer {
         unlock_onyc::handler(ctx, redeem_accounts_len)
     }
 
-    pub fn swap_onyc_to_usdc<'info>(ctx: Context<'info, SwapOnycToUsdc<'info>>) -> Result<()> {
-        swap_onyc_to_usdc::handler(ctx)
+    /// Forward flow's ONyc to OnRe via `create_redemption_request` and
+    /// init the singleton tracker. Caller-permissionless. Fee taken pre-CPI.
+    /// Replaces the deleted `swap_onyc_to_usdc` because OnRe's withdraw
+    /// side is asymmetric — see `docs/WITHDRAW_REDESIGN.md`.
+    pub fn request_redemption_onyc<'info>(
+        ctx: Context<'info, RequestRedemptionOnyc<'info>>,
+    ) -> Result<()> {
+        request_redemption_onyc::handler(ctx)
+    }
+
+    /// Once OnRe's `redemption_admin` has fulfilled (signal: their
+    /// `RedemptionRequest` PDA is closed), book the USDC delta onto the
+    /// flow and close the singleton. Caller-permissionless.
+    pub fn claim_redemption_usdc(ctx: Context<ClaimRedemptionUsdc>) -> Result<()> {
+        claim_redemption_usdc::handler(ctx)
     }
 
     /// Send USDC to `flow.fogo_sender` and close the PDA.

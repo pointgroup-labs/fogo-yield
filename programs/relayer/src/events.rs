@@ -59,3 +59,28 @@ pub struct UsdcSentToUser {
     pub fogo_sender: [u8; 32],
     pub amount: u64,
 }
+
+/// Withdraw chain — emitted by `request_redemption_onyc` when ONyc has been
+/// forwarded to OnRe and the singleton tracker is initialised.
+/// `redemption_request` is the OnRe `RedemptionRequest` PDA we'll poll.
+#[event]
+pub struct RedemptionRequested {
+    pub flow: Pubkey,
+    pub redemption_request: Pubkey,
+    pub gross_amount: u64,
+    pub fee_amount: u64,
+    pub net_amount: u64,
+    pub usdc_ata_pre_balance: u64,
+}
+
+/// Withdraw chain — emitted by `claim_redemption_usdc` after OnRe has
+/// fulfilled and we've recorded the USDC delta on the flow. `usdc_received`
+/// is the post-fulfillment ATA delta and the amount `send_usdc_to_user`
+/// will ship back to FOGO.
+#[event]
+pub struct RedemptionClaimed {
+    pub flow: Pubkey,
+    pub redemption_request: Pubkey,
+    pub onyc_amount_in: u64,
+    pub usdc_received: u64,
+}
