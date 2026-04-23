@@ -225,12 +225,16 @@ key the system depends on. (See `SECURITY_MODEL.md` §4.2.)
 > truly permissionless and the cranking decision below applies to
 > them as written. The withdraw-side instructions (`unlock_onyc`,
 > `swap_onyc_to_usdc`, `send_usdc_to_user`) are not currently
-> runnable end-to-end (see §4). Whichever resolution path is chosen
-> for the withdraw chain redesign will introduce a soft dependency
-> on OnRe's `redemption_admin` (or its replacement). The cranker
-> roster decision below MUST be revisited after that redesign — the
-> "no operator key the system depends on" claim does not survive a
-> `request_redemption` + admin-fulfilled `claim_redemption` design.
+> runnable end-to-end (see §4). The cranker-roster decision below
+> needs to be revisited only if §4 path (a) is taken — splitting the
+> relayer withdraw chain into `request_redemption` +
+> admin-fulfilled `claim_redemption`. That path introduces a soft
+> dependency on OnRe's `redemption_admin` and the "no operator key
+> the system depends on" claim no longer holds for the withdraw
+> leg. If §4 path (b) is taken instead — OnRe ships a permissionless
+> atomic counterpart to `take_offer_permissionless` for
+> `RedemptionOffer` — the cranker model below stays valid as
+> written. Decide §4 first, then this section.
 
 What still needs to be decided before deploy:
 
