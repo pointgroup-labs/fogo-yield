@@ -114,6 +114,13 @@ On first deposit (`total_shares_outstanding = 0`), `price_per_share` is defined 
 
 ### Withdraw (instant — reserve sufficient)
 
+> **Status (Apr 2026): non-deployable end-to-end.** Even though
+> `vault.withdraw()` is a self-contained FOGO instruction that pays
+> from the reserve, the reserve cannot be replenished from Solana
+> while the relayer's withdraw chain is non-functional (see
+> top-of-file banner). Once the reserve is drained, every withdraw —
+> "instant" or queued — stalls indefinitely.
+
 **What the user does:** Enters wONyc amount, clicks "Withdraw".
 
 **What happens:**
@@ -125,6 +132,14 @@ On first deposit (`total_shares_outstanding = 0`), `price_per_share` is defined 
 5. Done. Single transaction, instant.
 
 ### Withdraw (queued — reserve insufficient)
+
+> **Status (Apr 2026): queue-write works; queue-fulfill does NOT.**
+> `vault.queue_withdraw` correctly burns shares and writes the
+> request PDA. But the curator's "process queue" pipeline below
+> (steps 5-10) cannot complete because step 7 has no valid OnRe
+> CPI target. **Any wONyc burned via `queue_withdraw` is currently
+> non-recoverable** until the relayer is redesigned. Do NOT enable
+> this path on mainnet without first fixing the relayer.
 
 1. User calls `vault.queue_withdraw(shares)` on FOGO
 2. Vault burns wONyc share tokens immediately (non-reversible — no cancel mechanism, shares cannot be reclaimed)
@@ -228,7 +243,7 @@ No human or key ever holds user funds:
 If the curator key is stolen, the attacker can call:
 
 - `relayer.deploy()` — converts USDC to ONyc and NTT-locks it. Tokens go to vault. **No theft.**
-- `relayer.withdraw()` — redeems ONyc for USDC and bridges to vault. Tokens go to vault. **No theft.**
+- `relayer.withdraw()` — redeems ONyc for USDC and bridges to vault. Tokens go to vault. **No theft.** ⚠️ Currently non-functional regardless of caller — see top-of-file banner.
 - `vault.deploy_capital()` — sends reserve USDC.s to Gateway. Ends up in relayer PDA then vault via NTT. **No theft.**
 - `vault.fulfill_withdrawals()` — pays queued users from reserve. **No theft, just accelerates legitimate payouts.**
 
@@ -268,9 +283,9 @@ Governance **cannot** withdraw funds to arbitrary accounts. All fund flows are p
 | Wormhole Guardians   | Compromised or offline               | If offline: reserve-only mode, no fund loss. If compromised: could forge NTT attestation to mint unbacked bONyc, inflating vault NAV. Systemic risk shared with all Wormhole-dependent protocols. |
 | Wormhole Gateway     | Can't bridge USDC                    | Reserve-only mode. No new deploys. No fund loss.                                                                                                                                                  |
 | Wormhole NTT         | Can't move ONyc cross-chain          | Can't deploy new capital or return ONyc. Reserve still works. Existing bONyc in vault is safe.                                                                                                    |
-| OnRe protocol        | Yield stops, redemptions may fail    | Share price stops appreciating. Queued withdrawals delayed. **Investment risk — users bear ONyc devaluation.**                                                                                    |
-| OnRe redemption cap  | Vault needs to redeem more than cap  | OnRe enforces ~2.5% NAV/week redemption limit. Large queued withdrawals may take multiple weeks to fulfill. Reserve pool absorbs short-term demand.                                               |
-| OnRe offer liquidity | Can't swap in one or both directions | Deploy or withdrawal delayed until liquidity returns. Reserve covers instant withdrawals.                                                                                                         |
+| OnRe protocol        | Yield stops, redemptions may fail    | Share price stops appreciating. Queued withdrawals delayed. **Investment risk — users bear ONyc devaluation.**  ⚠️ Independently of this row, queued withdrawals are currently **blocked** (not merely delayed) by the §4 relayer/OnRe API mismatch.                                                                                    |
+| OnRe redemption cap  | Vault needs to redeem more than cap  | OnRe enforces ~2.5% NAV/week redemption limit. Large queued withdrawals may take multiple weeks to fulfill. Reserve pool absorbs short-term demand. ⚠️ Currently moot — withdraw chain is non-functional regardless of cap.                                               |
+| OnRe offer liquidity | Can't swap in one or both directions | Deploy delayed until liquidity returns; reserve covers instant withdrawals. ⚠️ The "withdraw direction" line of this row is doubly broken — there is no permissionless ONyc→USDC offer at all on OnRe (see top-of-file banner), so this is not a transient liquidity issue but a missing instruction.                                                                                                         |
 | Curator goes offline | No deploys, no queue fulfillment     | Reserve accumulates. Existing bONyc appreciates. No fund loss. Degraded yield on new deposits.                                                                                                    |
 
 The system **degrades gracefully**. Each external failure reduces functionality but never causes fund loss.
@@ -360,7 +375,7 @@ created_at: i64             // timestamp
 | `deploy_step2()`         | If `deploy` was split: CPI OnRe (USDC->ONyc) from PDA.                                                                                                                                                                            |
 | `deploy_step3()`         | If `deploy` was split: CPI NTT lock (ONyc) from PDA.                                                                                                                                                                              |
 | `withdraw(vaa: Vec<u8>)` | CPI NTT `redeem(VAA)` to release ONyc to relayer PDA ATA -> CPI OnRe `take_offer_permissionless` (ONyc->USDC) -> CPI Gateway transfer (USDC to FOGO vault). Same split-step pattern if needed. **⚠️ Mid-step CPI does not exist in OnRe; redesign required — see top-of-file banner and `PRE_DEPLOY_CHECKLIST.md` §4.** |
-| `withdraw_step2()`       | If `withdraw` was split: CPI Gateway transfer (USDC to FOGO vault).                                                                                                                                                               |
+| `withdraw_step2()`       | If `withdraw` was split: CPI Gateway transfer (USDC to FOGO vault). **⚠️ Unreachable — depends on the broken `withdraw` path above.**                                                                                                                                                               |
 
 No admin instructions. No upgrade authority. No persistent state beyond PDA token accounts. All destinations hardcoded. Curator authorization checked on each call.
 
@@ -374,7 +389,7 @@ No admin instructions. No upgrade authority. No persistent state beyond PDA toke
 | 4 | Gateway + OnRe + NTT CPIs fit in one Solana tx                 | Prototype on devnet. Measure accounts and CU.                         | Relayer instruction design (atomic vs split) |
 | 5 | OnRe price vector updates are infrequent                       | Confirm with OnRe. If frequent, need automated Queries.               | Price vector update mechanism                |
 | 6 | Wormhole Queries can verify OnRe state from FOGO on-chain      | Test on FOGO testnet. Fallback: governance-only vector updates.       | Price vector trust model                     |
-| 7 | OnRe ONyc->USDC offer has sufficient normal liquidity          | Monitor over time. Size reserve target accordingly.                   | Withdrawal reliability                       |
+| 7 | OnRe ONyc->USDC offer has sufficient normal liquidity          | Monitor over time. Size reserve target accordingly.                   | Withdrawal reliability — **moot** (see #2): no such offer exists.                       |
 | 8 | Wormhole Gateway FOGO-side contract supports CPI from vault    | Test on FOGO testnet. If not, `deploy_capital` becomes a two-tx flow. | Deploy capital instruction                   |
 
 ## UX States
@@ -414,6 +429,20 @@ No admin instructions. No upgrade authority. No persistent state beyond PDA toke
 - Reserve health indicator (% of TVL in reserve)
 
 ## Alternatives Considered
+
+> **⚠️ Comparison reflects intended-design tradeoffs, not currently
+> deployable behavior.** The chosen architecture's "Instant withdraw"
+> and "OnRe coordination needed: NTT for ONyc" cells assume a working
+> withdraw chain, which today is blocked by the OnRe API mismatch
+> documented at the top of this file. If the resolution path is
+> "redesign to `request_redemption` + admin-fulfilled
+> `claim_redemption`", several cells of the rightmost column shift
+> materially: **OnRe coordination** becomes "Yes (NTT + ongoing
+> `redemption_admin` participation)"; **Stolen key impact** stops
+> covering withdraw-side fund flow because OnRe's `redemption_admin`
+> becomes a soft trust dependency; **Reserve pool / instant
+> withdraw** stops being "Yes" once the reserve drains, because
+> top-up requires the slow async redemption.
 
 We evaluated five architectures before arriving at the current design. The table below compares them across the dimensions that matter.
 
