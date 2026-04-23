@@ -481,6 +481,29 @@ describe('relayer', () => {
         'UnauthorizedAuthority',
       )
     })
+
+    it('rejects sweep of a mint that is neither USDC nor ONyc', async () => {
+      // Defense against a future authority that tries to drain donations of
+      // an unrelated mint sent to the relayer's PDA. Per `sweep.rs:27-30`,
+      // only `usdc_mint` and `onyc_mint` from `RelayerConfig` are sweepable.
+      const otherMint = createMint(svm, authority, 6)
+      const [authorityPda] = findAuthorityPda(client.program.programId)
+      mintTo(svm, authority, otherMint.publicKey, authorityPda, 1_000_000)
+      const destAta = createAta(svm, authority, otherMint.publicKey, authority.publicKey)
+
+      await expectError(
+        () =>
+          client
+            .sweep({
+              authority: authority.publicKey,
+              mint: otherMint.publicKey,
+              to: destAta,
+              amount: new BN(100),
+            })
+            .rpc(),
+        'UnauthorizedAuthority',
+      )
+    })
   })
 
   // ---------------------------------------------------------------------------
@@ -660,6 +683,70 @@ describe('relayer', () => {
             ])
             .rpc(),
         'InvalidVaa',
+      )
+    })
+
+    it('claim_usdc rejects PostedVaaMismatch when remaining_accounts[2] differs from named posted_vaa', async () => {
+      // VAA-substitution defense: if TB reads VAA_A positionally (slot 2)
+      // but our handler parses VAA_B from the named `posted_vaa`, an
+      // attacker could ship VAA_A's USDC to VAA_B's parsed `fogo_sender`.
+      // The position-binding guard at claim_usdc.rs:56-58 prevents that.
+      const namedVaa = Keypair.generate()
+      const wrongVaa = Keypair.generate()
+      const gatewayClaim = Keypair.generate()
+      setPostedVaa(svm, namedVaa.publicKey, { fogoSender, amount: 1_000_000n })
+      // wrongVaa needs to exist as a CB-owned account too; it's only checked
+      // by the position-binding require! before TB runs.
+      setPostedVaa(svm, wrongVaa.publicKey, { fogoSender, amount: 1_000_000n })
+
+      await expectError(
+        () =>
+          client
+            .claimUsdc({
+              payer: authority.publicKey,
+              usdcMint: usdcMint.publicKey,
+              postedVaa: namedVaa.publicKey,
+              gatewayClaim: gatewayClaim.publicKey,
+            })
+            .remainingAccounts([
+              { pubkey: PublicKey.default, isSigner: false, isWritable: false },
+              { pubkey: PublicKey.default, isSigner: false, isWritable: false },
+              { pubkey: wrongVaa.publicKey, isSigner: false, isWritable: false }, // slot 2 — mismatched
+              { pubkey: gatewayClaim.publicKey, isSigner: false, isWritable: false },
+            ])
+            .rpc(),
+        'PostedVaaMismatch',
+      )
+    })
+
+    it('claim_usdc rejects GatewayClaimMismatch when remaining_accounts[3] differs from named gateway_claim', async () => {
+      // Symmetric defense: TB derives + creates the claim PDA from the slot-3
+      // account. If the named `gateway_claim` (which seeds the inflight Flow
+      // PDA) differs from slot 3, the Flow PDA could be seeded with one
+      // claim while TB protects against replay using a different claim —
+      // a different attack vector with the same fix.
+      const namedClaim = Keypair.generate()
+      const wrongClaim = Keypair.generate()
+      const vaaKeypair = Keypair.generate()
+      setPostedVaa(svm, vaaKeypair.publicKey, { fogoSender, amount: 1_000_000n })
+
+      await expectError(
+        () =>
+          client
+            .claimUsdc({
+              payer: authority.publicKey,
+              usdcMint: usdcMint.publicKey,
+              postedVaa: vaaKeypair.publicKey,
+              gatewayClaim: namedClaim.publicKey,
+            })
+            .remainingAccounts([
+              { pubkey: PublicKey.default, isSigner: false, isWritable: false },
+              { pubkey: PublicKey.default, isSigner: false, isWritable: false },
+              { pubkey: vaaKeypair.publicKey, isSigner: false, isWritable: false },
+              { pubkey: wrongClaim.publicKey, isSigner: false, isWritable: false }, // slot 3 — mismatched
+            ])
+            .rpc(),
+        'GatewayClaimMismatch',
       )
     })
 
@@ -1040,6 +1127,153 @@ describe('relayer', () => {
             .rpc(),
         logMatches(/already in use/i),
         'outflight Flow init constraint should fire on replay',
+      )
+    })
+
+    // Position-binding negatives for unlock_onyc. NTT consumes its account
+    // lists positionally — `redeem` reads slot 3 (transceiver_message) and
+    // slot 6 (inbox_item); `release_inbound_unlock` reads slot 2 (inbox_item)
+    // and slot 3 (recipient_ata). The handler pins all four slots against
+    // the named accounts (unlock_onyc.rs:81-97). Each test below corrupts
+    // exactly ONE slot and arranges the other three so the under-test
+    // require! is the FIRST one to fire.
+    function buildUnlockRemainingAccounts(slots: {
+      redeem3: PublicKey
+      redeem6: PublicKey
+      release2: PublicKey
+      release3: PublicKey
+    }) {
+      const PAD = { pubkey: PublicKey.default, isSigner: false, isWritable: false }
+      const ra = Array.from({ length: 18 }, () => ({ ...PAD }))
+      ra[3] = { pubkey: slots.redeem3, isSigner: false, isWritable: false }
+      ra[6] = { pubkey: slots.redeem6, isSigner: false, isWritable: false }
+      ra[10 + 2] = { pubkey: slots.release2, isSigner: false, isWritable: false }
+      ra[10 + 3] = { pubkey: slots.release3, isSigner: false, isWritable: false }
+      return ra
+    }
+
+    it('unlock_onyc rejects TransceiverMessageMismatch when redeem[3] differs from named ntt_transceiver_message', async () => {
+      const nttInboxItem = Keypair.generate()
+      const messageId = new Uint8Array(32)
+      crypto.getRandomValues(messageId)
+      const [validatedMsgPda] = findValidatedTransceiverMessagePda(
+        FOGO_WORMHOLE_CHAIN_ID,
+        messageId,
+        NTT_PROGRAM_ID,
+      )
+      setValidatedTransceiverMessage(
+        svm,
+        validatedMsgPda,
+        NTT_PROGRAM_ID,
+        makeTransceiverMessage(fogoSender, messageId),
+      )
+
+      const [authorityPda] = findAuthorityPda(client.program.programId)
+      const onycAta = getAssociatedTokenAddressSync(onycMint.publicKey, authorityPda, true)
+      const wrongMsg = Keypair.generate().publicKey
+
+      await expectError(
+        () =>
+          client
+            .unlockOnyc({
+              payer: authority.publicKey,
+              onycMint: onycMint.publicKey,
+              nttInboxItem: nttInboxItem.publicKey,
+              nttTransceiverMessage: validatedMsgPda,
+              redeemAccountsLen: 10,
+            })
+            .remainingAccounts(buildUnlockRemainingAccounts({
+              redeem3: wrongMsg, // mismatched — should fire FIRST require!
+              redeem6: nttInboxItem.publicKey,
+              release2: nttInboxItem.publicKey,
+              release3: onycAta,
+            }))
+            .rpc(),
+        'TransceiverMessageMismatch',
+      )
+    })
+
+    it('unlock_onyc rejects InboxItemMismatch when redeem[6] differs from named ntt_inbox_item', async () => {
+      const nttInboxItem = Keypair.generate()
+      const messageId = new Uint8Array(32)
+      crypto.getRandomValues(messageId)
+      const [validatedMsgPda] = findValidatedTransceiverMessagePda(
+        FOGO_WORMHOLE_CHAIN_ID,
+        messageId,
+        NTT_PROGRAM_ID,
+      )
+      setValidatedTransceiverMessage(
+        svm,
+        validatedMsgPda,
+        NTT_PROGRAM_ID,
+        makeTransceiverMessage(fogoSender, messageId),
+      )
+
+      const [authorityPda] = findAuthorityPda(client.program.programId)
+      const onycAta = getAssociatedTokenAddressSync(onycMint.publicKey, authorityPda, true)
+      const wrongInbox = Keypair.generate().publicKey
+
+      await expectError(
+        () =>
+          client
+            .unlockOnyc({
+              payer: authority.publicKey,
+              onycMint: onycMint.publicKey,
+              nttInboxItem: nttInboxItem.publicKey,
+              nttTransceiverMessage: validatedMsgPda,
+              redeemAccountsLen: 10,
+            })
+            .remainingAccounts(buildUnlockRemainingAccounts({
+              redeem3: validatedMsgPda, // passes check 1
+              redeem6: wrongInbox, // mismatched — fires check 2
+              release2: nttInboxItem.publicKey,
+              release3: onycAta,
+            }))
+            .rpc(),
+        'InboxItemMismatch',
+      )
+    })
+
+    it('unlock_onyc rejects RecipientAtaMismatch when release[3] differs from named onyc_ata', async () => {
+      const nttInboxItem = Keypair.generate()
+      const messageId = new Uint8Array(32)
+      crypto.getRandomValues(messageId)
+      const [validatedMsgPda] = findValidatedTransceiverMessagePda(
+        FOGO_WORMHOLE_CHAIN_ID,
+        messageId,
+        NTT_PROGRAM_ID,
+      )
+      setValidatedTransceiverMessage(
+        svm,
+        validatedMsgPda,
+        NTT_PROGRAM_ID,
+        makeTransceiverMessage(fogoSender, messageId),
+      )
+
+      // The recipient ATA position-bind protects against an attacker
+      // redirecting the NTT release to an attacker-owned ATA while the
+      // relayer's named `onyc_ata` (which feeds the post-CPI delta-amount
+      // calculation) reports a stale balance.
+      const wrongAta = Keypair.generate().publicKey
+
+      await expectError(
+        () =>
+          client
+            .unlockOnyc({
+              payer: authority.publicKey,
+              onycMint: onycMint.publicKey,
+              nttInboxItem: nttInboxItem.publicKey,
+              nttTransceiverMessage: validatedMsgPda,
+              redeemAccountsLen: 10,
+            })
+            .remainingAccounts(buildUnlockRemainingAccounts({
+              redeem3: validatedMsgPda,
+              redeem6: nttInboxItem.publicKey,
+              release2: nttInboxItem.publicKey,
+              release3: wrongAta, // mismatched — fires check 4
+            }))
+            .rpc(),
+        'RecipientAtaMismatch',
       )
     })
 
