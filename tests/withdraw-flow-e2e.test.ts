@@ -18,27 +18,46 @@
  * (`ONRE_OFFER_FIXTURE`) is NOT directionally symmetric — base_price /
  * apr fields encode ONyc-as-output pricing.
  *
- * **Mainnet status (verified Apr 2026)**: the withdraw-direction Offer
- * PDA derives to `HwWKn7CK2aqnVtz5mRi87A8CzTDEhKJVbJdfKELFLuA`
- * (`findOnreOfferPda(5Y8N…ONyc, EPjF…USDC)`). `solana account
- * HwWKn7CK… --url mainnet-beta` returns `AccountNotFound`. In other
- * words, the OnRe protocol operator has not yet published a back-swap
- * Offer at all — the relayer's `swap_onyc_to_usdc` instruction has no
- * live counterparty to CPI into on mainnet today.
+ * **Mainnet status (verified Apr 2026 against OnRe source
+ * `onre-finance/onre-sol`)**: OnRe does NOT model withdrawals as a
+ * symmetric back-direction `Offer`. They are a separate
+ * `RedemptionOffer` account type with its own seed prefix and a
+ * two-step async flow. Concretely:
  *
- * Implication: this is escalated from "missing test coverage" to
- * "missing dependency". See `docs/PRE_DEPLOY_CHECKLIST.md` §4.
+ *   - `findOnreOfferPda(ONyc, USDC)` → `HwWKn7CK…` returns
+ *     `AccountNotFound` on mainnet — and never will exist, because
+ *     OnRe's design doesn't put one there.
+ *   - The actual withdraw counterparty is a `RedemptionOffer` at
+ *     `[seeds::REDEMPTION_OFFER, ONyc, USDC]` →
+ *     `3pLK2vXD2uy9PPZuYZNZWkkP9CTEuGrhS2uYFRUWZrSu`. **This account
+ *     IS deployed on mainnet** (verified via `solana account`).
+ *   - The OnRe entry points for withdraw are
+ *     `create_redemption_request` (signed by redeemer) and
+ *     `fulfill_redemption_request` (gated on `boss ||
+ *     redemption_admin`). There is NO `take_redemption_offer_
+ *     permissionless` analog to the deposit-side
+ *     `take_offer_permissionless`.
  *
- * Two possible resolutions, in order of preference:
- *   1. OnRe operator publishes a withdraw-direction Offer at the PDA
- *      above. Then capture the fixture (`solana account <pda> --output
- *      json`), add `ONRE_WITHDRAW_OFFER_FIXTURE` to `packages/sdk`,
- *      and mirror `tests/deposit-flow-e2e.test.ts` with directional
- *      args swapped + boss ONyc ATA (ONyc is token_in on this leg).
- *   2. Withdrawals use a different OnRe entry point entirely (redeem,
- *      queue, etc). In that case the relayer's `swap_onyc_to_usdc`
- *      handler needs a redesign — `take_offer_permissionless` is the
- *      wrong CPI target.
+ * **Implication**: the relayer's `swap_onyc_to_usdc` handler CPIs into
+ * `take_offer_permissionless` (an `Offer` instruction) and would fail
+ * account-type validation against a `RedemptionOffer`. The relayer
+ * cannot crank withdrawals against the OnRe protocol as currently
+ * coded. This is escalated from "missing test fixture" to
+ * "architectural mismatch with the OnRe API". See
+ * `docs/PRE_DEPLOY_CHECKLIST.md` §4.
+ *
+ * Resolution paths:
+ *   1. Redesign the withdraw chain into two relayer instructions:
+ *      `request_redemption` (CPIs `create_redemption_request`) and
+ *      `claim_redemption` (consumes OnRe's admin-fulfilled USDC).
+ *      Add a `RedemptionPending` Flow status between `Claimed` and
+ *      `Swapped`. This loses single-call atomicity and introduces a
+ *      soft dependency on OnRe's `redemption_admin` to fulfill —
+ *      revisit the §8 cranking model accordingly.
+ *   2. Coordinate with OnRe to add a permissionless atomic
+ *      counterpart to `take_offer_permissionless` for
+ *      `RedemptionOffer`. This preserves the current relayer shape
+ *      but is an external-protocol change.
  */
 
 import { describe, it } from 'vitest'

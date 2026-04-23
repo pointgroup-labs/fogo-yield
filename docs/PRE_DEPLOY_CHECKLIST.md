@@ -121,22 +121,28 @@ relayer's parsing offsets will silently drift.
       --output json`) and diff against `tests/utils/fixtures/*.json`.
       Layout changes require updating the parser AND re-running the LiteSVM
       e2e suite.
-- [ ] **OnRe withdraw-direction Offer must exist on mainnet.** Verified
-      Apr 2026: the symmetric back-swap Offer at PDA
-      `HwWKn7CK2aqnVtz5mRi87A8CzTDEhKJVbJdfKELFLuA`
-      (`findOnreOfferPda(5Y8N…ONyc, EPjF…USDC)`) returns
-      `AccountNotFound` on mainnet-beta. The relayer's
-      `swap_onyc_to_usdc` handler CPIs into OnRe
-      `take_offer_permissionless` against this PDA, so without it the
-      withdraw chain has no counterparty and **every withdrawal will
-      revert in the swap leg**. This is a HARD deploy-blocker for the
-      withdraw path. Resolve by either: (a) coordinating with the OnRe
-      operator to publish the back-swap Offer, then capturing the
-      fixture and writing the chained e2e test in
-      `tests/withdraw-flow-e2e.test.ts`; or (b) confirming OnRe uses a
-      different withdrawal entry point and redesigning the relayer's
-      swap handler — `take_offer_permissionless` would be the wrong
-      CPI target.
+- [ ] **Withdraw chain has an architectural mismatch with the OnRe
+      API.** Verified Apr 2026 against `onre-finance/onre-sol`: the
+      relayer's `swap_onyc_to_usdc` CPIs `take_offer_permissionless`
+      against an `Offer` PDA. OnRe does NOT model withdrawals as a
+      symmetric back-direction `Offer` — it uses a separate
+      `RedemptionOffer` account type with its own seed prefix and a
+      two-step async flow (`create_redemption_request` →
+      `fulfill_redemption_request`, with the fulfill leg gated on
+      `boss || redemption_admin`). Mainnet state confirms the design:
+      `[offer, ONyc, USDC]` (`HwWKn7CK…`) does NOT exist;
+      `[redemption_offer, ONyc, USDC]` (`3pLK2vXD…`) DOES exist. There
+      is no `take_redemption_offer_permissionless` analog. **The
+      relayer cannot crank withdrawals against OnRe as currently
+      coded** — `swap_onyc_to_usdc` would fail account-type validation
+      against a `RedemptionOffer`. This is a HARD deploy-blocker for
+      the withdraw path. Resolve by either: (a) splitting the relayer
+      withdraw chain into `request_redemption` + `claim_redemption`
+      with a new `RedemptionPending` Flow status (loses atomicity,
+      adds soft dependency on OnRe's `redemption_admin` — revisit §8
+      cranking model); or (b) coordinating with OnRe to ship a
+      permissionless atomic counterpart to
+      `take_offer_permissionless` for `RedemptionOffer`.
 - [ ] Confirm Wormhole Core Bridge / Gateway / NTT / OnRe program IDs
       in `constants.rs` still resolve to deployed (non-frozen) programs on
       mainnet (`solana program show <pubkey>`).
@@ -293,10 +299,11 @@ items in §1-§8 are NOT affected and still require deployer sign-off.
 - §1.4 manual diff of `constants.rs` vs prior release
 - §2 / §2b upgrade & config authority handling (multisig roster)
 - §3 external audit
-- §4 (continued) mainnet fixture re-fetch & diff; OnRe withdraw-direction
-  Offer **does not exist on mainnet as of Apr 2026** (verified) — every
-  withdrawal would revert in the swap leg. Either get OnRe to publish
-  it or redesign `swap_onyc_to_usdc` against the correct entry point.
+- §4 (continued) mainnet fixture re-fetch & diff; **withdraw chain
+  is architecturally incompatible with OnRe's `RedemptionOffer` API**
+  (verified Apr 2026 against `onre-finance/onre-sol`) — relayer
+  redesign or OnRe protocol extension required before withdraws can
+  ship.
 - §5 NTT rate-limit production values
 - §6 OnRe pricing-vector update authority
 - §7 devnet soak test (≥10 deposit + ≥10 withdraw cycles, ≥72 h, plus
