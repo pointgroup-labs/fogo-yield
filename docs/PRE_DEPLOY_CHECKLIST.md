@@ -18,7 +18,7 @@ If you cannot truthfully tick a box, **do not deploy**.
       *(Skipped during the Apr 2026 test-tightening sprint — must be done
       before deploy.)*
 - [ ] Compare the program ID embedded in the binary (`anchor keys list`)
-      to the canonical `Re1ayRHhmeqByGjgT5uLFExZCvQ8sv6LK74xowK8pJH` in
+      to the canonical `onrenRKgX54qtWeK3cuaTBE71xx7dWMXn82ubH61vAp` in
       `Anchor.toml` and `programs/relayer/src/lib.rs`. They MUST match.
 - [ ] Run `cargo test -p fogo-relayer --lib` and confirm all unit tests
       pass.
@@ -121,6 +121,14 @@ relayer's parsing offsets will silently drift.
       --output json`) and diff against `tests/utils/fixtures/*.json`.
       Layout changes require updating the parser AND re-running the LiteSVM
       e2e suite.
+- [ ] **Capture the OnRe withdraw-direction Offer fixture** at
+      `findOnreOfferPda(onyc_mint, usdc_mint)`. As of Apr 2026, only the
+      deposit-direction Offer is captured (`ONRE_OFFER_FIXTURE`), so the
+      LiteSVM suite has no successful `swap_onyc_to_usdc` end-to-end —
+      see `tests/withdraw-flow-e2e.test.ts` (`it.todo`). Without this
+      fixture, the only mainnet-equivalent exercise of the full
+      withdraw chain happens in the devnet soak test (§7) — that
+      becomes a HARD gate, not optional.
 - [ ] Confirm Wormhole Core Bridge / Gateway / NTT / OnRe program IDs
       in `constants.rs` still resolve to deployed (non-frozen) programs on
       mainnet (`solana program show <pubkey>`).
@@ -230,6 +238,60 @@ on-call doesn't chase ghosts:
 - `anchor build --verifiable` was deliberately skipped during the
   Apr 2026 hardening sprint and MUST be re-enabled in the deploy
   pipeline (see item 1).
+- **`litesvm` is pinned to `^0.6.0`** in `package.json`. Litesvm 1.0
+  is a sweeping breaking change (PublicKey objects → base58 Address
+  strings across every API). Do not bump until `anchor-litesvm` ships
+  a compatible release — otherwise every e2e test silently fails with
+  empty logs.
+
+---
+
+## Apr 2026 hardening sprint addendum
+
+This sprint added the following test coverage and codebase-checkable
+verifications. The auto-verifiable items below are ticked because the
+property is now enforced by a test (or a one-shot grep). Human-action
+items in §1-§8 are NOT affected and still require deployer sign-off.
+
+### Test-suite delta
+- **vitest**: 52 → 58 passing (1 `it.todo` for the withdraw-chain e2e
+  documented under §4).
+- **cargo unit tests** (`cargo test -p fogo-relayer --lib`): 1 → 12
+  passing — `apply_fee_bps` now covered for fee=0, fee=1 with rounding,
+  fee=10000 / ZeroAmountFlow, gross=0, gross=u64::MAX with valid bps
+  (u128 widening), out-of-range bps overflow → FeeOverflow,
+  `RelayerConfig::validate` accept/reject bounds.
+- **Position-binding negatives** added in `tests/relayer.test.ts`:
+  PostedVaaMismatch, GatewayClaimMismatch (claim_usdc);
+  TransceiverMessageMismatch, InboxItemMismatch, RecipientAtaMismatch
+  (unlock_onyc). These were previously a zero-coverage gap — see §3.
+- **Sweep mint-guard negative** added: rejects sweep of any mint that
+  is neither `usdc_mint` nor `onyc_mint`.
+
+### Auto-verified items (re-tick on every release)
+- [x] §1.2 Program ID consistency: `Anchor.toml` (all clusters),
+      `programs/relayer/src/lib.rs` `declare_id!`, and
+      `target/deploy/fogo_relayer-keypair.json` pubkey all resolve
+      to `onrenRKgX54qtWeK3cuaTBE71xx7dWMXn82ubH61vAp` as of this
+      addendum date.
+- [x] §1.3 `cargo test -p fogo-relayer --lib` — 12/12 passing.
+- [x] §4 CPI program IDs in `programs/relayer/src/constants.rs`
+      match the canonical mainnet addresses for: Wormhole Core
+      (`worm2Zo…`), Token Bridge / Gateway (`wormDTU…`), NTT
+      (`nttu74…`), OnRe (`onreuGh…`). FOGO Wormhole chain ID = 51.
+
+### Items still requiring human sign-off
+- §1.1 verifiable build (Docker-pinned toolchain)
+- §1.4 manual diff of `constants.rs` vs prior release
+- §2 / §2b upgrade & config authority handling (multisig roster)
+- §3 external audit
+- §4 (continued) mainnet fixture re-fetch & diff; OnRe withdraw-direction
+  Offer fixture capture (currently a documented gap)
+- §5 NTT rate-limit production values
+- §6 OnRe pricing-vector update authority
+- §7 devnet soak test (≥10 deposit + ≥10 withdraw cycles, ≥72 h, plus
+  failure-injection)
+- §8 cranking infrastructure decision
 
 ---
 
