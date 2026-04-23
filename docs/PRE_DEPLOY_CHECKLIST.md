@@ -121,14 +121,22 @@ relayer's parsing offsets will silently drift.
       --output json`) and diff against `tests/utils/fixtures/*.json`.
       Layout changes require updating the parser AND re-running the LiteSVM
       e2e suite.
-- [ ] **Capture the OnRe withdraw-direction Offer fixture** at
-      `findOnreOfferPda(onyc_mint, usdc_mint)`. As of Apr 2026, only the
-      deposit-direction Offer is captured (`ONRE_OFFER_FIXTURE`), so the
-      LiteSVM suite has no successful `swap_onyc_to_usdc` end-to-end —
-      see `tests/withdraw-flow-e2e.test.ts` (`it.todo`). Without this
-      fixture, the only mainnet-equivalent exercise of the full
-      withdraw chain happens in the devnet soak test (§7) — that
-      becomes a HARD gate, not optional.
+- [ ] **OnRe withdraw-direction Offer must exist on mainnet.** Verified
+      Apr 2026: the symmetric back-swap Offer at PDA
+      `HwWKn7CK2aqnVtz5mRi87A8CzTDEhKJVbJdfKELFLuA`
+      (`findOnreOfferPda(5Y8N…ONyc, EPjF…USDC)`) returns
+      `AccountNotFound` on mainnet-beta. The relayer's
+      `swap_onyc_to_usdc` handler CPIs into OnRe
+      `take_offer_permissionless` against this PDA, so without it the
+      withdraw chain has no counterparty and **every withdrawal will
+      revert in the swap leg**. This is a HARD deploy-blocker for the
+      withdraw path. Resolve by either: (a) coordinating with the OnRe
+      operator to publish the back-swap Offer, then capturing the
+      fixture and writing the chained e2e test in
+      `tests/withdraw-flow-e2e.test.ts`; or (b) confirming OnRe uses a
+      different withdrawal entry point and redesigning the relayer's
+      swap handler — `take_offer_permissionless` would be the wrong
+      CPI target.
 - [ ] Confirm Wormhole Core Bridge / Gateway / NTT / OnRe program IDs
       in `constants.rs` still resolve to deployed (non-frozen) programs on
       mainnet (`solana program show <pubkey>`).
@@ -286,7 +294,9 @@ items in §1-§8 are NOT affected and still require deployer sign-off.
 - §2 / §2b upgrade & config authority handling (multisig roster)
 - §3 external audit
 - §4 (continued) mainnet fixture re-fetch & diff; OnRe withdraw-direction
-  Offer fixture capture (currently a documented gap)
+  Offer **does not exist on mainnet as of Apr 2026** (verified) — every
+  withdrawal would revert in the swap leg. Either get OnRe to publish
+  it or redesign `swap_onyc_to_usdc` against the correct entry point.
 - §5 NTT rate-limit production values
 - §6 OnRe pricing-vector update authority
 - §7 devnet soak test (≥10 deposit + ≥10 withdraw cycles, ≥72 h, plus
