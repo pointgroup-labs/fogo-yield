@@ -3,10 +3,10 @@
   "private": true,
   "packageManager": "pnpm@10.33.0",
   "scripts": {
-    "cli": "pnpm -F {./packages/cli}",
-    "sdk": "pnpm -F {./packages/sdk}",
+    "sdk": "pnpm --filter @fogo-onre/sdk",
     "lint": "eslint --cache .",
     "lint:fix": "pnpm lint --fix",
+    "pretest": "pnpm sdk build",
     "test": "vitest"
   },
   "dependencies": {
