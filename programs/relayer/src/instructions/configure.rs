@@ -5,36 +5,6 @@ use crate::constants::{CONFIG_SEED, RELAYER_SEED};
 use crate::error::RelayerError;
 use crate::state::RelayerConfig;
 
-/// Authority-only. All inputs optional:
-///
-/// - `deposit_fee_bps` / `withdraw_fee_bps`: `None` leaves unchanged.
-///   Asymmetric timelock applies (per leg, independently):
-///     - `proposed <= current` → applies instantly + clears that leg in
-///       the bundled pending proposal (a decrease, or restating the
-///       current value, both cancel any in-flight raise for that leg).
-///     - `proposed >  current` → staged into `pending_fee`. The bundle's
-///       `ready_slot` is set to `max(existing, now + DELAY)` — a follow-
-///       up raise extends (never shortens) the window.
-///   When both inner legs of `pending_fee` clear, the bundle collapses
-///   to `None`. `pending_fee.is_some()` is the single source of truth
-///   for "is anything staged?" everywhere downstream.
-///
-///   **Auto-promotion.** Before processing new args, the handler
-///   promotes any *ripe* (`now >= ready_slot`) staged change onto the
-///   live fields and clears the bundle. The asymmetric model is
-///   user-favorable here: leaving a ripe (higher) fee staged costs only
-///   the operator, never users, so promotion only needs to happen
-///   when *some* authority call is made — there is no separate
-///   permissionless apply ix. Cancel a ripe-but-not-yet-promoted change
-///   by passing `Some(current_live_bps)` for the leg in the same call.
-/// - `fee_vault`: `None` skips the four supporting accounts and leaves
-///   the stored vault unchanged.
-/// - `new_authority` (two-step rotation):
-///     - `None` — leave `pending_authority` alone
-///     - `Some(default())` — cancel any in-flight proposal
-///     - `Some(other)` — propose `other`; current authority unchanged
-///       until `accept_authority`. A typo is harmless — the current
-///       authority can overwrite or cancel before acceptance.
 pub fn handler(
     ctx: Context<Configure>,
     deposit_fee_bps: Option<u16>,
