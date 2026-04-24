@@ -7,17 +7,12 @@
 #   - typescript: pnpm install + lint + vitest. Catches IDL drift, SDK
 #                 regressions, and the relayer-side e2e LiteSVM tests.
 #
-# Note: there is no automated CI alarm on changes to the CPI program IDs
-# or instruction tags in `programs/relayer/src/constants.rs`. A malicious
-# or accidental swap would compile and pass every test. Reviewer attention
-# on `constants.rs` diffs is the only line of defense — see
-# `docs/SECURITY_MODEL.md` §7 and `docs/PRE_DEPLOY_CHECKLIST.md` §1.
 
 name: ci
 
 on:
   push:
-    branches: [main]
+    branches: [ main ]
   pull_request:
 
 concurrency:
@@ -34,12 +29,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Rust toolchain version is pinned by `rust-toolchain.toml`; the
-      # action reads it automatically.
+      # Toolchain version AND components (rustfmt, clippy) are pinned by
+      # `rust-toolchain.toml`. The action installs `stable` first, then
+      # rustup honours the toml override on the first cargo invocation —
+      # listing components here would only apply them to `stable`, not to
+      # the pinned channel that fmt/clippy actually run against.
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
 
       - uses: Swatinem/rust-cache@v2
 
