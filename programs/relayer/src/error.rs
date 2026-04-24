@@ -76,4 +76,7 @@ pub enum RelayerError {
 
     #[msg("RedemptionTracker missing or unexpected for this flow status")]
     MissingRedemptionState,
+
+    #[msg("PendingFee bundle has no inner leg set — invariant violation")]
+    EmptyPendingFee,
 }

@@ -24,12 +24,12 @@ swap.
 
 ### 1.1 Account types and PDAs
 
-| Account              | Seeds (under OnRe program)                                       | Mainnet (USDC/ONyc pair)                       |
-| -------------------- | ---------------------------------------------------------------- | ---------------------------------------------- |
-| `Offer` (deposit)    | `[b"offer", USDC_mint, ONyc_mint]`                               | `E88zkA9Pxb1i8EfSHrEW5ZUe6hiQbo8DHWQ3WhDFw7p6` ✅ |
-| `RedemptionOffer`    | `[b"redemption_offer", ONyc_mint, USDC_mint]`                    | `3pLK2vXD2uy9PPZuYZNZWkkP9CTEuGrhS2uYFRUWZrSu` ✅ |
-| `RedemptionRequest`  | `[b"redemption_request", redemption_offer, request_counter_le]`  | per-request, ephemeral                         |
-| Redemption vault PDA | `[b"redemption_offer_vault_authority"]`                          | one global PDA for all redemption vaults       |
+| Account              | Seeds (under OnRe program)                                      | Mainnet (USDC/ONyc pair)                          |
+| -------------------- | --------------------------------------------------------------- | ------------------------------------------------- |
+| `Offer` (deposit)    | `[b"offer", USDC_mint, ONyc_mint]`                              | `E88zkA9Pxb1i8EfSHrEW5ZUe6hiQbo8DHWQ3WhDFw7p6` ✅ |
+| `RedemptionOffer`    | `[b"redemption_offer", ONyc_mint, USDC_mint]`                   | `3pLK2vXD2uy9PPZuYZNZWkkP9CTEuGrhS2uYFRUWZrSu` ✅ |
+| `RedemptionRequest`  | `[b"redemption_request", redemption_offer, request_counter_le]` | per-request, ephemeral                            |
+| Redemption vault PDA | `[b"redemption_offer_vault_authority"]`                         | one global PDA for all redemption vaults          |
 
 OnRe program ID: `onreuGhHHgVzMWSkj2oQDLDtvvGvoepBPkqyaubFcwe` (already
 in `programs/relayer/src/constants.rs::ONRE_PROGRAM_ID`).
@@ -37,13 +37,13 @@ in `programs/relayer/src/constants.rs::ONRE_PROGRAM_ID`).
 USDC mint: `EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v`.
 ONyc mint: `5Y8NV33Vv7WbnLfq3zBcKSdYPrk7g2KoiQoe7M2tcxp5`.
 
-### 1.2 Instruction discriminators (Anchor sighash, sha256("global:"+name)[..8])
+### 1.2 Instruction discriminators (Anchor sighash, sha256["global:"+name](..8))
 
-| Instruction                                          | Discriminator (u8 array)                          |
-| ---------------------------------------------------- | ------------------------------------------------- |
-| `take_offer_permissionless` (existing, deposit only) | `[37, 190, 224, 77, 197, 39, 203, 230]`           |
-| `create_redemption_request` (NEW)                    | `[201, 53, 181, 254, 115, 137, 70, 151]`          |
-| `fulfill_redemption_request` (NEW, OnRe-side only)   | `[140, 124, 139, 242, 179, 153, 208, 66]`         |
+| Instruction                                          | Discriminator (u8 array)                  |
+| ---------------------------------------------------- | ----------------------------------------- |
+| `take_offer_permissionless` (existing, deposit only) | `[37, 190, 224, 77, 197, 39, 203, 230]`   |
+| `create_redemption_request` (NEW)                    | `[201, 53, 181, 254, 115, 137, 70, 151]`  |
+| `fulfill_redemption_request` (NEW, OnRe-side only)   | `[140, 124, 139, 242, 179, 153, 208, 66]` |
 
 ### 1.3 `create_redemption_request` accounts (12 total, in order)
 
@@ -74,6 +74,7 @@ design: the relayer's authority PDA can be the redeemer.
 
 When OnRe's `redemption_admin` calls `fulfill_redemption_request` for our
 request:
+
 1. ONyc is taken from the redemption vault (burned if OnRe has mint
    authority, otherwise transferred to boss).
 2. USDC is delivered to `user_token_out_account` — **the ATA owned by
@@ -109,7 +110,7 @@ pub enum FlowStatus {
 ```
 
 Borsh encodes enum variants as a 1-byte positional tag. Inserting
-`RedemptionPending` *between* `Claimed` and `Swapped` would shift
+`RedemptionPending` _between_ `Claimed` and `Swapped` would shift
 `Swapped` from tag 1 to tag 2 and break every existing Flow PDA on
 read. `derive(InitSpace)` reports `1 + max(variant_init_space) = 1`
 regardless of variant count (≤256 payload-less arms), so `Flow`'s
@@ -161,6 +162,7 @@ pub struct RedemptionTracker {
 `Flow` via `tracker.flow`.
 
 **Lifecycle**:
+
 - Created in `request_redemption_onyc` alongside the
   `flow.status = RedemptionPending` write. Both writes happen in a
   single tx; if the OnRe CPI fails, both revert.
@@ -170,6 +172,7 @@ pub struct RedemptionTracker {
   Anchor `init` constraint — this is the in-flight mutex.
 
 **Why singleton + sidecar instead of per-flow + separate mutex**:
+
 1. Zero compatibility risk for any existing Flow PDA.
 2. Deposit-chain Flow PDAs cost zero extra bytes — the tracker only
    exists during withdraw fulfillment.
@@ -189,10 +192,11 @@ Post: `flow.status == RedemptionPending`, sidecar
 address and the USDC ATA pre-balance snapshot.
 
 Steps:
+
 1. Take withdrawal-leg fee from `flow.amount` ONyc, route to `fee_vault`
    (same logic as current `swap_onyc_to_usdc:30-47`).
 2. Snapshot `usdc_ata.amount` into `tracker.usdc_ata_pre_balance`.
-3. Read `redemption_offer.request_counter` *before* the CPI fires;
+3. Read `redemption_offer.request_counter` _before_ the CPI fires;
    derive the `RedemptionRequest` PDA address; store in
    `tracker.redemption_request`.
 4. CPI `create_redemption_request(amount=net)` on OnRe. The relayer's
@@ -214,6 +218,7 @@ sidecar `RedemptionTracker` exists for this flow. Post:
 to `tracker.payer`.
 
 Steps:
+
 1. Anchor `has_one`-style check: `tracker.flow == flow.key()`.
 2. Take `redemption_request_account: AccountInfo` from accounts; require
    `redemption_request_account.key() == tracker.redemption_request`.
@@ -293,13 +298,13 @@ permissionless, no operator key the system depends on."
 
 ### 3.2 After this redesign
 
-| Property                                  | Deposit chain | Withdraw chain (post-redesign) |
-| ----------------------------------------- | ------------- | ------------------------------ |
-| Permissionless caller                     | ✅ Yes        | ✅ Yes for relayer ix          |
-| Atomic in one tx                          | ✅ Yes        | ❌ No — two relayer ix + OnRe admin tx between |
-| No off-chain operator key needed          | ✅ Yes        | ❌ No — OnRe `redemption_admin` must fulfill |
-| Liveness depends on third party           | ❌ No         | ✅ Yes — OnRe fulfillment SLA  |
-| Fund-loss risk if OnRe admin disappears   | ❌ No         | Soft — funds stuck in OnRe vault until admin returns; not lost, but unrecoverable until then |
+| Property                                | Deposit chain | Withdraw chain (post-redesign)                                                               |
+| --------------------------------------- | ------------- | -------------------------------------------------------------------------------------------- |
+| Permissionless caller                   | ✅ Yes        | ✅ Yes for relayer ix                                                                        |
+| Atomic in one tx                        | ✅ Yes        | ❌ No — two relayer ix + OnRe admin tx between                                               |
+| No off-chain operator key needed        | ✅ Yes        | ❌ No — OnRe `redemption_admin` must fulfill                                                 |
+| Liveness depends on third party         | ❌ No         | ✅ Yes — OnRe fulfillment SLA                                                                |
+| Fund-loss risk if OnRe admin disappears | ❌ No         | Soft — funds stuck in OnRe vault until admin returns; not lost, but unrecoverable until then |
 
 ### 3.3 Concrete updates this redesign forces in `SECURITY_MODEL.md`
 
@@ -390,19 +395,19 @@ The current placeholder becomes a real test. Strategy:
 
 ## 5. Implementation sequencing (proposed)
 
-| Step | Scope                                                                      | LOC est. | Reviewable in isolation? |
-| ---- | -------------------------------------------------------------------------- | -------- | ------------------------ |
-| 5.1  | This spec doc + design review by user                                      | -        | YES                      |
-| 5.2  | `state.rs` Flow + FlowStatus changes; `error.rs` new variants; `constants.rs` additions; cargo unit tests | ~150 | YES |
-| 5.3  | `instructions/request_redemption_onyc.rs` (new); modify `lib.rs` dispatch  | ~200     | partially                |
-| 5.4  | `instructions/claim_redemption_usdc.rs` (new); modify `lib.rs` dispatch    | ~150     | partially                |
-| 5.5  | Delete `instructions/swap_onyc_to_usdc.rs`; remove from `lib.rs`           | ~20      | YES                      |
-| 5.6  | Codama client regen (`pnpm scripts/generate-clients.mts`); SDK helper for `RedemptionRequest` PDA derivation | ~100 | YES |
-| 5.7  | Capture `REDEMPTION_OFFER_FIXTURE`; patch `loadAndPatchOnreState` for `redemption_admin` | ~80 | YES |
-| 5.8  | Rewrite `tests/withdraw-flow-e2e.test.ts` from placeholder to real chained e2e | ~400 | YES |
-| 5.9  | Rewrite affected tests in `tests/relayer.test.ts` (every test referencing `swap_onyc_to_usdc`) | ~200 | partially |
-| 5.10 | Doc reconciliation pass: SECURITY_MODEL, fogo-onre, README, PRE_DEPLOY_CHECKLIST | ~150 | YES |
-| 5.11 | Re-engage external audit (the redesign introduces new attack surface; previous audit findings on `swap_onyc_to_usdc` are now moot) | - | YES |
+| Step | Scope                                                                                                                              | LOC est. | Reviewable in isolation? |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------- | -------- | ------------------------ |
+| 5.1  | This spec doc + design review by user                                                                                              | -        | YES                      |
+| 5.2  | `state.rs` Flow + FlowStatus changes; `error.rs` new variants; `constants.rs` additions; cargo unit tests                          | ~150     | YES                      |
+| 5.3  | `instructions/request_redemption_onyc.rs` (new); modify `lib.rs` dispatch                                                          | ~200     | partially                |
+| 5.4  | `instructions/claim_redemption_usdc.rs` (new); modify `lib.rs` dispatch                                                            | ~150     | partially                |
+| 5.5  | Delete `instructions/swap_onyc_to_usdc.rs`; remove from `lib.rs`                                                                   | ~20      | YES                      |
+| 5.6  | Codama client regen (`pnpm scripts/generate-clients.mts`); SDK helper for `RedemptionRequest` PDA derivation                       | ~100     | YES                      |
+| 5.7  | Capture `REDEMPTION_OFFER_FIXTURE`; patch `loadAndPatchOnreState` for `redemption_admin`                                           | ~80      | YES                      |
+| 5.8  | Rewrite `tests/withdraw-flow-e2e.test.ts` from placeholder to real chained e2e                                                     | ~400     | YES                      |
+| 5.9  | Rewrite affected tests in `tests/relayer.test.ts` (every test referencing `swap_onyc_to_usdc`)                                     | ~200     | partially                |
+| 5.10 | Doc reconciliation pass: SECURITY_MODEL, fogo-onre, README, PRE_DEPLOY_CHECKLIST                                                   | ~150     | YES                      |
+| 5.11 | Re-engage external audit (the redesign introduces new attack surface; previous audit findings on `swap_onyc_to_usdc` are now moot) | -        | YES                      |
 
 Each step is a separate commit. Total estimated diff: ~1450 LOC.
 
@@ -434,7 +439,7 @@ These are genuinely judgment calls, not implementation details:
    any flow. With `RedemptionPending` we now depend on OnRe ops being
    alive. Do we want a `cancel_redemption` escape hatch? OnRe has
    `cancel_redemption_request` (callable by `redeemer`, i.e. the
-   relayer authority — so we *could* implement a relayer-side
+   relayer authority — so we _could_ implement a relayer-side
    permissionless cancel that returns ONyc to the relayer's ONyc ATA
    and the user can be re-bridged via a new flow). Or do we accept
    the dependency and document the SLO?

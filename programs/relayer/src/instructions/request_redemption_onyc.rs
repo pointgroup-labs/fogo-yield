@@ -46,8 +46,10 @@ pub fn handler<'info>(ctx: Context<'info, RequestRedemptionOnyc<'info>>) -> Resu
     require!(gross > 0, RelayerError::ZeroAmountFlow);
 
     // Withdrawal fee taken pre-CPI on the ONyc input — same model as the
-    // pre-redesign `swap_onyc_to_usdc`. Fee goes to fee_vault; `net` ONyc
-    // is what OnRe receives.
+    // pre-redesign `swap_onyc_to_usdc`. Rate is the live
+    // `relayer_config.withdraw_fee_bps`; the asymmetric timelock in
+    // `configure` is the user's protection against retroactive raises.
+    // Fee goes to fee_vault; `net` ONyc is what OnRe receives.
     let (net, fee) = ctx.accounts.relayer_config.apply_withdraw_fee(gross)?;
 
     relayer_signed_transfer_checked(

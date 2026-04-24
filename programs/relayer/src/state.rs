@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 
-use crate::constants::CONFIG_SEED;
+use crate::constants::{CONFIG_SEED, FEE_TIMELOCK_SLOTS};
 use crate::error::RelayerError;
 
 /// The only long-lived state in this program.
@@ -8,6 +8,22 @@ use crate::error::RelayerError;
 /// `authority` is a cold/admin key used only for governance. All operational
 /// instructions are permissionless — recipients are VAA-bound, amounts are
 /// flow-bound, and CPI targets are compile-time constants.
+///
+/// **Layout-change hazard (operator-accepted).** `pending_fee` was
+/// appended to this struct, growing `INIT_SPACE`. Any `RelayerConfig`
+/// PDA created by a *previous* build of this program — on **any**
+/// cluster (localnet, devnet, mainnet) under the same program ID
+/// declared in `Anchor.toml` — is now under-sized, and every
+/// instruction that takes `Account<'info, RelayerConfig>` will fail
+/// to deserialize the stale bytes until the account is reallocated
+/// and zero-filled (Borsh `Option::None` = `0u8`).
+///
+/// **No migration instruction ships in this build.** The deployer's
+/// accepted recovery for any cluster that already holds a
+/// pre-rollout PDA is to close it out-of-band (e.g. via a one-shot
+/// upgrade carrying a temporary realloc ix, or by re-`initialize`
+/// after closing) before invoking any operational instruction. See
+/// `docs/PRE_DEPLOY_CHECKLIST.md` §1.6.
 #[account]
 #[derive(InitSpace)]
 pub struct RelayerConfig {
@@ -33,6 +49,49 @@ pub struct RelayerConfig {
     pub deposit_fee_bps: u16,
     /// Withdrawal-leg fee in bps.
     pub withdraw_fee_bps: u16,
+
+    /// Staged fee *increase*, auto-promoted on the next `configure`
+    /// call once `pending_fee.ready_slot` has elapsed.
+    ///
+    /// `None` ⟺ no proposal in flight. Invariant when `Some`: at least
+    /// one inner leg is `Some`. Maintained in `configure` by collapsing
+    /// to `None` whenever the last inner field clears, so
+    /// `pending_fee.is_some()` is the canonical "is anything staged?"
+    /// check at every other call site.
+    ///
+    /// Decreases never use this field — they apply instantly in
+    /// `configure`. The `FEE_TIMELOCK_SLOTS` window (~2 days) is the
+    /// user's guarantee: a watcher who sees a staged raise has a full
+    /// epoch to claim/withdraw at the old rate before promotion.
+    pub pending_fee: Option<PendingFee>,
+}
+
+/// Bundled pending fee proposal. See `RelayerConfig::pending_fee` for the
+/// non-empty invariant.
+#[derive(InitSpace, AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq, Debug)]
+pub struct PendingFee {
+    /// `None` → deposit leg unaffected by this proposal.
+    /// `Some(bps)` → staged deposit-fee increase, takes effect at `ready_slot`.
+    pub deposit_fee_bps: Option<u16>,
+
+    /// Same as above for the withdraw leg.
+    pub withdraw_fee_bps: Option<u16>,
+
+    /// Earliest `Clock::slot` at which `configure`'s auto-promote step
+    /// will move this bundle onto the live fields.
+    /// Always `now + FEE_TIMELOCK_SLOTS` at proposal time, MAX-extended
+    /// by any subsequent raise so a follow-up never shortens the window.
+    pub ready_slot: u64,
+}
+
+impl PendingFee {
+    /// Both inner legs cleared. The handler collapses the surrounding
+    /// `Option` to `None` whenever this returns `true`, so the canonical
+    /// "is anything staged?" check at every other call site is
+    /// `RelayerConfig.pending_fee.is_some()`.
+    pub fn is_empty(&self) -> bool {
+        self.deposit_fee_bps.is_none() && self.withdraw_fee_bps.is_none()
+    }
 }
 
 impl RelayerConfig {
@@ -41,6 +100,15 @@ impl RelayerConfig {
     pub fn validate(&self) -> Result<()> {
         require!(self.deposit_fee_bps <= 10_000, RelayerError::FeeBpsTooHigh);
         require!(self.withdraw_fee_bps <= 10_000, RelayerError::FeeBpsTooHigh);
+        if let Some(p) = &self.pending_fee {
+            require!(!p.is_empty(), RelayerError::EmptyPendingFee);
+            if let Some(bps) = p.deposit_fee_bps {
+                require!(bps <= 10_000, RelayerError::FeeBpsTooHigh);
+            }
+            if let Some(bps) = p.withdraw_fee_bps {
+                require!(bps <= 10_000, RelayerError::FeeBpsTooHigh);
+            }
+        }
         Ok(())
     }
 
@@ -51,6 +119,96 @@ impl RelayerConfig {
     pub fn apply_withdraw_fee(&self, gross: u64) -> Result<(u64, u64)> {
         apply_fee_bps(gross, self.withdraw_fee_bps)
     }
+
+    /// If a staged proposal has reached its `ready_slot`, move each `Some`
+    /// inner leg onto the live field and clear the bundle. No-op when
+    /// nothing is staged or the timelock hasn't elapsed.
+    ///
+    /// Run at the top of `configure::handler` so a follow-up "decrease"
+    /// in the same call compares against the just-promoted value rather
+    /// than the stale one — otherwise the asymmetric branch could
+    /// silently flip and the decrease would route through the staging
+    /// path instead of applying instantly.
+    pub fn promote_pending_fee_if_ready(&mut self, now: u64) {
+        let Some(p) = self.pending_fee else { return };
+        if now < p.ready_slot {
+            return;
+        }
+        if let Some(d) = p.deposit_fee_bps {
+            self.deposit_fee_bps = d;
+        }
+        if let Some(w) = p.withdraw_fee_bps {
+            self.withdraw_fee_bps = w;
+        }
+        self.pending_fee = None;
+    }
+
+    /// Apply the asymmetric proposal rule to the deposit-fee leg:
+    /// `proposed <= current` applies instantly; `proposed > current` is
+    /// staged into `pending_fee` with a MAX-extended `ready_slot`. See
+    /// `propose_fee_change` for the shared logic.
+    pub fn propose_deposit_fee(&mut self, proposed: u16, now: u64) -> Result<()> {
+        propose_fee_change(
+            proposed,
+            &mut self.deposit_fee_bps,
+            &mut self.pending_fee,
+            |p| &mut p.deposit_fee_bps,
+            now,
+        )
+    }
+
+    /// Same shape as `propose_deposit_fee` for the withdraw leg.
+    pub fn propose_withdraw_fee(&mut self, proposed: u16, now: u64) -> Result<()> {
+        propose_fee_change(
+            proposed,
+            &mut self.withdraw_fee_bps,
+            &mut self.pending_fee,
+            |p| &mut p.withdraw_fee_bps,
+            now,
+        )
+    }
+}
+
+/// Pure asymmetric proposal logic, mutating in place:
+///
+/// - `proposed <= *live`: apply instantly + clear THIS leg in the bundle.
+///   If that empties the bundle, drop it to `None` (maintains the
+///   `PendingFee::is_empty` invariant).
+/// - `proposed >  *live`: bundle gains/updates this leg; `ready_slot`
+///   MAX-extends so a follow-up raise never shortens an in-flight window.
+///
+/// Range validation (`proposed <= 10_000`) is intentionally deferred to
+/// `validate()` at the end of the handler.
+fn propose_fee_change(
+    proposed: u16,
+    live: &mut u16,
+    bundle: &mut Option<PendingFee>,
+    leg: fn(&mut PendingFee) -> &mut Option<u16>,
+    now: u64,
+) -> Result<()> {
+    if proposed <= *live {
+        *live = proposed;
+        if let Some(p) = bundle {
+            *leg(p) = None;
+            if p.is_empty() {
+                *bundle = None;
+            }
+        }
+        return Ok(());
+    }
+
+    let new_ready = now
+        .checked_add(FEE_TIMELOCK_SLOTS)
+        .ok_or(RelayerError::FeeOverflow)?;
+
+    let p = bundle.get_or_insert(PendingFee {
+        deposit_fee_bps: None,
+        withdraw_fee_bps: None,
+        ready_slot: new_ready,
+    });
+    p.ready_slot = p.ready_slot.max(new_ready);
+    *leg(p) = Some(proposed);
+    Ok(())
 }
 
 /// Returns `(net, fee)` where `fee = floor(gross * bps / 10_000)`.
@@ -59,7 +217,7 @@ impl RelayerConfig {
 /// `fee_u128 <= gross`, so the cast can't overflow today, but enforcing
 /// locally turns a future invariant violation into `FeeOverflow` instead of
 /// silent truncation.
-fn apply_fee_bps(gross: u64, bps: u16) -> Result<(u64, u64)> {
+pub(crate) fn apply_fee_bps(gross: u64, bps: u16) -> Result<(u64, u64)> {
     let fee_u128 = (gross as u128)
         .checked_mul(bps as u128)
         .ok_or(RelayerError::FeeOverflow)?
@@ -96,10 +254,10 @@ pub enum FlowStatus {
 /// protection are delegated to the per-VAA claim account created by Wormhole
 /// Gateway / NTT — no hashing needed here.
 ///
-/// **Field set is byte-stable across the withdraw redesign**. Withdraw-chain
-/// redemption tracking lives in the sidecar `RedemptionTracker` PDA below
-/// rather than as new fields here, to preserve compatibility with any
-/// already-allocated `Flow` PDAs.
+/// **Field set is byte-stable.** Withdraw-chain redemption tracking lives
+/// in the sidecar `RedemptionTracker` PDA below; nothing else attaches
+/// to `Flow`. Already-allocated `Flow` PDAs from prior deploys must
+/// continue to load.
 #[account]
 #[derive(InitSpace)]
 pub struct Flow {
@@ -179,6 +337,24 @@ mod tests {
         (re as u32) + ERROR_CODE_OFFSET
     }
 
+    /// Minimal `RelayerConfig` fixture for fee-related tests. All
+    /// non-fee fields are zero/default — they aren't read by `validate`
+    /// or `promote_pending_fee_if_ready`.
+    fn cfg_with(deposit_fee_bps: u16, withdraw_fee_bps: u16, pending_fee: Option<PendingFee>) -> RelayerConfig {
+        RelayerConfig {
+            authority: Pubkey::default(),
+            pending_authority: None,
+            usdc_mint: Pubkey::default(),
+            onyc_mint: Pubkey::default(),
+            fee_vault: Pubkey::default(),
+            bump: 0,
+            relayer_authority_bump: 0,
+            deposit_fee_bps,
+            withdraw_fee_bps,
+            pending_fee,
+        }
+    }
+
     #[test]
     fn zero_bps_passes_through_full_amount() {
         let (net, fee) = apply_fee_bps(1_000_000, 0).unwrap();
@@ -256,35 +432,165 @@ mod tests {
 
     #[test]
     fn validate_accepts_zero_and_max_fees() {
-        let cfg = RelayerConfig {
-            authority: Pubkey::default(),
-            pending_authority: None,
-            usdc_mint: Pubkey::default(),
-            onyc_mint: Pubkey::default(),
-            fee_vault: Pubkey::default(),
-            bump: 0,
-            relayer_authority_bump: 0,
-            deposit_fee_bps: 0,
-            withdraw_fee_bps: 10_000,
-        };
-        cfg.validate().unwrap();
+        cfg_with(0, 10_000, None).validate().unwrap();
     }
 
     #[test]
     fn validate_rejects_above_max() {
-        let cfg = RelayerConfig {
-            authority: Pubkey::default(),
-            pending_authority: None,
-            usdc_mint: Pubkey::default(),
-            onyc_mint: Pubkey::default(),
-            fee_vault: Pubkey::default(),
-            bump: 0,
-            relayer_authority_bump: 0,
-            deposit_fee_bps: 10_001,
-            withdraw_fee_bps: 0,
-        };
-        let e = cfg.validate().unwrap_err();
+        let e = cfg_with(10_001, 0, None).validate().unwrap_err();
         assert_eq!(err_code(e), code_of(RelayerError::FeeBpsTooHigh));
+    }
+
+    #[test]
+    fn validate_rejects_empty_pending_fee_bundle() {
+        // Invariant: a `Some` bundle must have at least one inner leg set.
+        // The handler maintains this via collapse-on-empty, but `validate`
+        // is the catch-all if a future code path bypasses it.
+        let empty_bundle = PendingFee {
+            deposit_fee_bps: None,
+            withdraw_fee_bps: None,
+            ready_slot: 0,
+        };
+        let e = cfg_with(0, 0, Some(empty_bundle)).validate().unwrap_err();
+        assert_eq!(err_code(e), code_of(RelayerError::EmptyPendingFee));
+    }
+
+    fn pending_both(d: u16, w: u16, ready: u64) -> PendingFee {
+        PendingFee {
+            deposit_fee_bps: Some(d),
+            withdraw_fee_bps: Some(w),
+            ready_slot: ready,
+        }
+    }
+    fn pending_deposit_only(d: u16, ready: u64) -> PendingFee {
+        PendingFee {
+            deposit_fee_bps: Some(d),
+            withdraw_fee_bps: None,
+            ready_slot: ready,
+        }
+    }
+
+    const NOW: u64 = 1_000_000;
+
+    #[test]
+    fn promote_no_bundle_is_noop() {
+        let mut cfg = cfg_with(100, 150, None);
+        cfg.promote_pending_fee_if_ready(NOW);
+        assert_eq!((cfg.deposit_fee_bps, cfg.withdraw_fee_bps), (100, 150));
+        assert_eq!(cfg.pending_fee, None);
+    }
+
+    #[test]
+    fn promote_not_yet_ripe_keeps_bundle() {
+        // ready_slot still in the future → live untouched, bundle preserved.
+        let bundle = pending_both(200, 250, NOW + 10);
+        let mut cfg = cfg_with(100, 150, Some(bundle));
+        cfg.promote_pending_fee_if_ready(NOW);
+        assert_eq!((cfg.deposit_fee_bps, cfg.withdraw_fee_bps), (100, 150));
+        assert_eq!(cfg.pending_fee, Some(bundle), "bundle preserved verbatim");
+    }
+
+    #[test]
+    fn promote_ripe_moves_both_legs_and_clears_bundle() {
+        // ready_slot has elapsed → both staged values land on live, bundle
+        // collapses to None. This is the auto-promote that the dropped
+        // `apply_pending_fee` ix used to perform.
+        let mut cfg = cfg_with(100, 150, Some(pending_both(200, 250, NOW - 1)));
+        cfg.promote_pending_fee_if_ready(NOW);
+        assert_eq!((cfg.deposit_fee_bps, cfg.withdraw_fee_bps), (200, 250));
+        assert_eq!(cfg.pending_fee, None);
+    }
+
+    #[test]
+    fn promote_ripe_with_one_leg_unstaged_preserves_other_live() {
+        // Only deposit staged. Withdraw live value must pass through
+        // unchanged — the `if let Some(w)` guard skips the unstaged leg.
+        let mut cfg = cfg_with(100, 150, Some(pending_deposit_only(200, NOW - 1)));
+        cfg.promote_pending_fee_if_ready(NOW);
+        assert_eq!((cfg.deposit_fee_bps, cfg.withdraw_fee_bps), (200, 150));
+        assert_eq!(cfg.pending_fee, None);
+    }
+
+    #[test]
+    fn propose_decrease_applies_instantly_and_clears_only_its_leg() {
+        // Both legs staged. Decreasing deposit must clear deposit staging
+        // but leave withdraw staging untouched.
+        let mut cfg = cfg_with(100, 100, Some(pending_both(200, 250, NOW + FEE_TIMELOCK_SLOTS)));
+        cfg.propose_deposit_fee(50, NOW).unwrap();
+        assert_eq!(cfg.deposit_fee_bps, 50, "decrease applies instantly");
+        let p = cfg.pending_fee.expect("withdraw staging should survive");
+        assert_eq!(p.deposit_fee_bps, None, "deposit staging cleared");
+        assert_eq!(p.withdraw_fee_bps, Some(250), "withdraw staging untouched");
+    }
+
+    #[test]
+    fn propose_restating_current_clears_leg_and_collapses_empty_bundle() {
+        // Only deposit staged. Restating current value clears that leg,
+        // and since the other leg is empty the bundle collapses to None
+        // (the `is_empty` check inside propose_fee_change does this inline,
+        // not a handler-tail filter).
+        let mut cfg = cfg_with(100, 0, Some(pending_deposit_only(200, NOW + FEE_TIMELOCK_SLOTS)));
+        cfg.propose_deposit_fee(100, NOW).unwrap();
+        assert_eq!(cfg.deposit_fee_bps, 100);
+        assert_eq!(cfg.pending_fee, None, "empty bundle collapses inline");
+    }
+
+    #[test]
+    fn propose_increase_stages_with_timelock() {
+        // No prior bundle: ready_slot = now + DELAY exactly.
+        let mut cfg = cfg_with(100, 0, None);
+        cfg.propose_deposit_fee(200, NOW).unwrap();
+        assert_eq!(cfg.deposit_fee_bps, 100, "live unchanged on raise");
+        let p = cfg.pending_fee.expect("staged proposal");
+        assert_eq!(p.deposit_fee_bps, Some(200));
+        assert_eq!(p.withdraw_fee_bps, None);
+        assert_eq!(p.ready_slot, NOW + FEE_TIMELOCK_SLOTS);
+    }
+
+    #[test]
+    fn propose_second_increase_extends_but_never_shortens_window() {
+        // Existing window expires far in future. A second raise *now*
+        // must keep the longer window — watcher lead-time can never silently shrink.
+        let far_future = NOW + FEE_TIMELOCK_SLOTS + 10_000;
+        let mut cfg = cfg_with(100, 0, Some(pending_deposit_only(200, far_future)));
+        cfg.propose_deposit_fee(300, NOW).unwrap();
+        let p = cfg.pending_fee.unwrap();
+        assert_eq!(p.deposit_fee_bps, Some(300), "latest authority intent wins");
+        assert_eq!(p.ready_slot, far_future, "window not shortened");
+    }
+
+    #[test]
+    fn propose_second_increase_with_elapsed_window_uses_fresh_delay() {
+        // Existing ready_slot is in the past — should have been promoted
+        // already. A new raise gets a fresh full-DELAY window so authority
+        // can't piggyback on an elapsed window to apply instantly.
+        let mut cfg = cfg_with(100, 0, Some(pending_deposit_only(200, NOW - 1)));
+        cfg.propose_deposit_fee(300, NOW).unwrap();
+        let p = cfg.pending_fee.unwrap();
+        assert_eq!(p.deposit_fee_bps, Some(300));
+        assert_eq!(p.ready_slot, NOW + FEE_TIMELOCK_SLOTS);
+    }
+
+    #[test]
+    fn propose_cross_leg_increase_shares_bundle() {
+        // Deposit raise already staged; withdraw raise lands now. Same
+        // bundle gains the second leg, ready_slot MAX-extends.
+        let earlier = NOW + FEE_TIMELOCK_SLOTS - 1_000;
+        let mut cfg = cfg_with(100, 100, Some(pending_deposit_only(200, earlier)));
+        cfg.propose_withdraw_fee(300, NOW).unwrap();
+        let p = cfg.pending_fee.unwrap();
+        assert_eq!(p.deposit_fee_bps, Some(200), "deposit leg untouched");
+        assert_eq!(p.withdraw_fee_bps, Some(300), "withdraw leg added");
+        assert_eq!(p.ready_slot, NOW + FEE_TIMELOCK_SLOTS, "MAX-extended");
+    }
+
+    #[test]
+    fn propose_fee_overflow_on_pathological_clock() {
+        // u64::MAX as `now` would overflow `now + DELAY`. Surface as
+        // FeeOverflow rather than silent wrap.
+        let mut cfg = cfg_with(100, 0, None);
+        let e = cfg.propose_deposit_fee(200, u64::MAX).unwrap_err();
+        assert_eq!(err_code(e), code_of(RelayerError::FeeOverflow));
     }
 
     /// **Backward-compatibility guard.** Borsh serialises an enum variant as
@@ -330,14 +636,16 @@ mod tests {
         assert_eq!(tracker.onyc_amount_in, 999_500);
     }
 
-    /// `Flow` byte-stability guard. The withdraw redesign deliberately
-    /// avoids touching `Flow`'s fields so already-allocated PDAs stay
-    /// loadable. If anyone ever changes this, `Flow::INIT_SPACE` shifts
-    /// and that's the cue to design a versioned migration first.
+    /// `Flow` byte-stability guard. The withdraw redesign and the
+    /// fee-timelock work both deliberately avoided touching `Flow`'s
+    /// fields so already-allocated PDAs stay loadable. Staged fee state
+    /// lives on `RelayerConfig.pending_fee`, not on `Flow`. If anyone
+    /// ever changes this, `Flow::INIT_SPACE` shifts and that's the cue
+    /// to design a versioned migration first.
     ///
     /// Numbers: 32 (fogo_sender) + 1 (FlowStatus tag) + 8 (amount) + 32
-    /// (payer) + 1 (bump) = 74. (Anchor's 8-byte account discriminator is
-    /// added separately by `init` and not counted here.)
+    /// (payer) + 1 (bump) = 74. (Anchor's 8-byte account discriminator
+    /// is added separately by `init` and not counted here.)
     #[test]
     fn flow_init_space_is_unchanged_by_redesign() {
         assert_eq!(Flow::INIT_SPACE, 74, "Flow layout must not shift");
@@ -409,5 +717,4 @@ mod tests {
         use crate::constants::ONRE_CANCEL_REDEMPTION_REQUEST_REDEMPTION_REQUEST_INDEX;
         assert_eq!(ONRE_CANCEL_REDEMPTION_REQUEST_REDEMPTION_REQUEST_INDEX, 2);
     }
-
 }

@@ -67,6 +67,9 @@ pub fn handler<'info>(ctx: Context<'info, SwapUsdcToOnyc<'info>>) -> Result<()> 
 
     // Deposit fee taken POST-swap from the ONyc output, on the same
     // authority-owned `onyc_ata` that just received the swap proceeds.
+    // Rate is the live `relayer_config.deposit_fee_bps` — protection
+    // against retroactive raises is provided by the asymmetric timelock
+    // in `configure` (see `apply_pending_fee`).
     let (net, fee) = ctx.accounts.relayer_config.apply_deposit_fee(gross)?;
 
     relayer_signed_transfer_checked(

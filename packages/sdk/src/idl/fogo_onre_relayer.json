@@ -82,8 +82,7 @@
         "(returns ONyc to `onyc_ata`, rolls flow back to `Claimed`, frees",
         "the singleton). Authority-gated to prevent the",
         "request→cancel→request fee-griefing loop a permissionless cancel",
-        "would enable. See `cancel_redemption_onyc.rs` for stuck-redemption",
-        "scenarios."
+        "would enable."
       ],
       "discriminator": [
         173,
@@ -832,7 +831,14 @@
         "Authority-only. `None` args leave the corresponding field unchanged.",
         "`new_authority`: `Some(pk)` proposes; `Some(default())` cancels;",
         "`None` leaves the proposal slot alone. Acceptance happens in",
-        "`accept_authority`."
+        "`accept_authority`.",
+        "",
+        "Fee changes are asymmetric: decreases apply instantly, increases",
+        "stage into `pending_fee` for `FEE_TIMELOCK_SLOTS` (~2 days). The",
+        "next `configure` call after the window elapses auto-promotes the",
+        "staged change onto the live fields before processing new args —",
+        "no separate apply/cancel ix exists. See `configure::handler` for",
+        "the full proposal semantics."
       ],
       "discriminator": [
         245,
@@ -1481,7 +1487,7 @@
         "Forward flow's ONyc to OnRe via `create_redemption_request` and",
         "init the singleton tracker. Caller-permissionless. Fee taken pre-CPI.",
         "Replaces the deleted `swap_onyc_to_usdc` because OnRe's withdraw",
-        "side is asymmetric — see `docs/WITHDRAW_REDESIGN.md`."
+        "side is asymmetric."
       ],
       "discriminator": [
         117,
@@ -2901,6 +2907,11 @@
       "code": 6024,
       "name": "MissingRedemptionState",
       "msg": "RedemptionTracker missing or unexpected for this flow status"
+    },
+    {
+      "code": 6025,
+      "name": "EmptyPendingFee",
+      "msg": "PendingFee bundle has no inner leg set — invariant violation"
     }
   ],
   "types": [
@@ -2915,10 +2926,10 @@
         "protection are delegated to the per-VAA claim account created by Wormhole",
         "Gateway / NTT — no hashing needed here.",
         "",
-        "**Field set is byte-stable across the withdraw redesign**. Withdraw-chain",
-        "redemption tracking lives in the sidecar `RedemptionTracker` PDA below",
-        "rather than as new fields here, to preserve compatibility with any",
-        "already-allocated `Flow` PDAs."
+        "**Field set is byte-stable.** Withdraw-chain redemption tracking lives",
+        "in the sidecar `RedemptionTracker` PDA below; nothing else attaches",
+        "to `Flow`. Already-allocated `Flow` PDAs from prior deploys must",
+        "continue to load."
       ],
       "type": {
         "kind": "struct",
@@ -3063,6 +3074,47 @@
           },
           {
             "name": "amount",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PendingFee",
+      "docs": [
+        "Bundled pending fee proposal. See `RelayerConfig::pending_fee` for the",
+        "non-empty invariant."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "deposit_fee_bps",
+            "docs": [
+              "`None` → deposit leg unaffected by this proposal.",
+              "`Some(bps)` → staged deposit-fee increase, takes effect at `ready_slot`."
+            ],
+            "type": {
+              "option": "u16"
+            }
+          },
+          {
+            "name": "withdraw_fee_bps",
+            "docs": [
+              "Same as above for the withdraw leg."
+            ],
+            "type": {
+              "option": "u16"
+            }
+          },
+          {
+            "name": "ready_slot",
+            "docs": [
+              "Earliest `Clock::slot` at which `configure`'s auto-promote step",
+              "will move this bundle onto the live fields.",
+              "Always `now + FEE_TIMELOCK_SLOTS` at proposal time, MAX-extended",
+              "by any subsequent raise so a follow-up never shortens the window."
+            ],
             "type": "u64"
           }
         ]
@@ -3242,7 +3294,23 @@
         "",
         "`authority` is a cold/admin key used only for governance. All operational",
         "instructions are permissionless — recipients are VAA-bound, amounts are",
-        "flow-bound, and CPI targets are compile-time constants."
+        "flow-bound, and CPI targets are compile-time constants.",
+        "",
+        "**Layout-change hazard (operator-accepted).** `pending_fee` was",
+        "appended to this struct, growing `INIT_SPACE`. Any `RelayerConfig`",
+        "PDA created by a *previous* build of this program — on **any**",
+        "cluster (localnet, devnet, mainnet) under the same program ID",
+        "declared in `Anchor.toml` — is now under-sized, and every",
+        "instruction that takes `Account<'info, RelayerConfig>` will fail",
+        "to deserialize the stale bytes until the account is reallocated",
+        "and zero-filled (Borsh `Option::None` = `0u8`).",
+        "",
+        "**No migration instruction ships in this build.** The deployer's",
+        "accepted recovery for any cluster that already holds a",
+        "pre-rollout PDA is to close it out-of-band (e.g. via a one-shot",
+        "upgrade carrying a temporary realloc ix, or by re-`initialize`",
+        "after closing) before invoking any operational instruction. See",
+        "`docs/PRE_DEPLOY_CHECKLIST.md` §1.6."
       ],
       "type": {
         "kind": "struct",
@@ -3300,6 +3368,31 @@
               "Withdrawal-leg fee in bps."
             ],
             "type": "u16"
+          },
+          {
+            "name": "pending_fee",
+            "docs": [
+              "Staged fee *increase*, auto-promoted on the next `configure`",
+              "call once `pending_fee.ready_slot` has elapsed.",
+              "",
+              "`None` ⟺ no proposal in flight. Invariant when `Some`: at least",
+              "one inner leg is `Some`. Maintained in `configure` by collapsing",
+              "to `None` whenever the last inner field clears, so",
+              "`pending_fee.is_some()` is the canonical \"is anything staged?\"",
+              "check at every other call site.",
+              "",
+              "Decreases never use this field — they apply instantly in",
+              "`configure`. The `FEE_TIMELOCK_SLOTS` window (~2 days) is the",
+              "user's guarantee: a watcher who sees a staged raise has a full",
+              "epoch to claim/withdraw at the old rate before promotion."
+            ],
+            "type": {
+              "option": {
+                "defined": {
+                  "name": "PendingFee"
+                }
+              }
+            }
           }
         ]
       }

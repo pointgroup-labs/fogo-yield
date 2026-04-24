@@ -27,6 +27,10 @@ pub fn handler(
     config.relayer_authority_bump = ctx.bumps.relayer_authority;
     config.deposit_fee_bps = deposit_fee_bps;
     config.withdraw_fee_bps = withdraw_fee_bps;
+    // Explicit even though `init` zero-fills the account: makes the
+    // "no proposal in flight at deploy" invariant visible at the call
+    // site instead of relying on Borsh's `Option::None == 0u8` encoding.
+    config.pending_fee = None;
     config.validate()?;
 
     msg!(

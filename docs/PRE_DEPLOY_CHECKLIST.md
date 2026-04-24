@@ -15,8 +15,8 @@ If you cannot truthfully tick a box, **do not deploy**.
       matches what gets uploaded to mainnet. The verifiable build pins the
       Rust toolchain inside a Docker container; this guards against the
       deployer's local Rust version producing a different binary than CI.
-      *(Skipped during the Apr 2026 test-tightening sprint — must be done
-      before deploy.)*
+      _(Skipped during the Apr 2026 test-tightening sprint — must be done
+      before deploy.)_
 - [ ] Compare the program ID embedded in the binary (`anchor keys list`)
       to the canonical `onrenRKgX54qtWeK3cuaTBE71xx7dWMXn82ubH61vAp` in
       `Anchor.toml` and `programs/relayer/src/lib.rs`. They MUST match.
@@ -59,7 +59,7 @@ Choose ONE before deploy:
 - [ ] **NEVER** leave upgrade authority on a single hot/warm key.
 
 Selected option: ___________________________
-Multisig address (if applicable): ___________________________
+Multisig address (if applicable):___________________________
 Signer roster (if applicable): ___________________________
 
 ### 2b. Config authority
@@ -92,7 +92,7 @@ Treat this key with the **same handling as the upgrade authority**:
       authority is in control until step 2 completes.
 
 Config authority address: ___________________________
-Same as upgrade authority? (Y/N): ___________________________
+Same as upgrade authority? (Y/N):___________________________
 
 ## 3. External security audit
 
@@ -125,7 +125,7 @@ at minimum:
       keccak-of-args binding prevents cross-call PDA reuse.
 
 Audit firm: ___________________________
-Report URL: ___________________________
+Report URL:___________________________
 Findings closed: ___________________________
 
 ## 4. Fixture / mainnet schema re-verification
@@ -197,7 +197,7 @@ rarely via Wormhole Queries or governance.
       pausing new deposits/withdrawals.
 
 Update authority: ___________________________
-Timelock / multisig: ___________________________
+Timelock / multisig:___________________________
 
 ## 7. Devnet soak test
 
@@ -218,7 +218,7 @@ windows).
       - All Flow PDAs close cleanly with rent returned to the original payer
       - No orphaned Flow PDAs after replay attempts
       - NTT rate-limit accumulators behave as expected across the
-        24-hour window
+      24-hour window
       - Wormhole guardian attestation latency does not produce stuck flows
 - [ ] Run a **failure-injection** pass on devnet: deliberate replay,
       wrong VAA, mismatched flow status. Confirm every failure surfaces
@@ -319,6 +319,7 @@ items in §1-§8 are NOT affected and still require deployer sign-off.
 > body and `docs/fogo-onre.md` top-of-file banner.
 
 ### Test-suite delta
+
 - **vitest**: 52 → 58 passing (1 `it.todo` for the withdraw-chain
   e2e — **note**: the todo is not just a missing test, it documents
   the missing relayer implementation; see §4).
@@ -335,6 +336,7 @@ items in §1-§8 are NOT affected and still require deployer sign-off.
   is neither `usdc_mint` nor `onyc_mint`.
 
 ### Auto-verified items (re-tick on every release)
+
 - [x] §1.2 Program ID consistency: `Anchor.toml` (all clusters) and
       `programs/relayer/src/lib.rs` `declare_id!` resolve to
       `onrenRKgX54qtWeK3cuaTBE71xx7dWMXn82ubH61vAp` as of this addendum
@@ -350,8 +352,23 @@ items in §1-§8 are NOT affected and still require deployer sign-off.
       (`nttu74…`), OnRe (`onreuGh…`). FOGO Wormhole chain ID = 51.
 
 ### Items still requiring human sign-off
+
 - §1.1 verifiable build (Docker-pinned toolchain)
 - §1.4 manual diff of `constants.rs` vs prior release
+- §1.6 **`RelayerConfig` layout change — operator-accepted hazard, no
+  migration ix ships.** The timelock rollout appended `pending_fee:
+  Option<PendingFee>` to `RelayerConfig`, growing `INIT_SPACE`. Any
+  cluster (localnet, devnet, mainnet) that ran a prior `initialize`
+  against this program ID now holds an under-sized PDA that will fail
+  to deserialize on every instruction taking
+  `Account<'info, RelayerConfig>` until the account is reallocated
+  and zero-filled (Borsh `Option::None` = `0u8`). **This build
+  intentionally does NOT ship a `migrate_relayer_config` instruction.**
+  Recovery is the deployer's responsibility — either (a) close the
+  stale PDA out-of-band and re-`initialize`, or (b) ship a one-shot
+  upgrade carrying a temporary realloc ix and remove it on the next
+  upgrade. Confirm before deploy which path applies to each cluster
+  this program ID has touched.
 - §2 / §2b upgrade & config authority handling (multisig roster)
 - §3 external audit
 - §4 (continued) mainnet fixture re-fetch & diff; **withdraw chain
@@ -369,9 +386,9 @@ items in §1-§8 are NOT affected and still require deployer sign-off.
 
 ## Sign-off
 
-I, _______________________ (printed name),
-acting as _______________________ (role),
+I, _**********************(printed name),
+acting as**********************_ (role),
 confirm every applicable box above is ticked and certify this build is
 ready for mainnet deploy.
 
-Signature: ___________________________   Date: _______________
+Signature: _____________**************Date:**************_

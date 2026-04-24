@@ -74,16 +74,16 @@ FOGO                                    Solana
 
 ## Chain Map
 
-| Component           | Chain           | Role                                                                                          |
-| ------------------- | --------------- | --------------------------------------------------------------------------------------------- |
-| OnRe Vault Program  | FOGO            | User-facing vault: deposit/withdraw USDC.s, mint/burn wONyc, hold reserve + bONyc backing     |
-| Relayer Program     | Solana          | CPI relayer: Gateway -> OnRe -> NTT. Immutable, no admin, PDA custody, hardcoded destinations |
-| Wormhole Gateway    | FOGO <-> Solana | Bridges USDC.s to USDC and back                                                               |
-| Wormhole NTT        | FOGO <-> Solana | Bridges ONyc (locked on Solana) to bONyc (minted on FOGO) and back                            |
-| Wormhole Queries    | Solana -> FOGO  | Guardian-attested reads of OnRe price vector parameters                                       |
+| Component           | Chain           | Role                                                                                                                                                                                                                                                          |
+| ------------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| OnRe Vault Program  | FOGO            | User-facing vault: deposit/withdraw USDC.s, mint/burn wONyc, hold reserve + bONyc backing                                                                                                                                                                     |
+| Relayer Program     | Solana          | CPI relayer: Gateway -> OnRe -> NTT. Immutable, no admin, PDA custody, hardcoded destinations                                                                                                                                                                 |
+| Wormhole Gateway    | FOGO <-> Solana | Bridges USDC.s to USDC and back                                                                                                                                                                                                                               |
+| Wormhole NTT        | FOGO <-> Solana | Bridges ONyc (locked on Solana) to bONyc (minted on FOGO) and back                                                                                                                                                                                            |
+| Wormhole Queries    | Solana -> FOGO  | Guardian-attested reads of OnRe price vector parameters                                                                                                                                                                                                       |
 | OnRe Program        | Solana          | Yield source. USDC -> ONyc via `take_offer_permissionless`. **⚠️ Reverse direction is NOT a symmetric `take_offer_permissionless`** — it's a separate `RedemptionOffer` with `create_redemption_request` → `fulfill_redemption_request` (admin-gated fulfill). |
-| Curator             | Off-chain       | Authorized caller that triggers deploy/withdraw operations. Never holds tokens.               |
-| Governance Multisig | FOGO            | Sets fees, reserve target, pause, price vector updates                                        |
+| Curator             | Off-chain       | Authorized caller that triggers deploy/withdraw operations. Never holds tokens.                                                                                                                                                                               |
+| Governance Multisig | FOGO            | Sets fees, reserve target, pause, price vector updates                                                                                                                                                                                                        |
 
 ## User Flows
 
@@ -278,15 +278,15 @@ Governance **cannot** withdraw funds to arbitrary accounts. All fund flows are p
 
 ### External Dependencies
 
-| Dependency           | If it fails                          | Impact                                                                                                                                                                                            |
-| -------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Wormhole Guardians   | Compromised or offline               | If offline: reserve-only mode, no fund loss. If compromised: could forge NTT attestation to mint unbacked bONyc, inflating vault NAV. Systemic risk shared with all Wormhole-dependent protocols. |
-| Wormhole Gateway     | Can't bridge USDC                    | Reserve-only mode. No new deploys. No fund loss.                                                                                                                                                  |
-| Wormhole NTT         | Can't move ONyc cross-chain          | Can't deploy new capital or return ONyc. Reserve still works. Existing bONyc in vault is safe.                                                                                                    |
-| OnRe protocol        | Yield stops, redemptions may fail    | Share price stops appreciating. Queued withdrawals delayed. **Investment risk — users bear ONyc devaluation.**  ⚠️ Independently of this row, queued withdrawals are currently **blocked** (not merely delayed) by the §4 relayer/OnRe API mismatch.                                                                                    |
-| OnRe redemption cap  | Vault needs to redeem more than cap  | OnRe enforces ~2.5% NAV/week redemption limit. Large queued withdrawals may take multiple weeks to fulfill. Reserve pool absorbs short-term demand. ⚠️ Currently moot — withdraw chain is non-functional regardless of cap.                                               |
-| OnRe offer liquidity | Can't swap in one or both directions | Deploy delayed until liquidity returns; reserve covers instant withdrawals. ⚠️ The "withdraw direction" line of this row is doubly broken — there is no permissionless ONyc→USDC offer at all on OnRe (see top-of-file banner), so this is not a transient liquidity issue but a missing instruction.                                                                                                         |
-| Curator goes offline | No deploys, no queue fulfillment     | Reserve accumulates. Existing bONyc appreciates. No fund loss. Degraded yield on new deposits.                                                                                                    |
+| Dependency           | If it fails                          | Impact                                                                                                                                                                                                                                                                                               |
+| -------------------- | ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Wormhole Guardians   | Compromised or offline               | If offline: reserve-only mode, no fund loss. If compromised: could forge NTT attestation to mint unbacked bONyc, inflating vault NAV. Systemic risk shared with all Wormhole-dependent protocols.                                                                                                    |
+| Wormhole Gateway     | Can't bridge USDC                    | Reserve-only mode. No new deploys. No fund loss.                                                                                                                                                                                                                                                     |
+| Wormhole NTT         | Can't move ONyc cross-chain          | Can't deploy new capital or return ONyc. Reserve still works. Existing bONyc in vault is safe.                                                                                                                                                                                                       |
+| OnRe protocol        | Yield stops, redemptions may fail    | Share price stops appreciating. Queued withdrawals delayed. **Investment risk — users bear ONyc devaluation.** ⚠️ Independently of this row, queued withdrawals are currently **blocked** (not merely delayed) by the §4 relayer/OnRe API mismatch.                                                   |
+| OnRe redemption cap  | Vault needs to redeem more than cap  | OnRe enforces ~2.5% NAV/week redemption limit. Large queued withdrawals may take multiple weeks to fulfill. Reserve pool absorbs short-term demand. ⚠️ Currently moot — withdraw chain is non-functional regardless of cap.                                                                           |
+| OnRe offer liquidity | Can't swap in one or both directions | Deploy delayed until liquidity returns; reserve covers instant withdrawals. ⚠️ The "withdraw direction" line of this row is doubly broken — there is no permissionless ONyc→USDC offer at all on OnRe (see top-of-file banner), so this is not a transient liquidity issue but a missing instruction. |
+| Curator goes offline | No deploys, no queue fulfillment     | Reserve accumulates. Existing bONyc appreciates. No fund loss. Degraded yield on new deposits.                                                                                                                                                                                                       |
 
 The system **degrades gracefully**. Each external failure reduces functionality but never causes fund loss.
 
@@ -369,28 +369,28 @@ created_at: i64             // timestamp
 
 ## Solana Relayer Program — Instruction Set
 
-| Instruction              | Description                                                                                                                                                                                                                       |
-| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `deploy(vaa: Vec<u8>)`   | Claim USDC from Gateway (`complete_transfer` with VAA) -> CPI OnRe `take_offer_permissionless` (USDC->ONyc) -> CPI NTT lock (ONyc). Atomic if compute allows, otherwise split across txs with tokens held in relayer PDA between. |
-| `deploy_step2()`         | If `deploy` was split: CPI OnRe (USDC->ONyc) from PDA.                                                                                                                                                                            |
-| `deploy_step3()`         | If `deploy` was split: CPI NTT lock (ONyc) from PDA.                                                                                                                                                                              |
+| Instruction              | Description                                                                                                                                                                                                                                                                                                            |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `deploy(vaa: Vec<u8>)`   | Claim USDC from Gateway (`complete_transfer` with VAA) -> CPI OnRe `take_offer_permissionless` (USDC->ONyc) -> CPI NTT lock (ONyc). Atomic if compute allows, otherwise split across txs with tokens held in relayer PDA between.                                                                                      |
+| `deploy_step2()`         | If `deploy` was split: CPI OnRe (USDC->ONyc) from PDA.                                                                                                                                                                                                                                                                 |
+| `deploy_step3()`         | If `deploy` was split: CPI NTT lock (ONyc) from PDA.                                                                                                                                                                                                                                                                   |
 | `withdraw(vaa: Vec<u8>)` | CPI NTT `redeem(VAA)` to release ONyc to relayer PDA ATA -> CPI OnRe `take_offer_permissionless` (ONyc->USDC) -> CPI Gateway transfer (USDC to FOGO vault). Same split-step pattern if needed. **⚠️ Mid-step CPI does not exist in OnRe; redesign required — see top-of-file banner and `PRE_DEPLOY_CHECKLIST.md` §4.** |
-| `withdraw_step2()`       | If `withdraw` was split: CPI Gateway transfer (USDC to FOGO vault). **⚠️ Unreachable — depends on the broken `withdraw` path above.**                                                                                                                                                               |
+| `withdraw_step2()`       | If `withdraw` was split: CPI Gateway transfer (USDC to FOGO vault). **⚠️ Unreachable — depends on the broken `withdraw` path above.**                                                                                                                                                                                   |
 
 No admin instructions. No upgrade authority. No persistent state beyond PDA token accounts. All destinations hardcoded. Curator authorization checked on each call.
 
 ## Assumptions to Validate Before Building
 
-| # | Assumption                                                     | Validation                                                            | Blocks                                       |
-| - | -------------------------------------------------------------- | --------------------------------------------------------------------- | -------------------------------------------- |
-| 1 | OnRe will coordinate on NTT deployment for ONyc                | Confirm with OnRe. Required for bONyc on FOGO.                        | Entire design                                |
+| # | Assumption                                                     | Validation                                                            | Blocks                                                                                                                                                                                |
+| - | -------------------------------------------------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1 | OnRe will coordinate on NTT deployment for ONyc                | Confirm with OnRe. Required for bONyc on FOGO.                        | Entire design                                                                                                                                                                         |
 | 2 | OnRe has a permissionless ONyc->USDC offer (reverse direction) | Query offer PDA for the ONyc/USDC pair. Confirm with OnRe.            | Withdrawal flow — **❌ FALSIFIED Apr 2026**: no symmetric `Offer` exists; OnRe uses `RedemptionOffer` + admin-fulfilled redemption. Withdrawal flow blocked pending relayer redesign. |
-| 3 | OnRe's permissionless offers work with PDA callers (no KYC)    | Test with PDA signer via CPI on devnet. Confirm with OnRe.            | Relayer program — **partially moot**: deposit-side `take_offer_permissionless` is exercised by `tests/deposit-flow-e2e.test.ts`; withdraw-side N/A (see #2). |
-| 4 | Gateway + OnRe + NTT CPIs fit in one Solana tx                 | Prototype on devnet. Measure accounts and CU.                         | Relayer instruction design (atomic vs split) |
-| 5 | OnRe price vector updates are infrequent                       | Confirm with OnRe. If frequent, need automated Queries.               | Price vector update mechanism                |
-| 6 | Wormhole Queries can verify OnRe state from FOGO on-chain      | Test on FOGO testnet. Fallback: governance-only vector updates.       | Price vector trust model                     |
-| 7 | OnRe ONyc->USDC offer has sufficient normal liquidity          | Monitor over time. Size reserve target accordingly.                   | Withdrawal reliability — **moot** (see #2): no such offer exists.                       |
-| 8 | Wormhole Gateway FOGO-side contract supports CPI from vault    | Test on FOGO testnet. If not, `deploy_capital` becomes a two-tx flow. | Deploy capital instruction                   |
+| 3 | OnRe's permissionless offers work with PDA callers (no KYC)    | Test with PDA signer via CPI on devnet. Confirm with OnRe.            | Relayer program — **partially moot**: deposit-side `take_offer_permissionless` is exercised by `tests/deposit-flow-e2e.test.ts`; withdraw-side N/A (see #2).                          |
+| 4 | Gateway + OnRe + NTT CPIs fit in one Solana tx                 | Prototype on devnet. Measure accounts and CU.                         | Relayer instruction design (atomic vs split)                                                                                                                                          |
+| 5 | OnRe price vector updates are infrequent                       | Confirm with OnRe. If frequent, need automated Queries.               | Price vector update mechanism                                                                                                                                                         |
+| 6 | Wormhole Queries can verify OnRe state from FOGO on-chain      | Test on FOGO testnet. Fallback: governance-only vector updates.       | Price vector trust model                                                                                                                                                              |
+| 7 | OnRe ONyc->USDC offer has sufficient normal liquidity          | Monitor over time. Size reserve target accordingly.                   | Withdrawal reliability — **moot** (see #2): no such offer exists.                                                                                                                     |
+| 8 | Wormhole Gateway FOGO-side contract supports CPI from vault    | Test on FOGO testnet. If not, `deploy_capital` becomes a two-tx flow. | Deploy capital instruction                                                                                                                                                            |
 
 ## UX States
 
@@ -502,11 +502,11 @@ required** — an ATA address is deterministic from `(mint, owner)` and the
 Associated Token Account program accepts any funder. Run:
 
 ```ts
+import { findRedeemerAuthorityPda, RELAYER_PROGRAM_ID } from '@fogo-onre/sdk'
 import {
   createAssociatedTokenAccountInstruction,
   getAssociatedTokenAddressSync,
 } from '@solana/spl-token'
-import { findRedeemerAuthorityPda, RELAYER_PROGRAM_ID } from '@fogo-onre/sdk'
 import { PublicKey, Transaction } from '@solana/web3.js'
 
 const USDC_MINT = new PublicKey(/* wrapped-USDC.s mint on Solana */)
@@ -514,9 +514,9 @@ const [redeemerPda] = findRedeemerAuthorityPda(RELAYER_PROGRAM_ID)
 const redeemerUsdcAta = getAssociatedTokenAddressSync(USDC_MINT, redeemerPda, true)
 
 const ix = createAssociatedTokenAccountInstruction(
-  payer.publicKey,  // anyone — ATA creation does not require the owner to sign
+  payer.publicKey, // anyone — ATA creation does not require the owner to sign
   redeemerUsdcAta,
-  redeemerPda,      // owner
+  redeemerPda, // owner
   USDC_MINT,
 )
 // Send as a single-instruction tx signed only by `payer`.
@@ -539,4 +539,3 @@ No upgrade authority is needed. The flow works on both upgradable and
 immutable deployments — the instruction surface of the relayer is
 unchanged; only its internal account handling evolved to read this
 pre-existing ATA.
-

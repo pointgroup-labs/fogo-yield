@@ -15,6 +15,11 @@ export default antfu(
     ignores: [
       '**/dist/**',
       '**/coverage/**',
+      // Anchor-generated IDL types — copied verbatim from `target/types/`
+      // by the SDK regen step. Linting them is pointless: they get
+      // overwritten on every `anchor build`.
+      'packages/sdk/src/types/**',
+      'packages/sdk/src/idl/**',
     ],
   },
   {

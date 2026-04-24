@@ -122,6 +122,10 @@ pub const SENDER_SEED: &[u8] = b"sender";
 
 pub const CONFIG_SEED: &[u8] = b"relayer_config";
 
+/// Minimum slot delay between proposing a fee *increase* and applying it.
+/// 432_000 slots ≈ 1 Solana epoch ≈ 2 days at the 400ms target slot time.
+pub const FEE_TIMELOCK_SLOTS: u64 = 432_000;
+
 /// Inbound flow PDA prefix (deposit leg). Seeds: `[FLOW_INBOUND_SEED, claim_pda]`.
 pub const FLOW_INBOUND_SEED: &[u8] = b"inflight";
 

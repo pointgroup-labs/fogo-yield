@@ -208,15 +208,21 @@ describe('relayer', () => {
         .rpc()
     })
 
-    it('updates both fee values', async () => {
+    it('stages fee raises and leaves live values unchanged', async () => {
+      // 50→200 and 100→300 are both raises. Under the asymmetric timelock,
+      // raises land on `pending_fee` (with `ready_slot = now + DELAY`) and
+      // the live fields stay put until a future `configure` call (after
+      // `ready_slot`) auto-promotes them. fee_vault rotation is unchanged.
       await (await client.configure({
         depositFeeBps: 200,
         withdrawFeeBps: 300,
       })).rpc()
 
       const config = await client.fetchConfig()
-      expect(config.depositFeeBps).toBe(200)
-      expect(config.withdrawFeeBps).toBe(300)
+      expect(config.depositFeeBps).toBe(50)
+      expect(config.withdrawFeeBps).toBe(100)
+      expect(config.pendingFee?.depositFeeBps).toBe(200)
+      expect(config.pendingFee?.withdrawFeeBps).toBe(300)
       expect(config.feeVault.toBase58()).toBe(feeVault.toBase58())
     })
 
@@ -240,7 +246,7 @@ describe('relayer', () => {
       expect(config.feeVault.toBase58()).toBe(newFeeVault.toBase58())
     })
 
-    it('updates only fees with feeVault omitted (Optional account = null)', async () => {
+    it('stages fee raises with feeVault omitted (Optional account = null)', async () => {
       // Snapshot current fee_vault — must remain unchanged after a
       // fee-only update that omits the account entirely.
       const before = await client.fetchConfig()
@@ -250,14 +256,18 @@ describe('relayer', () => {
       // wallet, lazy-fetches onycMint from config, and sends `null` for the
       // optional fee_vault account. The on-chain handler skips the rotation;
       // mint + anti-aliasing checks don't run (account itself is absent).
+      // Both fee changes are raises (50→200, 100→250), so under the
+      // asymmetric timelock they land on `pending_fee`, not the live fields.
       await (await client.configure({
         depositFeeBps: 200,
         withdrawFeeBps: 250,
       })).rpc()
 
       const after = await client.fetchConfig()
-      expect(after.depositFeeBps).toBe(200)
-      expect(after.withdrawFeeBps).toBe(250)
+      expect(after.depositFeeBps).toBe(50)
+      expect(after.withdrawFeeBps).toBe(100)
+      expect(after.pendingFee?.depositFeeBps).toBe(200)
+      expect(after.pendingFee?.withdrawFeeBps).toBe(250)
       expect(after.feeVault.toBase58()).toBe(beforeVault)
     })
 
@@ -331,9 +341,12 @@ describe('relayer', () => {
         'UnauthorizedAuthority',
       )
 
-      // New authority can drive configure.
+      // New authority can drive configure. 11→77 is a raise, so it stages
+      // on `pending_fee` rather than landing on the live field.
       await (await newClient.configure({ depositFeeBps: 77 })).rpc()
-      expect((await newClient.fetchConfig()).depositFeeBps).toBe(77)
+      const afterRaise = await newClient.fetchConfig()
+      expect(afterRaise.depositFeeBps).toBe(11)
+      expect(afterRaise.pendingFee?.depositFeeBps).toBe(77)
     })
 
     it('overwrites a pending proposal with a new one', async () => {
@@ -538,8 +551,12 @@ describe('relayer', () => {
       })).rpc()
 
       const config2 = await client.fetchConfig()
-      expect(config2.depositFeeBps).toBe(150)
-      expect(config2.withdrawFeeBps).toBe(250)
+      // Fee raises stage; live values remain at the initialize-time defaults.
+      expect(config2.depositFeeBps).toBe(50)
+      expect(config2.withdrawFeeBps).toBe(100)
+      expect(config2.pendingFee?.depositFeeBps).toBe(150)
+      expect(config2.pendingFee?.withdrawFeeBps).toBe(250)
+      // fee_vault rotation is independent of the fee timelock — applies now.
       expect(config2.feeVault.toBase58()).toBe(newFeeVault.toBase58())
 
       // 3. Seed relayer PDA with stranded USDC and sweep it out

@@ -88,8 +88,7 @@ pub mod relayer {
     /// (returns ONyc to `onyc_ata`, rolls flow back to `Claimed`, frees
     /// the singleton). Authority-gated to prevent the
     /// request→cancel→request fee-griefing loop a permissionless cancel
-    /// would enable. See `cancel_redemption_onyc.rs` for stuck-redemption
-    /// scenarios.
+    /// would enable.
     pub fn cancel_redemption_onyc<'info>(
         ctx: Context<'info, CancelRedemptionOnyc<'info>>,
     ) -> Result<()> {
@@ -107,6 +106,13 @@ pub mod relayer {
     /// `new_authority`: `Some(pk)` proposes; `Some(default())` cancels;
     /// `None` leaves the proposal slot alone. Acceptance happens in
     /// `accept_authority`.
+    ///
+    /// Fee changes are asymmetric: decreases apply instantly, increases
+    /// stage into `pending_fee` for `FEE_TIMELOCK_SLOTS` (~2 days). The
+    /// next `configure` call after the window elapses auto-promotes the
+    /// staged change onto the live fields before processing new args —
+    /// no separate apply/cancel ix exists. See `configure::handler` for
+    /// the full proposal semantics.
     pub fn configure(
         ctx: Context<Configure>,
         deposit_fee_bps: Option<u16>,
