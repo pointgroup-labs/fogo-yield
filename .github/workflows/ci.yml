@@ -1,18 +1,8 @@
-# CI for fogo-onre.
-#
-# Two jobs run in parallel:
-#   - rust:       fmt + clippy + unit tests for the on-chain program. Skips
-#                 `anchor build --verifiable` (Docker-heavy, slow on PRs).
-#                 Verified builds happen via the deploy workflow only.
-#   - typescript: pnpm install + lint + vitest. Catches IDL drift, SDK
-#                 regressions, and the relayer-side e2e LiteSVM tests.
-#
-
 name: ci
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
 
 concurrency:
@@ -27,69 +17,53 @@ jobs:
     name: rust (fmt + clippy + unit tests)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      # Toolchain version AND components (rustfmt, clippy) are pinned by
-      # `rust-toolchain.toml`. The action installs `stable` first, then
-      # rustup honours the toml override on the first cargo invocation —
-      # listing components here would only apply them to `stable`, not to
-      # the pinned channel that fmt/clippy actually run against.
+      # Toolchain version AND components are pinned by `rust-toolchain.toml`.
+      # The action installs `stable` first; rustup honours the toml override
+      # on the first cargo invocation, so listing `components` here would
+      # only apply them to `stable`, not to the pinned channel fmt/clippy
+      # actually run against.
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: cargo fmt --all -- --check
+      - name: Format check
         run: cargo fmt --all -- --check
 
-      # `-D warnings` promotes any clippy lint to an error so they can't
-      # accumulate on main. If a lint is genuinely unfixable, prefer an
-      # `#[allow(...)]` with a comment over relaxing CI.
-      - name: cargo clippy --workspace
+      # `-D warnings` keeps lints from accumulating on main. Prefer
+      # `#[allow(..)]` with a justification over relaxing this gate.
+      - name: Lint
         run: cargo clippy --workspace --all-targets -- -D warnings
 
-      # `--lib` runs the in-tree unit tests without needing the Anchor
-      # IDL build pipeline.
-      - name: cargo test --lib
+      # `--lib` skips the Anchor IDL build pipeline.
+      - name: Unit tests
         run: cargo test -p fogo-onre-relayer --lib
 
   typescript:
     name: typescript (lint + tests)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
+      # Bumping pnpm requires updating `packageManager` in package.json too.
       - name: Install pnpm
         uses: pnpm/action-setup@v4
         with:
-          # Match `packageManager` field in package.json. Bumping pnpm
-          # requires updating both places.
           version: 10.33.0
 
       - name: Install Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: 24
           cache: pnpm
 
-      - name: pnpm install
-        # --frozen-lockfile guarantees CI fails on lockfile drift instead
-        # of silently regenerating, which would mask dependency changes.
+      - name: Install deps
         run: pnpm install --frozen-lockfile
 
-      - name: pnpm lint (non-blocking)
-        # The codebase has ~2700 pre-existing style/max-statements-per-line
-        # errors from before CI existed. Cleaning them up is its own task
-        # (`pnpm lint --fix` auto-resolves most). Until that lands, lint
-        # surfaces as a warning-only step so CI doesn't block on
-        # unrelated style debt.
-        # TODO(deploy): once lint is clean, drop `continue-on-error`.
-        continue-on-error: true
+      - name: Lint
         run: pnpm lint
 
-      # Runs the LiteSVM e2e tests for every relayer instruction. Vitest
-      # hides the benign `bigint: Failed to load bindings` warning from
-      # @solana/spl-token's transitive bigint-buffer dep — see
-      # PRE_DEPLOY_CHECKLIST.md.
-      - name: pnpm test
+      - name: Tests
         run: pnpm test
