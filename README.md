@@ -7,8 +7,8 @@
 > admin-fulfilled `fulfill_redemption_request`), which the current
 > relayer does not implement. The Phase 2 "instant withdrawals"
 > claim therefore does not hold once the reserve drains, since the
-> reserve cannot be replenished. See `docs/PRE_DEPLOY_CHECKLIST.md`
-> §4 and `docs/fogo-onre.md` (top-of-file banner) for the full
+> reserve cannot be replenished. See `docs/deploy-checklist.md`
+> §4 and `docs/architecture.md` (top-of-file banner) for the full
 > picture and resolution paths. Deposits are unaffected.
 
 ## Phase 1: Relayer + NTT only
