@@ -16,8 +16,7 @@ pub fn handler(
 
     // Promote ripe staged changes BEFORE merging new args so a follow-up
     // "decrease" compares against the just-promoted (higher) value rather
-    // than the stale live one — otherwise the asymmetric branch flips
-    // and the decrease incorrectly routes through staging.
+    // than the stale live one.
     config.promote_pending_fee_if_ready(now);
 
     if let Some(proposed) = deposit_fee_bps {
@@ -70,8 +69,6 @@ pub struct Configure<'info> {
     )]
     pub relayer_config: Account<'info, RelayerConfig>,
 
-    /// Re-derived so the associated-token derivation on `onyc_ata` resolves
-    /// for the anti-aliasing constraint.
     /// CHECK: PDA seeds enforce identity.
     #[account(
         seeds = [RELAYER_SEED],
@@ -81,7 +78,6 @@ pub struct Configure<'info> {
 
     pub onyc_mint: InterfaceAccount<'info, Mint>,
 
-    /// Referenced solely to enforce `fee_vault != onyc_ata`.
     #[account(
         associated_token::mint = onyc_mint,
         associated_token::authority = relayer_authority,
@@ -89,9 +85,8 @@ pub struct Configure<'info> {
     )]
     pub onyc_ata: InterfaceAccount<'info, TokenAccount>,
 
-    /// `None` leaves the stored vault unchanged. The anti-aliasing check
-    /// runs in the handler — Anchor constraint exprs can't disambiguate
-    /// `Option::as_ref` against `InterfaceAccount`'s `AsRef` impls.
+    /// `None` leaves the stored vault unchanged; anti-aliasing check runs
+    /// in the handler.
     #[account(
         token::mint = onyc_mint,
         token::token_program = token_program,

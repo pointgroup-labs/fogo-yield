@@ -15,21 +15,6 @@ use crate::state::{Flow, FlowStatus, RelayerConfig};
 /// deposit-leg fee from the ONyc output and routes it to `fee_vault`.
 /// Operates on `flow.amount` (not full ATA balance) so concurrent flows
 /// stay isolated.
-///
-/// ## Single-authority, mutex-gated
-///
-/// `usdc_ata` and `onyc_ata` are both owned by `relayer_authority`, which
-/// signs the OnRe CPI directly (OnRe enforces `user_token_in_account` and
-/// `user_token_out_account` to `associated_token::authority = user`, so
-/// passing `relayer_authority` as `user` satisfies that constraint with no
-/// intermediate ATA pair).
-///
-/// Withdraw-chain isolation is provided by the `redemption_tracker`
-/// `SystemAccount` gate: while a withdraw redemption is in flight the
-/// tracker exists (program-owned), this constraint fails, and deposit
-/// traffic pauses. That's what keeps `claim_redemption_usdc`'s
-/// snapshot/delta math on `usdc_ata` correct without needing a separate
-/// deposit-side ATA.
 pub fn handler<'info>(ctx: Context<'info, SwapUsdcToOnyc<'info>>) -> Result<()> {
     let flow_key = ctx.accounts.inflight_flow.key();
 
@@ -65,11 +50,8 @@ pub fn handler<'info>(ctx: Context<'info, SwapUsdcToOnyc<'info>>) -> Result<()> 
         .ok_or(RelayerError::BalanceUnderflow)?;
     require!(gross > 0, RelayerError::ZeroAmountFlow);
 
-    // Deposit fee taken POST-swap from the ONyc output, on the same
-    // authority-owned `onyc_ata` that just received the swap proceeds.
-    // Rate is the live `relayer_config.deposit_fee_bps` — protection
-    // against retroactive raises is provided by the asymmetric timelock
-    // in `configure` (see `apply_pending_fee`).
+    // Live `deposit_fee_bps`; `configure`'s asymmetric timelock protects
+    // against retroactive raises.
     let (net, fee) = ctx.accounts.relayer_config.apply_deposit_fee(gross)?;
 
     relayer_signed_transfer_checked(
@@ -108,18 +90,14 @@ pub struct SwapUsdcToOnyc<'info> {
     )]
     pub relayer_config: Account<'info, RelayerConfig>,
 
-    /// CHECK: PDA derived from RELAYER_SEED. Signs the OnRe CPI (as `user`)
-    /// and the post-swap fee transfer.
+    /// CHECK: PDA derived from RELAYER_SEED. Signs the OnRe CPI.
     #[account(seeds = [RELAYER_SEED], bump = relayer_config.relayer_authority_bump)]
     pub relayer_authority: UncheckedAccount<'info>,
 
     pub usdc_mint: InterfaceAccount<'info, Mint>,
     pub onyc_mint: InterfaceAccount<'info, Mint>,
 
-    /// USDC source for OnRe `take_offer_permissionless`. Owned by
-    /// `relayer_authority`; OnRe enforces `user_token_in_account.authority
-    /// == user`, satisfied because the relayer authority signs the CPI as
-    /// `user`. Boxed for stack budget.
+    /// Boxed for stack budget.
     #[account(
         mut,
         associated_token::mint = usdc_mint,
@@ -128,8 +106,6 @@ pub struct SwapUsdcToOnyc<'info> {
     )]
     pub usdc_ata: Box<InterfaceAccount<'info, TokenAccount>>,
 
-    /// ONyc destination for the swap; also the source of the post-swap fee
-    /// transfer. Same authority story as `usdc_ata`.
     #[account(
         mut,
         associated_token::mint = onyc_mint,
@@ -138,8 +114,6 @@ pub struct SwapUsdcToOnyc<'info> {
     )]
     pub onyc_ata: Box<InterfaceAccount<'info, TokenAccount>>,
 
-    /// Pinned by `has_one = fee_vault`. Any pre-existing ONyc account; need
-    /// not be relayer-owned.
     #[account(
         mut,
         token::mint = onyc_mint,
@@ -147,11 +121,9 @@ pub struct SwapUsdcToOnyc<'info> {
     )]
     pub fee_vault: Box<InterfaceAccount<'info, TokenAccount>>,
 
-    /// Withdraw-chain mutex gate. `SystemAccount` asserts
-    /// `owner == system_program::ID`, true iff the singleton
-    /// `RedemptionTracker` PDA does NOT currently exist. While a withdraw
-    /// redemption is in flight this fails, pausing deposits so the
-    /// snapshot/delta math in `claim_redemption_usdc` stays correct.
+    /// Withdraw-chain mutex gate. While a withdraw redemption is in flight
+    /// this fails, pausing deposits so `claim_redemption_usdc`'s
+    /// snapshot/delta math stays correct.
     #[account(
         seeds = [REDEMPTION_TRACKER_SEED],
         bump,
@@ -161,7 +133,6 @@ pub struct SwapUsdcToOnyc<'info> {
     /// CHECK: validated transitively via the flow PDA seeds.
     pub gateway_claim: UncheckedAccount<'info>,
 
-    /// Created by `claim_usdc`; must be in `Claimed` status.
     #[account(
         mut,
         seeds = [FLOW_INBOUND_SEED, gateway_claim.key().as_ref()],

@@ -25,9 +25,6 @@ pub fn handler(ctx: Context<ClaimRedemptionUsdc>) -> Result<()> {
     let flow_key = ctx.accounts.outflight_flow.key();
     let tracker = &ctx.accounts.redemption_tracker;
 
-    // Defense-in-depth — the PDA seed already binds tracker singleton, but
-    // explicit check pins the per-flow assertion that `request_redemption_onyc`
-    // wrote.
     require_keys_eq!(
         tracker.flow,
         flow_key,
@@ -39,32 +36,23 @@ pub fn handler(ctx: Context<ClaimRedemptionUsdc>) -> Result<()> {
         RelayerError::FlowStatusMismatch
     );
 
-    // Belt-and-braces: the cranker must pass the same PDA we recorded.
     require_keys_eq!(
         ctx.accounts.redemption_request.key(),
         tracker.redemption_request,
         RelayerError::RedemptionRequestMismatch
     );
 
-    // Fulfillment signal from OnRe: `fulfill_redemption_request` closes the
-    // `RedemptionRequest` PDA (`close = redemption_admin`). On Solana, a
-    // closed account has zero lamports, empty data, and ownership reverts
-    // to the system program.
+    // Fulfillment signal: OnRe's `fulfill_redemption_request` closes the
+    // PDA — zero lamports, empty data, ownership reverts to system program.
     let req = &ctx.accounts.redemption_request;
     require!(
         req.lamports() == 0 && req.data_is_empty() && req.owner == &system_program::ID,
         RelayerError::RedemptionNotFulfilled
     );
 
-    // USDC arrived at our ATA as part of `fulfill_redemption_request`. Two
-    // invariants make this delta exact:
-    //   - Singleton mutex (held by `redemption_tracker`'s existence since
-    //     the request) blocks any sibling withdraw redemption.
-    //   - Deposit-chain instructions (`claim_usdc`, `swap_usdc_to_onyc`) and
-    //     the user-outflow (`send_usdc_to_user`) all carry a
-    //     `SystemAccount`-typed `redemption_tracker` constraint that fails
-    //     while the tracker exists, so no sibling tx can mutate `usdc_ata`
-    //     between snapshot and read. The only writer is OnRe.
+    // Delta is exact because the singleton mutex + sibling `SystemAccount`
+    // gates ensure OnRe is the only writer to `usdc_ata` between snapshot
+    // and read.
     ctx.accounts.usdc_ata.reload()?;
     let delta = ctx
         .accounts
@@ -88,19 +76,13 @@ pub fn handler(ctx: Context<ClaimRedemptionUsdc>) -> Result<()> {
         usdc_received: delta,
     });
 
-    // `redemption_tracker` is closed by Anchor on instruction return via the
-    // `close = payer` constraint below — rent goes back to whoever paid for
-    // `request_redemption_onyc`. After return, the singleton seed is free
-    // again and a new redemption can be requested.
     Ok(())
 }
 
 #[derive(Accounts)]
 pub struct ClaimRedemptionUsdc<'info> {
-    /// Receives rent from the closed `redemption_tracker`. Need not be the
-    /// same key as `tracker.payer` — the close-target is pinned by the
-    /// `close = payer_for_close` constraint to `tracker.payer`, see below.
-    /// The cranker pays tx fees.
+    /// Receives rent from the closed `redemption_tracker`. Need not equal
+    /// `tracker.payer` — close-target is pinned by `payer_for_close` below.
     #[account(mut)]
     pub cranker: Signer<'info>,
 
@@ -111,7 +93,7 @@ pub struct ClaimRedemptionUsdc<'info> {
     )]
     pub relayer_config: Account<'info, RelayerConfig>,
 
-    /// CHECK: PDA derived from RELAYER_SEED. Not signing here — no CPI.
+    /// CHECK: PDA derived from RELAYER_SEED.
     #[account(seeds = [RELAYER_SEED], bump = relayer_config.relayer_authority_bump)]
     pub relayer_authority: UncheckedAccount<'info>,
 
@@ -134,8 +116,6 @@ pub struct ClaimRedemptionUsdc<'info> {
     )]
     pub outflight_flow: Account<'info, Flow>,
 
-    /// Singleton, closes to its original payer (recorded in `tracker.payer`).
-    /// `tracker.flow == outflight_flow.key()` is verified in the handler.
     #[account(
         mut,
         seeds = [REDEMPTION_TRACKER_SEED],
@@ -144,8 +124,7 @@ pub struct ClaimRedemptionUsdc<'info> {
     )]
     pub redemption_tracker: Account<'info, RedemptionTracker>,
 
-    /// CHECK: pinned by `address = redemption_tracker.payer`. The init-time
-    /// payer recorded in the tracker is who gets the rent back.
+    /// CHECK: pinned by `address = redemption_tracker.payer`.
     #[account(mut, address = redemption_tracker.payer)]
     pub payer_for_close: UncheckedAccount<'info>,
 

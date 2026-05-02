@@ -19,8 +19,6 @@ use crate::state::{Flow, FlowStatus, RelayerConfig};
 // MUST move in lockstep — otherwise the position-pinning checks would
 // silently guard the wrong slots, re-opening the
 // decouple-sender-from-recipient attack.
-//
-// Source: example-native-token-transfers `redeem.rs`, `release_inbound.rs`.
 
 const REDEEM_ACCOUNTS_MIN_LEN: usize = 10;
 const RELEASE_ACCOUNTS_MIN_LEN: usize = 8;
@@ -47,7 +45,6 @@ pub fn handler<'info>(
     ctx: Context<'info, UnlockOnyc<'info>>,
     redeem_accounts_len: u8,
 ) -> Result<()> {
-    // `owner = NTT_PROGRAM_ID` pins the writer; disc check guards the offset.
     let data = ctx.accounts.ntt_transceiver_message.try_borrow_data()?;
     require!(
         data.len() >= TRANSCEIVER_MESSAGE_SENDER_OFFSET + 32,
@@ -72,7 +69,6 @@ pub fn handler<'info>(
     );
     let (redeem_accs, release_accs) = ctx.remaining_accounts.split_at(split);
 
-    // See top-of-file block comment for the attack the position pinning prevents.
     require!(
         redeem_accs.len() >= REDEEM_ACCOUNTS_MIN_LEN
             && release_accs.len() >= RELEASE_ACCOUNTS_MIN_LEN,
@@ -121,7 +117,6 @@ pub fn handler<'info>(
         bump,
     )?;
 
-    // Delta = what this VAA released.
     ctx.accounts.onyc_ata.reload()?;
     let amount = ctx
         .accounts
@@ -180,14 +175,12 @@ pub struct UnlockOnyc<'info> {
     /// CHECK: validated by the NTT CPI.
     pub ntt_inbox_item: UncheckedAccount<'info>,
 
-    /// `fogo_sender` is parsed from this already-validated bytes. `owner`
-    /// pins the writer to NTT (== transceiver in OnRe's deployment), so
-    /// nothing outside NTT can have crafted this data.
+    /// `owner = NTT_PROGRAM_ID` pins the writer; nothing outside NTT can
+    /// have crafted this data.
     /// CHECK: owner + discriminator + offset checks in the handler.
     #[account(owner = NTT_PROGRAM_ID)]
     pub ntt_transceiver_message: UncheckedAccount<'info>,
 
-    /// `init` blocks replay (same NTT inbox → same PDA → already exists).
     #[account(
         init,
         payer = payer,

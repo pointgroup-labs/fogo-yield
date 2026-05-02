@@ -29,7 +29,7 @@ pub enum RelayerError {
     #[msg("Bridge or swap produced zero tokens")]
     ZeroAmountFlow,
 
-    #[msg("Fee basis points exceed maximum (10000 = 100%)")]
+    #[msg("Fee basis points exceed MAX_FEE_BPS")]
     FeeBpsTooHigh,
 
     #[msg("Fee computation overflow")]
@@ -73,9 +73,6 @@ pub enum RelayerError {
 
     #[msg("RedemptionTracker.flow does not match the bound Flow PDA")]
     RedemptionTrackerFlowMismatch,
-
-    #[msg("RedemptionTracker missing or unexpected for this flow status")]
-    MissingRedemptionState,
 
     #[msg("PendingFee bundle has no inner leg set — invariant violation")]
     EmptyPendingFee,

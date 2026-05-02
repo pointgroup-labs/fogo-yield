@@ -15,14 +15,6 @@ use crate::state::{Flow, FlowStatus, RelayerConfig};
 /// Lock the flow's ONyc via Wormhole NTT, sending bONyc back to
 /// `flow.fogo_sender`. Permissionless; closing the PDA returns rent and
 /// blocks replay.
-///
-/// ONyc is canonical on Solana, so the NTT manager runs in **Locking**
-/// mode (transfer to NTT custody, not burn); the FOGO side mints/burns
-/// wrapped bONyc.
-///
-/// `transfer_lock` requires the caller to first SPL-`Approve` the NTT
-/// session-authority PDA as delegate on `onyc_ata`, so we issue that
-/// approval (signed by the relayer authority PDA) before forwarding.
 pub fn handler<'info>(ctx: Context<'info, LockOnyc<'info>>) -> Result<()> {
     let flow = &mut ctx.accounts.inflight_flow;
     require!(
@@ -42,8 +34,7 @@ pub fn handler<'info>(ctx: Context<'info, LockOnyc<'info>>) -> Result<()> {
         should_queue: false,
     };
 
-    // NTT binds session-authority to a hash of the transfer args; recompute
-    // locally so we can pre-approve the right delegate.
+    // NTT binds session-authority to a hash of the transfer args.
     let (session_authority, _) =
         derive_session_authority(&ctx.accounts.relayer_authority.key(), &transfer_args);
 
@@ -58,7 +49,6 @@ pub fn handler<'info>(ctx: Context<'info, LockOnyc<'info>>) -> Result<()> {
             AccountMeta::new_readonly(ctx.accounts.relayer_authority.key(), true),
         ],
         data: {
-            // SPL Approve: tag(1) + amount(u64 LE)
             let mut d = Vec::with_capacity(9);
             d.push(SPL_TOKEN_APPROVE_IX_TAG);
             d.extend_from_slice(&amount.to_le_bytes());
@@ -66,8 +56,6 @@ pub fn handler<'info>(ctx: Context<'info, LockOnyc<'info>>) -> Result<()> {
         },
     };
 
-    // Locate session_authority in remaining_accounts so the runtime can
-    // resolve the approve ix's account refs.
     let session_auth_info = ctx
         .remaining_accounts
         .iter()
@@ -133,7 +121,6 @@ pub struct LockOnyc<'info> {
     /// CHECK: seed material only; validated transitively via the flow PDA.
     pub gateway_claim: UncheckedAccount<'info>,
 
-    /// `close = rent_destination` blocks any second `lock_onyc` against this flow.
     #[account(
         mut,
         close = rent_destination,

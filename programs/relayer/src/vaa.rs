@@ -2,44 +2,12 @@
 //! embedded in a Wormhole posted-VAA account. Reads on-chain account data
 //! rather than operator-supplied args — otherwise a compromised operator
 //! could redirect outbound transfers.
-//!
-//! ## PostedVAA account layout (Wormhole core bridge, Solitaire)
-//!
-//! | Offset | Size | Field                    |
-//! |--------|------|--------------------------|
-//! | 0      | 3    | Tag: "msg" or "msu"      |
-//! | 3      | 1    | vaa_version              |
-//! | 4      | 1    | consistency_level         |
-//! | 5      | 4    | vaa_time                 |
-//! | 9      | 32   | vaa_signature_account    |
-//! | 41     | 4    | submission_time          |
-//! | 45     | 4    | nonce                    |
-//! | 49     | 8    | sequence                 |
-//! | 57     | 2    | emitter_chain            |
-//! | 59     | 32   | emitter_address          |
-//! | 91     | 4    | payload length (Borsh u32)|
-//! | 95     | ..   | payload bytes            |
-//!
-//! ## Token Bridge transfer-with-payload (payload_id = 3)
-//!
-//! | Offset | Size | Field              |
-//! |--------|------|--------------------|
-//! | 0      | 1    | payload_id (= 3)   |
-//! | 1      | 32   | amount (u256 BE)   |
-//! | 33     | 32   | token_address      |
-//! | 65     | 2    | token_chain        |
-//! | 67     | 32   | to                 |
-//! | 99     | 2    | to_chain           |
-//! | 101    | 32   | from_address       |
-//! | 133    | ..   | additional_payload |
 
 use anchor_lang::prelude::*;
 
 use crate::error::RelayerError;
 
-/// Solitaire tag (3) + fixed header + Borsh `Vec<u8>` length prefix (4).
 const POSTED_VAA_PAYLOAD_OFFSET: usize = 95;
-/// TB transfer-with-payload header size (before `additional_payload`).
 const TRANSFER_HEADER_SIZE: usize = 133;
 const PAYLOAD_ID_TRANSFER_WITH_PAYLOAD: u8 = 3;
 

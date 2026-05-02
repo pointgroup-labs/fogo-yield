@@ -7,25 +7,14 @@ use crate::constants::{
     CONFIG_SEED, FLOW_INBOUND_SEED, GATEWAY_COMPLETE_TRANSFER_IX, GATEWAY_PROGRAM_ID,
     REDEEMER_SEED, REDEMPTION_TRACKER_SEED, RELAYER_SEED, WORMHOLE_CORE_BRIDGE_ID,
 };
-use crate::cpi::invoke_relayer_signed_with_redeemer;
+use crate::cpi::{invoke_relayer_signed_with_extra, ExtraSigner};
 use crate::error::RelayerError;
 use crate::events::UsdcClaimed;
 use crate::state::{Flow, FlowStatus, RelayerConfig};
 use crate::vaa::parse_fogo_sender_from_posted_vaa;
 
-// TB `CompleteWrappedWithPayload` reads its VAA + creates the claim PDA
-// *positionally* from `remaining_accounts`. We MUST pin the named
-// `posted_vaa` / `gateway_claim` accounts to the same slots — otherwise
-// a caller could pass VAA_A positionally (so TB mints VAA_A's USDC) but
-// VAA_B as `posted_vaa` (so we parse Bob's wallet as `fogo_sender` and
-// `lock_onyc` later ships bONyc to Bob instead of Alice).
-//
-// Source: wormhole token_bridge `complete_transfer.rs`,
-// `CompleteWrappedWithPayload` accounts struct.
-
 const TB_IDX_POSTED_VAA: usize = 2;
 const TB_IDX_GATEWAY_CLAIM: usize = 3;
-/// SDK helper supplies 17 entries; we only assert on what we read.
 const TB_ACCOUNTS_MIN_LEN: usize = TB_IDX_GATEWAY_CLAIM + 1;
 
 /// Claim incoming USDC from Wormhole Gateway and create the inbound `Flow`
@@ -35,25 +24,6 @@ const TB_ACCOUNTS_MIN_LEN: usize = TB_IDX_GATEWAY_CLAIM + 1;
 /// - `fogo_sender` is parsed from the guardian-signed posted-VAA, not a caller arg.
 /// - Flow PDA is seeded by the Gateway claim account (CPI-created, unforgeable).
 /// - `init` blocks double-claims.
-///
-/// ## Two-stage token flow
-///
-/// TB `CompleteWrappedWithPayload` requires `redeemer.key == to.owner`. We
-/// use a short-lived intake ATA owned by the redeemer PDA as `to`, then
-/// immediately sweep into `usdc_ata` (signed by the redeemer PDA) so the
-/// rest of the deposit pipeline operates on the long-lived authority-owned
-/// ATA.
-///
-/// ## Withdraw-chain mutex
-///
-/// Gated on `redemption_tracker` PDA being absent (typed as
-/// `SystemAccount`, which asserts `owner == system_program::ID`). While a
-/// withdraw redemption is in flight the tracker exists, so this instruction
-/// fails — preventing deposit-side USDC inflows from polluting the
-/// snapshot/delta math in `claim_redemption_usdc`.
-///
-/// `remaining_accounts` is Gateway's full account list with the relayer
-/// authority PDA appended for the CPI helper's signer flag.
 pub fn handler<'info>(ctx: Context<'info, ClaimUsdc<'info>>) -> Result<()> {
     require!(
         ctx.remaining_accounts.len() >= TB_ACCOUNTS_MIN_LEN,
@@ -77,15 +47,18 @@ pub fn handler<'info>(ctx: Context<'info, ClaimUsdc<'info>>) -> Result<()> {
     let redeemer_key = ctx.accounts.redeemer_authority.key();
     let redeemer_bump = ctx.bumps.redeemer_authority;
 
-    invoke_relayer_signed_with_redeemer(
+    invoke_relayer_signed_with_extra(
         GATEWAY_PROGRAM_ID,
         &GATEWAY_COMPLETE_TRANSFER_IX,
         &(),
         ctx.remaining_accounts,
         &ctx.accounts.relayer_authority.to_account_info(),
         ctx.accounts.relayer_config.relayer_authority_bump,
-        redeemer_key,
-        redeemer_bump,
+        Some(ExtraSigner {
+            key: redeemer_key,
+            seed: REDEEMER_SEED,
+            bump: redeemer_bump,
+        }),
     )?;
 
     ctx.accounts.redeemer_usdc_ata.reload()?;
@@ -98,9 +71,7 @@ pub fn handler<'info>(ctx: Context<'info, ClaimUsdc<'info>>) -> Result<()> {
     require!(amount > 0, RelayerError::ZeroAmountFlow);
 
     // Sweep into the long-lived authority-owned ATA, signed by the redeemer
-    // PDA. Safe to write to `usdc_ata` here because `redemption_tracker`'s
-    // absence (enforced by Anchor's `SystemAccount` constraint) guarantees no
-    // withdraw redemption snapshot is currently in flight.
+    // PDA. Safe because `redemption_tracker`'s absence is enforced.
     let bump_arr = [redeemer_bump];
     let signer_seeds: &[&[&[u8]]] = &[&[REDEEMER_SEED, &bump_arr]];
     transfer_checked(
@@ -117,8 +88,6 @@ pub fn handler<'info>(ctx: Context<'info, ClaimUsdc<'info>>) -> Result<()> {
         amount,
         ctx.accounts.usdc_mint.decimals,
     )?;
-
-    require!(amount > 0, RelayerError::ZeroAmountFlow);
 
     let flow_key = ctx.accounts.inflight_flow.key();
 
@@ -161,10 +130,7 @@ pub struct ClaimUsdc<'info> {
 
     pub usdc_mint: InterfaceAccount<'info, Mint>,
 
-    /// Long-lived authority-owned USDC sink. `claim_usdc` sweeps bridged
-    /// USDC here; downstream `swap_usdc_to_onyc` reads from the same ATA.
-    /// Boxed for stack-budget headroom (see `swap_usdc_to_onyc` for the
-    /// same rationale).
+    /// Boxed for stack-budget headroom.
     #[account(
         mut,
         associated_token::mint = usdc_mint,
@@ -173,8 +139,6 @@ pub struct ClaimUsdc<'info> {
     )]
     pub usdc_ata: Box<InterfaceAccount<'info, TokenAccount>>,
 
-    /// Short-lived intake ATA — TB mints into it during the CPI; we sweep
-    /// to `usdc_ata` in the same instruction.
     #[account(
         mut,
         associated_token::mint = usdc_mint,
@@ -184,18 +148,16 @@ pub struct ClaimUsdc<'info> {
     pub redeemer_usdc_ata: Box<InterfaceAccount<'info, TokenAccount>>,
 
     /// Withdraw-chain mutex gate. `SystemAccount` asserts
-    /// `owner == system_program::ID`, which is true iff the singleton
-    /// `RedemptionTracker` PDA does NOT currently exist. While a withdraw
-    /// redemption is in flight the tracker is `init`'d (program-owned) and
-    /// this constraint fails — pausing deposit USDC inflows so they can't
-    /// pollute `claim_redemption_usdc`'s snapshot/delta math.
+    /// `owner == system_program::ID`, true iff the singleton
+    /// `RedemptionTracker` PDA does NOT currently exist — pausing deposit
+    /// USDC inflows so they can't pollute `claim_redemption_usdc`'s
+    /// snapshot/delta math.
     #[account(
         seeds = [REDEMPTION_TRACKER_SEED],
         bump,
     )]
     pub redemption_tracker: SystemAccount<'info>,
 
-    /// `fogo_sender` is read from on-chain (guardian-signed) data, not args.
     /// CHECK: owner = Wormhole core bridge.
     #[account(owner = WORMHOLE_CORE_BRIDGE_ID)]
     pub posted_vaa: UncheckedAccount<'info>,

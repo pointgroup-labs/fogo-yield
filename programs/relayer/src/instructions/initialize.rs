@@ -8,10 +8,6 @@ use crate::constants::{CONFIG_SEED, REDEEMER_SEED, RELAYER_SEED};
 use crate::error::RelayerError;
 use crate::state::RelayerConfig;
 
-/// One-shot deployment setup. Creates `RelayerConfig`, the long-lived
-/// USDC + ONyc ATAs owned by the relayer authority PDA, and the
-/// short-lived USDC intake ATA owned by the redeemer PDA (used as `to`
-/// in TB `CompleteWrappedWithPayload` — see `claim_usdc`).
 pub fn handler(
     ctx: Context<Initialize>,
     deposit_fee_bps: u16,
@@ -27,9 +23,8 @@ pub fn handler(
     config.relayer_authority_bump = ctx.bumps.relayer_authority;
     config.deposit_fee_bps = deposit_fee_bps;
     config.withdraw_fee_bps = withdraw_fee_bps;
-    // Explicit even though `init` zero-fills the account: makes the
-    // "no proposal in flight at deploy" invariant visible at the call
-    // site instead of relying on Borsh's `Option::None == 0u8` encoding.
+    // Explicit even though `init` zero-fills: makes the "no proposal in
+    // flight at deploy" invariant visible at the call site.
     config.pending_fee = None;
     config.validate()?;
 
@@ -97,8 +92,6 @@ pub struct Initialize<'info> {
     )]
     pub onyc_ata: Box<InterfaceAccount<'info, TokenAccount>>,
 
-    /// `claim_usdc` mints into this ATA via TB then immediately sweeps it
-    /// to `usdc_ata` under the redeemer's signature.
     #[account(
         init,
         payer = authority,

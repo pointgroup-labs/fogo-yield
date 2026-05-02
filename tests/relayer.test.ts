@@ -1,5 +1,4 @@
 import type { LiteSVM } from 'litesvm'
-import { BN } from '@anchor-lang/core'
 import {
   findAuthorityPda,
   findConfigPda,
@@ -437,94 +436,11 @@ describe('relayer', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // sweep — authority extraction path for stranded balances in the
-  // relayer-PDA-owned ATAs (pre-upgrade commingled fees, dust, etc.)
-  // ---------------------------------------------------------------------------
-
-  describe('sweep', () => {
-    beforeEach(async () => {
-      await client
-        .initialize({
-          authority: authority.publicKey,
-          usdcMint: usdcMint.publicKey,
-          onycMint: onycMint.publicKey,
-          feeVault,
-          depositFeeBps: 50,
-          withdrawFeeBps: 100,
-        })
-        .rpc()
-
-      // Seed relayer authority PDA's USDC ATA (simulating dust/stranded balance)
-      const [authorityPda] = findAuthorityPda(client.program.programId)
-      mintTo(svm, authority, usdcMint.publicKey, authorityPda, 1_000_000)
-    })
-
-    it('moves USDC out of the relayer ATA to a destination', async () => {
-      const destAta = createAta(svm, authority, usdcMint.publicKey, authority.publicKey)
-
-      await client
-        .sweep({
-          authority: authority.publicKey,
-          mint: usdcMint.publicKey,
-          to: destAta,
-          amount: new BN(500_000),
-        })
-        .rpc()
-
-      const account = svm.getAccount(destAta)
-      expect(account).toBeTruthy()
-    })
-
-    it('rejects non-authority signer', async () => {
-      const rando = Keypair.generate()
-      const randoProvider = createProvider(svm, rando)
-      const randoClient = new RelayerClient(randoProvider as any)
-      const destAta = createAta(svm, authority, usdcMint.publicKey, authority.publicKey)
-
-      await expectError(
-        () =>
-          randoClient
-            .sweep({
-              authority: rando.publicKey,
-              mint: usdcMint.publicKey,
-              to: destAta,
-              amount: new BN(100),
-            })
-            .rpc(),
-        'UnauthorizedAuthority',
-      )
-    })
-
-    it('rejects sweep of a mint that is neither USDC nor ONyc', async () => {
-      // Defense against a future authority that tries to drain donations of
-      // an unrelated mint sent to the relayer's PDA. Per `sweep.rs:27-30`,
-      // only `usdc_mint` and `onyc_mint` from `RelayerConfig` are sweepable.
-      const otherMint = createMint(svm, authority, 6)
-      const [authorityPda] = findAuthorityPda(client.program.programId)
-      mintTo(svm, authority, otherMint.publicKey, authorityPda, 1_000_000)
-      const destAta = createAta(svm, authority, otherMint.publicKey, authority.publicKey)
-
-      await expectError(
-        () =>
-          client
-            .sweep({
-              authority: authority.publicKey,
-              mint: otherMint.publicKey,
-              to: destAta,
-              amount: new BN(100),
-            })
-            .rpc(),
-        'UnauthorizedAuthority',
-      )
-    })
-  })
-
-  // ---------------------------------------------------------------------------
-  // full admin flow: initialize → configure → sweep
+  // full admin flow: initialize → configure
   // ---------------------------------------------------------------------------
 
   describe('full admin flow', () => {
-    it('initialize → configure → sweep', async () => {
+    it('initialize → configure', async () => {
       // 1. Initialize with default fees + external fee vault
       await client
         .initialize({
@@ -558,23 +474,6 @@ describe('relayer', () => {
       expect(config2.pendingFee?.withdrawFeeBps).toBe(250)
       // fee_vault rotation is independent of the fee timelock — applies now.
       expect(config2.feeVault.toBase58()).toBe(newFeeVault.toBase58())
-
-      // 3. Seed relayer PDA with stranded USDC and sweep it out
-      const [authorityPda] = findAuthorityPda(client.program.programId)
-      mintTo(svm, authority, usdcMint.publicKey, authorityPda, 2_000_000)
-      const destAta = createAta(svm, authority, usdcMint.publicKey, authority.publicKey)
-
-      await client
-        .sweep({
-          authority: authority.publicKey,
-          mint: usdcMint.publicKey,
-          to: destAta,
-          amount: new BN(1_500_000),
-        })
-        .rpc()
-
-      const account = svm.getAccount(destAta)
-      expect(account).toBeTruthy()
     })
   })
 

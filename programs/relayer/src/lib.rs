@@ -39,8 +39,6 @@ pub mod relayer {
         initialize::handler(ctx, deposit_fee_bps, withdraw_fee_bps)
     }
 
-    // Deposit leg: FOGO user → Solana → back to FOGO user.
-
     /// Claim bridged USDC and create an inflight `Flow` receipt binding the
     /// eventual bONyc return to the originator's FOGO wallet.
     pub fn claim_usdc<'info>(ctx: Context<'info, ClaimUsdc<'info>>) -> Result<()> {
@@ -56,8 +54,6 @@ pub mod relayer {
         lock_onyc::handler(ctx)
     }
 
-    // Withdrawal leg.
-
     /// Release ONyc from NTT custody and record a `Flow` receipt for the
     /// withdrawal initiator.
     pub fn unlock_onyc<'info>(
@@ -68,18 +64,13 @@ pub mod relayer {
     }
 
     /// Forward flow's ONyc to OnRe via `create_redemption_request` and
-    /// init the singleton tracker. Caller-permissionless. Fee taken pre-CPI.
-    /// Replaces the deleted `swap_onyc_to_usdc` because OnRe's withdraw
-    /// side is asymmetric.
+    /// init the singleton tracker. Fee taken pre-CPI.
     pub fn request_redemption_onyc<'info>(
         ctx: Context<'info, RequestRedemptionOnyc<'info>>,
     ) -> Result<()> {
         request_redemption_onyc::handler(ctx)
     }
 
-    /// Once OnRe's `redemption_admin` has fulfilled (signal: their
-    /// `RedemptionRequest` PDA is closed), book the USDC delta onto the
-    /// flow and close the singleton. Caller-permissionless.
     pub fn claim_redemption_usdc(ctx: Context<ClaimRedemptionUsdc>) -> Result<()> {
         claim_redemption_usdc::handler(ctx)
     }
@@ -95,24 +86,14 @@ pub mod relayer {
         cancel_redemption_onyc::handler(ctx)
     }
 
-    /// Send USDC to `flow.fogo_sender` and close the PDA.
     pub fn send_usdc_to_user<'info>(ctx: Context<'info, SendUsdcToUser<'info>>) -> Result<()> {
         send_usdc_to_user::handler(ctx)
     }
 
-    // Admin.
-
     /// Authority-only. `None` args leave the corresponding field unchanged.
-    /// `new_authority`: `Some(pk)` proposes; `Some(default())` cancels;
-    /// `None` leaves the proposal slot alone. Acceptance happens in
-    /// `accept_authority`.
-    ///
-    /// Fee changes are asymmetric: decreases apply instantly, increases
-    /// stage into `pending_fee` for `FEE_TIMELOCK_SLOTS` (~2 days). The
-    /// next `configure` call after the window elapses auto-promotes the
-    /// staged change onto the live fields before processing new args —
-    /// no separate apply/cancel ix exists. See `configure::handler` for
-    /// the full proposal semantics.
+    /// Fee decreases apply instantly; increases stage into `pending_fee`
+    /// for `FEE_TIMELOCK_SLOTS` (~2 days), auto-promoted on the next
+    /// `configure` call after the window elapses.
     pub fn configure(
         ctx: Context<Configure>,
         deposit_fee_bps: Option<u16>,
@@ -123,17 +104,10 @@ pub mod relayer {
     }
 
     /// Two-step rotation, step two. Signer must equal
-    /// `relayer_config.pending_authority`. The current authority does NOT
+    /// `relayer_config.pending_authority`. Current authority does NOT
     /// participate — by design, so two independent multisigs can rotate
     /// without atomic cross-multisig coordination.
     pub fn accept_authority(ctx: Context<AcceptAuthority>) -> Result<()> {
         accept_authority::handler(ctx)
-    }
-
-    /// Authority-only escape hatch for stranded balances on the
-    /// PDA-owned ATAs (commingled fees, dust, accidental transfers).
-    /// See `sweep.rs` for the trust-model rationale.
-    pub fn sweep(ctx: Context<Sweep>, amount: u64) -> Result<()> {
-        sweep::handler(ctx, amount)
     }
 }
