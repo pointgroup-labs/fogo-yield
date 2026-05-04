@@ -3,15 +3,31 @@
 import type { OnycPriceSnapshot } from '@fogo-onre/sdk'
 import { computeOnycPrice } from '@fogo-onre/sdk'
 import { useEffect, useState } from 'react'
+import { useOnycPrice } from '@/hooks/useOnycPrice'
+import { getReadOnlyRelayerClient } from '@/utils/connections'
+import { ONRE_PRICE_SCALE } from '@/utils/onyc-price'
+import { useDocumentVisible } from '@/hooks/useDocumentVisible'
+import { useSettings } from '@/store/settings'
 
 /**
  * Source of truth for the current `RelayerConfig` snapshot the UI quotes
- * against. Today these are placeholder constants — replace with a fetcher
- * (RelayerClient.fetchConfig + OnRe state read + Wormhole Queries) when the
- * data path is wired.
+ * against.
  *
- * Returning a stable shape from one hook means swapping the source out later
- * is a one-file change and every quote in the UI follows.
+ * Live data path:
+ *   - `depositFeeBps` / `withdrawFeeBps`: read from on-chain
+ *     `RelayerConfig` via `RelayerClient.fetchConfig()` (Solana mainnet,
+ *     u16 → JS number).
+ *   - `onycPrice` / `price.priceScale`: read from the OnRe Offer account
+ *     (Solana mainnet) via `useOnycPrice`. Until the first fetch resolves
+ *     (or if the fetch fails), `priceIsPreview` is true and the UI surfaces
+ *     a placeholder rate honestly. As soon as a live vector decodes,
+ *     `priceIsPreview` flips false.
+ *
+ * Quote functions consume `(onycPrice, price.priceScale)` only — the rest
+ * of `price` (`basePrice`, `aprBps`, `startTimestamp`) is informational.
+ * That lets us swap in a fully-computed live `onycPrice` without needing
+ * to round OnRe's 1e6-scaled APR into the SDK's bps representation, which
+ * would lose precision.
  */
 
 export interface ProtocolState {
@@ -19,21 +35,30 @@ export interface ProtocolState {
   withdrawFeeBps: number
   price: OnycPriceSnapshot
   onycPrice: bigint
+  /** True iff the price came from the placeholder, not a live OnRe read. */
+  priceIsPreview: boolean
+  /** Surfaces RelayerConfig fetch failure so callers can render a degraded UI. */
+  feeFetchError: string | null
+  /** Surfaces OnRe price fetch failure (separate from fee fetch). */
+  priceFetchError: string | null
 }
 
-const PRICE_SCALE = 1_000_000_000n
-
-// "1.0 USDC per 1 ONyc" as a base-unit ratio scaled by PRICE_SCALE.
-// USDC=6, ONyc=9 → 1e6 / 1e9 = 0.001 → stored as 1_000_000.
 const PLACEHOLDER_PRICE: OnycPriceSnapshot = {
   basePrice: 1_000_000n,
-  priceScale: PRICE_SCALE,
-  aprBps: 0, // unknown — set to live OnRe APR when the fetcher lands
+  priceScale: 1_000_000_000n,
+  aprBps: 0,
   startTimestamp: 0n,
 }
 
+const REFRESH_MS = 60_000
+
 export function useProtocolState(): ProtocolState | null {
   const [now, setNow] = useState<bigint | null>(null)
+  const [feeBps, setFeeBps] = useState<{ deposit: number, withdraw: number } | null>(null)
+  const [feeFetchError, setFeeFetchError] = useState<string | null>(null)
+  const { price: livePrice, error: priceFetchError } = useOnycPrice()
+  const visible = useDocumentVisible()
+  const { solanaRpcUrl } = useSettings()
 
   useEffect(() => {
     setNow(BigInt(Math.floor(Date.now() / 1000)))
@@ -43,14 +68,79 @@ export function useProtocolState(): ProtocolState | null {
     return () => clearInterval(id)
   }, [])
 
+  useEffect(() => {
+    let cancelled = false
+    const client = getReadOnlyRelayerClient(solanaRpcUrl)
+
+    async function refreshFees() {
+      try {
+        const config = await client.fetchConfig()
+        if (cancelled) {
+          return
+        }
+        setFeeBps({
+          deposit: Number(config.depositFeeBps),
+          withdraw: Number(config.withdrawFeeBps),
+        })
+        setFeeFetchError(null)
+      }
+      catch (err) {
+        if (cancelled) {
+          return
+        }
+        setFeeFetchError(err instanceof Error ? err.message : 'Failed to fetch RelayerConfig')
+      }
+    }
+
+    refreshFees()
+    if (!visible) {
+      return () => {
+        cancelled = true
+      }
+    }
+    const id = setInterval(refreshFees, REFRESH_MS)
+    return () => {
+      cancelled = true
+      clearInterval(id)
+    }
+  }, [visible, solanaRpcUrl])
+
   if (now === null) {
     return null
   }
 
+  // Live price wins when present. The SDK's snapshot type still expects
+  // `basePrice`/`aprBps` fields — we satisfy them with the live `onycPrice`
+  // and the live APR (in bps) so consumers like `ProtocolStats` can read
+  // the rate without touching the lower-level vector decoder.
+  const priceIsPreview = livePrice === null
+  const priceSnapshot: OnycPriceSnapshot = livePrice
+    ? {
+        basePrice: livePrice.onycPrice,
+        priceScale: livePrice.priceScale,
+        aprBps: livePrice.aprBps,
+        startTimestamp: now,
+      }
+    : PLACEHOLDER_PRICE
+  const onycPrice = livePrice
+    ? livePrice.onycPrice
+    : computeOnycPrice(PLACEHOLDER_PRICE, now)
+
+  // Until live fees arrive AND the call hasn't errored, render conservatively
+  // as `null` so the UI hides the quote rather than quoting against a stale
+  // assumption. If fees errored, fall through with 0 bps + the error so the
+  // user knows why "You receive" looks suspiciously round.
+  if (feeBps === null && feeFetchError === null) {
+    return null
+  }
+
   return {
-    depositFeeBps: 25,
-    withdrawFeeBps: 25,
-    price: PLACEHOLDER_PRICE,
-    onycPrice: computeOnycPrice(PLACEHOLDER_PRICE, now),
+    depositFeeBps: feeBps?.deposit ?? 0,
+    withdrawFeeBps: feeBps?.withdraw ?? 0,
+    price: priceSnapshot,
+    onycPrice,
+    priceIsPreview,
+    feeFetchError,
+    priceFetchError,
   }
 }

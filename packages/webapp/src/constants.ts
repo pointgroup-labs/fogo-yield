@@ -16,29 +16,24 @@ export const APP_DOMAIN
   = process.env.NEXT_PUBLIC_APP_DOMAIN ?? 'https://app.ignitionfi.xyz'
 
 // FOGO chain selection. Default mainnet — switch to testnet via env.
+// NB: RPC URLs themselves live in `store/settings.ts` (with a default
+// resolution chain of user override → env → hardcoded). We only export
+// the network enum here because it's consumed by FogoSessionProvider.
 const NETWORK_NAME = process.env.NEXT_PUBLIC_FOGO_NETWORK ?? 'mainnet'
 export const FOGO_NETWORK
   = NETWORK_NAME === 'testnet' ? Network.Testnet : Network.Mainnet
-
-// RPC must match the selected network — wallet adapters reject session
-// authorization when the chain id of the RPC doesn't match the one the
-// wallet has authorized for this domain.
-const DEFAULT_RPC_BY_NETWORK = {
-  mainnet: 'https://mainnet.fogo.io',
-  testnet: 'https://testnet.fogo.io',
-} as const
-
-export const FOGO_RPC_URL
-  = process.env.NEXT_PUBLIC_FOGO_RPC_URL
-    ?? DEFAULT_RPC_BY_NETWORK[NETWORK_NAME === 'testnet' ? 'testnet' : 'mainnet']
-
-export const SOLANA_RPC_URL
-  = process.env.NEXT_PUBLIC_SOLANA_RPC_URL ?? 'https://api.mainnet-beta.solana.com'
 
 // USDC.s on FOGO — the NTT-bridged USDC (manager `nttu74…`, transceiver
 // `9ioH2…`), peered to canonical USDC `EPjFWdd5…` on Solana. Source:
 // https://configs.labsapis.com/mainnet/tokens.ntt.json (`USDC.s` entry).
 export const USDC_S_MINT = new PublicKey('uSd2czE61Evaf76RNbq4KPpXnkiL3irdzgLFUMe3NoG')
+
+// Canonical USDC on Solana mainnet — the Solana-side counterpart of USDC.s.
+// Used to derive the OnRe Offer PDA `(usdcMint, onycMint)` for live price
+// reads. The relayer doesn't pin this on-chain (RelayerConfig only tracks
+// `onyc_mint`), but the OnRe deployment quoting against it is mainnet-USDC
+// by convention.
+export const SOLANA_USDC_MINT = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v')
 
 // NTT-bridged ONyc on FOGO. The user receives this on deposit, burns it on withdraw.
 // TODO: replace placeholder with the bONyc mint produced by the NTT setup
@@ -60,4 +55,14 @@ export const FOGO_BONYC_NTT_MANAGER_ID = new PublicKey('111111111111111111111111
 
 // Token decimals are protocol invariants and live in the SDK.
 export { BONYC_DECIMALS, USDC_DECIMALS }
+
+// True iff the bONyc mint and FOGO-side bONyc NTT manager have both been
+// replaced with their real deployment addresses. Until this flips, the
+// withdraw flow is structurally non-functional (a `transfer_burn` against
+// the system program would fail at submission), so the UI surfaces an
+// explicit "deployment pending" notice rather than silently failing.
+const PLACEHOLDER_PUBKEY = '11111111111111111111111111111111'
+export const BONYC_DEPLOYMENT_READY
+  = BONYC_MINT.toBase58() !== PLACEHOLDER_PUBKEY
+    && FOGO_BONYC_NTT_MANAGER_ID.toBase58() !== PLACEHOLDER_PUBKEY
 

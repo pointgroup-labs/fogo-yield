@@ -4,17 +4,21 @@
 import './polyfills'
 
 import type { ReactNode } from 'react'
-import { FogoSessionProvider, Network } from '@fogo/sessions-sdk-react'
-import { APP_DOMAIN, BONYC_MINT, FOGO_NETWORK, FOGO_RPC_URL, USDC_S_MINT } from '@/lib/config'
+import { FogoSessionProvider } from '@fogo/sessions-sdk-react'
+import { APP_DOMAIN, BONYC_MINT, FOGO_NETWORK, USDC_S_MINT } from '@/constants'
+import { useSettings } from '@/store/settings'
 
 export default function Providers({ children }: { children: ReactNode }) {
+  // Subscribed read so a settings-drawer URL change re-renders here. The
+  // `key={fogoRpcUrl}` forces a clean remount of FogoSessionProvider so
+  // the wallet adapter rebuilds against the new endpoint without a page
+  // reload.
+  const { fogoRpcUrl } = useSettings()
   return (
     <FogoSessionProvider
-      // Remount the provider when the RPC changes so the session
-      // connection picks up the new endpoint cleanly.
-      key={FOGO_RPC_URL}
+      key={fogoRpcUrl}
       network={FOGO_NETWORK}
-      rpc={FOGO_RPC_URL}
+      rpc={fogoRpcUrl}
       domain={APP_DOMAIN}
       tokens={[USDC_S_MINT, BONYC_MINT]}
       enableUnlimited
