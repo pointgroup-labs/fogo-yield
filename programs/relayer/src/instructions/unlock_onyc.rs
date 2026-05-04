@@ -2,15 +2,15 @@ use anchor_lang::prelude::*;
 use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
 
 use crate::constants::{
-    CONFIG_SEED, FLOW_OUTBOUND_SEED, NTT_PROGRAM_ID, NTT_REDEEM_IX, NTT_RELEASE_INBOUND_UNLOCK_IX,
-    RELAYER_SEED,
+    CONFIG_SEED, FLOW_OUTBOUND_SEED, FOGO_WORMHOLE_CHAIN_ID, NTT_PROGRAM_ID, NTT_REDEEM_IX,
+    NTT_RELEASE_INBOUND_UNLOCK_IX, RELAYER_SEED,
 };
 use crate::cpi::invoke_relayer_signed;
 use crate::error::RelayerError;
 use crate::events::OnycUnlocked;
 use crate::ntt::{
-    NttRedeemArgs, NttReleaseInboundArgs, TRANSCEIVER_MESSAGE_SENDER_OFFSET,
-    VALIDATED_TRANSCEIVER_MESSAGE_DISC,
+    derive_ntt_inbox_rate_limit, derive_ntt_peer, NttRedeemArgs, NttReleaseInboundArgs,
+    TRANSCEIVER_MESSAGE_SENDER_OFFSET, VALIDATED_TRANSCEIVER_MESSAGE_DISC,
 };
 use crate::state::{Flow, FlowStatus, RelayerConfig};
 
@@ -23,8 +23,10 @@ use crate::state::{Flow, FlowStatus, RelayerConfig};
 const REDEEM_ACCOUNTS_MIN_LEN: usize = 10;
 const RELEASE_ACCOUNTS_MIN_LEN: usize = 8;
 
+const REDEEM_IDX_PEER: usize = 2;
 const REDEEM_IDX_TRANSCEIVER_MESSAGE: usize = 3;
 const REDEEM_IDX_INBOX_ITEM: usize = 6;
+const REDEEM_IDX_INBOX_RATE_LIMIT: usize = 7;
 const RELEASE_IDX_INBOX_ITEM: usize = 2;
 const RELEASE_IDX_RECIPIENT_ATA: usize = 3;
 
@@ -82,6 +84,21 @@ pub fn handler<'info>(
     require!(
         redeem_accs[REDEEM_IDX_INBOX_ITEM].key() == ctx.accounts.ntt_inbox_item.key(),
         RelayerError::InboxItemMismatch
+    );
+    // Pin the inbound origin to FOGO. Without this, a future non-FOGO peer
+    // registration on the NTT manager would let foreign-chain VAAs create
+    // Flow PDAs that the outbound legs blindly bridge back to FOGO.
+    let (expected_peer, _) = derive_ntt_peer(FOGO_WORMHOLE_CHAIN_ID);
+    let (expected_inbox_rl, _) = derive_ntt_inbox_rate_limit(FOGO_WORMHOLE_CHAIN_ID);
+    require_keys_eq!(
+        redeem_accs[REDEEM_IDX_PEER].key(),
+        expected_peer,
+        RelayerError::WrongOriginChain
+    );
+    require_keys_eq!(
+        redeem_accs[REDEEM_IDX_INBOX_RATE_LIMIT].key(),
+        expected_inbox_rl,
+        RelayerError::WrongOriginChain
     );
     require!(
         release_accs[RELEASE_IDX_INBOX_ITEM].key() == ctx.accounts.ntt_inbox_item.key(),

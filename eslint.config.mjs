@@ -11,7 +11,7 @@ export default antfu(
       markdown: 'dprint',
     },
     yaml: true,
-    vue: true,
+    react: true,
     ignores: [
       '**/dist/**',
       '**/coverage/**',
@@ -25,7 +25,7 @@ export default antfu(
   {
     rules: {
       'antfu/consistent-list-newline': 'off',
-      'style/brace-style': ['error', '1tbs', { allowSingleLine: true }],
+      'style/brace-style': ['error', '1tbs', {allowSingleLine: true}],
 
       'toml/padding-line-between-pairs': 'off',
       'toml/array-element-newline': 'off',

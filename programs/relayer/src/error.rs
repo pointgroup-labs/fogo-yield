@@ -2,17 +2,11 @@ use anchor_lang::prelude::*;
 
 #[error_code]
 pub enum RelayerError {
-    #[msg("VAA verification failed or VAA is invalid")]
-    InvalidVaa,
-
     #[msg("remaining_accounts split point is out of range")]
     InvalidAccountSplit,
 
     #[msg("Relayer authority PDA not present in forwarded CPI accounts")]
     AuthorityNotInAccounts,
-
-    #[msg("VAA payload is shorter than the expected fogo_sender field")]
-    VaaPayloadTooShort,
 
     #[msg("Parsed fogo_sender is the zero address")]
     ZeroFogoSender,
@@ -50,12 +44,6 @@ pub enum RelayerError {
     #[msg("Destination token account does not match the ATA consumed by the NTT release CPI")]
     RecipientAtaMismatch,
 
-    #[msg("posted_vaa does not match the VAA consumed by the Token Bridge CPI")]
-    PostedVaaMismatch,
-
-    #[msg("gateway_claim does not match the claim PDA consumed by the Token Bridge CPI")]
-    GatewayClaimMismatch,
-
     #[msg("fee_vault must not alias the relayer's ONyc operating ATA")]
     FeeVaultAliasesUserAta,
 
@@ -76,4 +64,7 @@ pub enum RelayerError {
 
     #[msg("PendingFee bundle has no inner leg set — invariant violation")]
     EmptyPendingFee,
+
+    #[msg("Inbound NTT message did not originate from the FOGO peer chain")]
+    WrongOriginChain,
 }

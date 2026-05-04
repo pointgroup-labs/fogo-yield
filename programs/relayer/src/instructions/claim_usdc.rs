@@ -1,93 +1,146 @@
 use anchor_lang::prelude::*;
-use anchor_spl::token_interface::{
-    transfer_checked, Mint, TokenAccount, TokenInterface, TransferChecked,
-};
+use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
 
 use crate::constants::{
-    CONFIG_SEED, FLOW_INBOUND_SEED, GATEWAY_COMPLETE_TRANSFER_IX, GATEWAY_PROGRAM_ID,
-    REDEEMER_SEED, REDEMPTION_TRACKER_SEED, RELAYER_SEED, WORMHOLE_CORE_BRIDGE_ID,
+    CONFIG_SEED, FLOW_INBOUND_SEED, FOGO_WORMHOLE_CHAIN_ID, NTT_PROGRAM_ID, NTT_REDEEM_IX,
+    NTT_RELEASE_INBOUND_UNLOCK_IX, REDEMPTION_TRACKER_SEED, RELAYER_SEED,
 };
-use crate::cpi::{invoke_relayer_signed_with_extra, ExtraSigner};
+use crate::cpi::invoke_relayer_signed;
 use crate::error::RelayerError;
 use crate::events::UsdcClaimed;
+use crate::ntt::{
+    derive_ntt_inbox_rate_limit, derive_ntt_peer, NttRedeemArgs, NttReleaseInboundArgs,
+    TRANSCEIVER_MESSAGE_SENDER_OFFSET, VALIDATED_TRANSCEIVER_MESSAGE_DISC,
+};
 use crate::state::{Flow, FlowStatus, RelayerConfig};
-use crate::vaa::parse_fogo_sender_from_posted_vaa;
 
-const TB_IDX_POSTED_VAA: usize = 2;
-const TB_IDX_GATEWAY_CLAIM: usize = 3;
-const TB_ACCOUNTS_MIN_LEN: usize = TB_IDX_GATEWAY_CLAIM + 1;
+// Mirrors `unlock_onyc`. NTT consumes accounts positionally; if upstream
+// reorders its `#[derive(Accounts)]` these constants MUST move in lockstep.
 
-/// Claim incoming USDC from Wormhole Gateway and create the inbound `Flow`
-/// receipt binding the eventual ONyc return to the originating FOGO wallet.
+const REDEEM_ACCOUNTS_MIN_LEN: usize = 10;
+const RELEASE_ACCOUNTS_MIN_LEN: usize = 8;
+
+const REDEEM_IDX_PEER: usize = 2;
+const REDEEM_IDX_TRANSCEIVER_MESSAGE: usize = 3;
+const REDEEM_IDX_INBOX_ITEM: usize = 6;
+const REDEEM_IDX_INBOX_RATE_LIMIT: usize = 7;
+const RELEASE_IDX_INBOX_ITEM: usize = 2;
+const RELEASE_IDX_RECIPIENT_ATA: usize = 3;
+
+/// Redeem inbound USDC.s from FOGO via NTT and create the inbound `Flow`
+/// receipt binding the eventual ONyc → bONyc return to the originating
+/// FOGO wallet.
 ///
 /// Permissionless. Safety:
-/// - `fogo_sender` is parsed from the guardian-signed posted-VAA, not a caller arg.
-/// - Flow PDA is seeded by the Gateway claim account (CPI-created, unforgeable).
-/// - `init` blocks double-claims.
-pub fn handler<'info>(ctx: Context<'info, ClaimUsdc<'info>>) -> Result<()> {
+/// - NTT `redeem` validates guardian sigs via `ValidatedTransceiverMessage`
+///   (whose owner must equal the registered transceiver).
+/// - `fogo_sender` is `NttManagerMessage.sender` parsed from on-chain
+///   transceiver-message data; Anchor `owner = NTT_PROGRAM_ID` plus the
+///   discriminator check reject impostors.
+/// - `release_inbound_unlock` writes USDC directly to the relayer-authority
+///   ATA — no intermediate redeemer-owned ATA / sweep dance.
+///
+/// `remaining_accounts` = redeem accounts ++ release accounts;
+/// `redeem_accounts_len` is the split point.
+pub fn handler<'info>(
+    ctx: Context<'info, ClaimUsdc<'info>>,
+    redeem_accounts_len: u8,
+) -> Result<()> {
+    let data = ctx.accounts.ntt_transceiver_message.try_borrow_data()?;
     require!(
-        ctx.remaining_accounts.len() >= TB_ACCOUNTS_MIN_LEN,
+        data.len() >= TRANSCEIVER_MESSAGE_SENDER_OFFSET + 32,
+        RelayerError::InvalidTransceiverMessage
+    );
+    require!(
+        data[..8] == VALIDATED_TRANSCEIVER_MESSAGE_DISC,
+        RelayerError::InvalidTransceiverMessage
+    );
+    let mut fogo_sender = [0u8; 32];
+    fogo_sender.copy_from_slice(
+        &data[TRANSCEIVER_MESSAGE_SENDER_OFFSET..TRANSCEIVER_MESSAGE_SENDER_OFFSET + 32],
+    );
+    require!(fogo_sender != [0u8; 32], RelayerError::ZeroFogoSender);
+    drop(data);
+
+    let split = redeem_accounts_len as usize;
+    let total = ctx.remaining_accounts.len();
+    require!(
+        split > 0 && split < total,
+        RelayerError::InvalidAccountSplit
+    );
+    let (redeem_accs, release_accs) = ctx.remaining_accounts.split_at(split);
+
+    require!(
+        redeem_accs.len() >= REDEEM_ACCOUNTS_MIN_LEN
+            && release_accs.len() >= RELEASE_ACCOUNTS_MIN_LEN,
         RelayerError::InvalidAccountSplit
     );
     require!(
-        ctx.remaining_accounts[TB_IDX_POSTED_VAA].key() == ctx.accounts.posted_vaa.key(),
-        RelayerError::PostedVaaMismatch
+        redeem_accs[REDEEM_IDX_TRANSCEIVER_MESSAGE].key()
+            == ctx.accounts.ntt_transceiver_message.key(),
+        RelayerError::TransceiverMessageMismatch
     );
     require!(
-        ctx.remaining_accounts[TB_IDX_GATEWAY_CLAIM].key() == ctx.accounts.gateway_claim.key(),
-        RelayerError::GatewayClaimMismatch
+        redeem_accs[REDEEM_IDX_INBOX_ITEM].key() == ctx.accounts.ntt_inbox_item.key(),
+        RelayerError::InboxItemMismatch
+    );
+    // Pin the inbound origin to FOGO. Without this, a future non-FOGO peer
+    // registration on the NTT manager would let foreign-chain VAAs create
+    // Flow PDAs that the outbound legs blindly bridge back to FOGO.
+    let (expected_peer, _) = derive_ntt_peer(FOGO_WORMHOLE_CHAIN_ID);
+    let (expected_inbox_rl, _) = derive_ntt_inbox_rate_limit(FOGO_WORMHOLE_CHAIN_ID);
+    require_keys_eq!(
+        redeem_accs[REDEEM_IDX_PEER].key(),
+        expected_peer,
+        RelayerError::WrongOriginChain
+    );
+    require_keys_eq!(
+        redeem_accs[REDEEM_IDX_INBOX_RATE_LIMIT].key(),
+        expected_inbox_rl,
+        RelayerError::WrongOriginChain
+    );
+    require!(
+        release_accs[RELEASE_IDX_INBOX_ITEM].key() == ctx.accounts.ntt_inbox_item.key(),
+        RelayerError::InboxItemMismatch
+    );
+    require!(
+        release_accs[RELEASE_IDX_RECIPIENT_ATA].key() == ctx.accounts.usdc_ata.key(),
+        RelayerError::RecipientAtaMismatch
     );
 
-    let vaa_data = ctx.accounts.posted_vaa.try_borrow_data()?;
-    let fogo_sender = parse_fogo_sender_from_posted_vaa(&vaa_data)?;
-    drop(vaa_data);
+    let bump = ctx.accounts.relayer_config.relayer_authority_bump;
+    let authority = ctx.accounts.relayer_authority.to_account_info();
 
-    let pre_intake_balance = ctx.accounts.redeemer_usdc_ata.amount;
+    let pre_balance = ctx.accounts.usdc_ata.amount;
 
-    let redeemer_key = ctx.accounts.redeemer_authority.key();
-    let redeemer_bump = ctx.bumps.redeemer_authority;
-
-    invoke_relayer_signed_with_extra(
-        GATEWAY_PROGRAM_ID,
-        &GATEWAY_COMPLETE_TRANSFER_IX,
-        &(),
-        ctx.remaining_accounts,
-        &ctx.accounts.relayer_authority.to_account_info(),
-        ctx.accounts.relayer_config.relayer_authority_bump,
-        Some(ExtraSigner {
-            key: redeemer_key,
-            seed: REDEEMER_SEED,
-            bump: redeemer_bump,
-        }),
+    invoke_relayer_signed(
+        NTT_PROGRAM_ID,
+        &NTT_REDEEM_IX,
+        &NttRedeemArgs {},
+        redeem_accs,
+        &authority,
+        bump,
     )?;
 
-    ctx.accounts.redeemer_usdc_ata.reload()?;
+    invoke_relayer_signed(
+        NTT_PROGRAM_ID,
+        &NTT_RELEASE_INBOUND_UNLOCK_IX,
+        &NttReleaseInboundArgs {
+            revert_on_delay: false,
+        },
+        release_accs,
+        &authority,
+        bump,
+    )?;
+
+    ctx.accounts.usdc_ata.reload()?;
     let amount = ctx
         .accounts
-        .redeemer_usdc_ata
+        .usdc_ata
         .amount
-        .checked_sub(pre_intake_balance)
+        .checked_sub(pre_balance)
         .ok_or(RelayerError::BalanceUnderflow)?;
     require!(amount > 0, RelayerError::ZeroAmountFlow);
-
-    // Sweep into the long-lived authority-owned ATA, signed by the redeemer
-    // PDA. Safe because `redemption_tracker`'s absence is enforced.
-    let bump_arr = [redeemer_bump];
-    let signer_seeds: &[&[&[u8]]] = &[&[REDEEMER_SEED, &bump_arr]];
-    transfer_checked(
-        CpiContext::new_with_signer(
-            ctx.accounts.token_program.key(),
-            TransferChecked {
-                from: ctx.accounts.redeemer_usdc_ata.to_account_info(),
-                mint: ctx.accounts.usdc_mint.to_account_info(),
-                to: ctx.accounts.usdc_ata.to_account_info(),
-                authority: ctx.accounts.redeemer_authority.to_account_info(),
-            },
-            signer_seeds,
-        ),
-        amount,
-        ctx.accounts.usdc_mint.decimals,
-    )?;
 
     let flow_key = ctx.accounts.inflight_flow.key();
 
@@ -100,7 +153,7 @@ pub fn handler<'info>(ctx: Context<'info, ClaimUsdc<'info>>) -> Result<()> {
 
     emit!(UsdcClaimed {
         flow: flow_key,
-        gateway_claim: ctx.accounts.gateway_claim.key(),
+        ntt_inbox_item: ctx.accounts.ntt_inbox_item.key(),
         fogo_sender,
         amount,
     });
@@ -120,32 +173,39 @@ pub struct ClaimUsdc<'info> {
     )]
     pub relayer_config: Account<'info, RelayerConfig>,
 
-    /// CHECK: PDA derived from RELAYER_SEED; no data stored.
+    /// CHECK: PDA derived from RELAYER_SEED.
     #[account(seeds = [RELAYER_SEED], bump = relayer_config.relayer_authority_bump)]
     pub relayer_authority: UncheckedAccount<'info>,
 
-    /// CHECK: PDA derived from REDEEMER_SEED; signs the TB CPI + post-CPI sweep.
-    #[account(seeds = [REDEEMER_SEED], bump)]
-    pub redeemer_authority: UncheckedAccount<'info>,
-
     pub usdc_mint: InterfaceAccount<'info, Mint>,
 
-    /// Boxed for stack-budget headroom.
     #[account(
         mut,
         associated_token::mint = usdc_mint,
         associated_token::authority = relayer_authority,
         associated_token::token_program = token_program,
     )]
-    pub usdc_ata: Box<InterfaceAccount<'info, TokenAccount>>,
+    pub usdc_ata: InterfaceAccount<'info, TokenAccount>,
 
+    /// Per-VAA NTT inbox-item PDA — its pubkey seeds the flow PDA.
+    /// CHECK: validated by the NTT CPI.
+    pub ntt_inbox_item: UncheckedAccount<'info>,
+
+    /// `owner = NTT_PROGRAM_ID` pins the writer; nothing outside NTT can
+    /// have crafted this data.
+    /// CHECK: owner + discriminator + offset checks in the handler.
+    #[account(owner = NTT_PROGRAM_ID)]
+    pub ntt_transceiver_message: UncheckedAccount<'info>,
+
+    /// `init` blocks double-claims against the same NTT inbox item.
     #[account(
-        mut,
-        associated_token::mint = usdc_mint,
-        associated_token::authority = redeemer_authority,
-        associated_token::token_program = token_program,
+        init,
+        payer = payer,
+        space = 8 + Flow::INIT_SPACE,
+        seeds = [FLOW_INBOUND_SEED, ntt_inbox_item.key().as_ref()],
+        bump,
     )]
-    pub redeemer_usdc_ata: Box<InterfaceAccount<'info, TokenAccount>>,
+    pub inflight_flow: Account<'info, Flow>,
 
     /// Withdraw-chain mutex gate. `SystemAccount` asserts
     /// `owner == system_program::ID`, true iff the singleton
@@ -157,24 +217,6 @@ pub struct ClaimUsdc<'info> {
         bump,
     )]
     pub redemption_tracker: SystemAccount<'info>,
-
-    /// CHECK: owner = Wormhole core bridge.
-    #[account(owner = WORMHOLE_CORE_BRIDGE_ID)]
-    pub posted_vaa: UncheckedAccount<'info>,
-
-    /// Per-VAA Gateway claim PDA — its pubkey seeds the flow PDA.
-    /// CHECK: validated by the Gateway CPI.
-    pub gateway_claim: UncheckedAccount<'info>,
-
-    /// `init` blocks double-claims against the same gateway claim PDA.
-    #[account(
-        init,
-        payer = payer,
-        space = 8 + Flow::INIT_SPACE,
-        seeds = [FLOW_INBOUND_SEED, gateway_claim.key().as_ref()],
-        bump,
-    )]
-    pub inflight_flow: Account<'info, Flow>,
 
     pub token_program: Interface<'info, TokenInterface>,
     pub system_program: Program<'info, System>,

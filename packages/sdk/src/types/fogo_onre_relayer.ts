@@ -16,20 +16,20 @@ export type Relayer = {
     "Stateless cross-chain relayer between FOGO and Solana.",
     "",
     "All operational instructions are permissionless. Safety comes from the",
-    "Flow PDA design: each inbound Wormhole message carries the originating",
-    "FOGO user's wallet in its payload. `claim_usdc` / `unlock_onyc` persist",
-    "that wallet in a one-shot `Flow` PDA keyed by the bridge's per-VAA claim",
-    "account; `lock_onyc` / `send_usdc_to_user` consume the PDA to choose the",
-    "outbound recipient. A stolen operator key cannot redirect outbound",
-    "transfers — the claim PDA is CPI-created by the bridge program and",
-    "unforgeable."
+    "Flow PDA design: each inbound NTT message carries the originating FOGO",
+    "user's wallet as `NttManagerMessage.sender`. `claim_usdc` /",
+    "`unlock_onyc` persist that wallet in a one-shot `Flow` PDA keyed by",
+    "the per-VAA NTT `inbox_item` PDA; `lock_onyc` / `send_usdc_to_user`",
+    "consume the PDA to choose the outbound recipient. A stolen operator",
+    "key cannot redirect outbound transfers — the inbox-item PDA is",
+    "CPI-created by the NTT program and unforgeable."
   ],
   "instructions": [
     {
       "name": "acceptAuthority",
       "docs": [
         "Two-step rotation, step two. Signer must equal",
-        "`relayer_config.pending_authority`. The current authority does NOT",
+        "`relayer_config.pending_authority`. Current authority does NOT",
         "participate — by design, so two independent multisigs can rotate",
         "without atomic cross-multisig coordination."
       ],
@@ -46,9 +46,6 @@ export type Relayer = {
       "accounts": [
         {
           "name": "pendingAuthority",
-          "docs": [
-            "Must equal `relayer_config.pending_authority`."
-          ],
           "signer": true
         },
         {
@@ -137,9 +134,8 @@ export type Relayer = {
         {
           "name": "relayerAuthority",
           "docs": [
-            "in `invoke_relayer_signed`. Must be the redeemer recorded inside",
-            "`redemption_request` (OnRe's cancel constraint enforces this), so",
-            "the unlocked ONyc returns to its ATA (`onyc_ata`)."
+            "inside `redemption_request` (OnRe enforces this), so the unlocked",
+            "ONyc returns to its `onyc_ata`."
           ],
           "pda": {
             "seeds": [
@@ -167,11 +163,7 @@ export type Relayer = {
         {
           "name": "onycAta",
           "docs": [
-            "Pinned by `has_one = onyc_mint` and ATA derivation. Receives the",
-            "unlocked ONyc back from OnRe's redemption vault. Already exists",
-            "(created in `initialize`), so OnRe's `init_if_needed` on the",
-            "equivalent slot inside the CPI is a no-op and `signer` (us) does",
-            "not actually pay rent."
+            "Receives the unlocked ONyc back from OnRe's redemption vault."
           ],
           "writable": true,
           "pda": {
@@ -259,10 +251,6 @@ export type Relayer = {
         },
         {
           "name": "redemptionTracker",
-          "docs": [
-            "Singleton; closes to its original payer (recorded in `tracker.payer`).",
-            "`tracker.flow == outflight_flow.key()` is verified in the handler."
-          ],
           "writable": true,
           "pda": {
             "seeds": [
@@ -295,9 +283,7 @@ export type Relayer = {
         {
           "name": "payerForClose",
           "docs": [
-            "payer recorded in the tracker is who gets the rent back — same",
-            "invariant as `claim_redemption_usdc`'s close path so a cancelled-",
-            "then-reclaimed flow never has rent diverted."
+            "init-time payer always gets rent back."
           ],
           "writable": true
         },
@@ -309,11 +295,6 @@ export type Relayer = {
     },
     {
       "name": "claimRedemptionUsdc",
-      "docs": [
-        "Once OnRe's `redemption_admin` has fulfilled (signal: their",
-        "`RedemptionRequest` PDA is closed), book the USDC delta onto the",
-        "flow and close the singleton. Caller-permissionless."
-      ],
       "discriminator": [
         171,
         90,
@@ -328,10 +309,8 @@ export type Relayer = {
         {
           "name": "cranker",
           "docs": [
-            "Receives rent from the closed `redemption_tracker`. Need not be the",
-            "same key as `tracker.payer` — the close-target is pinned by the",
-            "`close = payer_for_close` constraint to `tracker.payer`, see below.",
-            "The cranker pays tx fees."
+            "Receives rent from the closed `redemption_tracker`. Need not equal",
+            "`tracker.payer` — close-target is pinned by `payer_for_close` below."
           ],
           "writable": true,
           "signer": true
@@ -474,10 +453,6 @@ export type Relayer = {
         },
         {
           "name": "redemptionTracker",
-          "docs": [
-            "Singleton, closes to its original payer (recorded in `tracker.payer`).",
-            "`tracker.flow == outflight_flow.key()` is verified in the handler."
-          ],
           "writable": true,
           "pda": {
             "seeds": [
@@ -509,9 +484,6 @@ export type Relayer = {
         },
         {
           "name": "payerForClose",
-          "docs": [
-            "payer recorded in the tracker is who gets the rent back."
-          ],
           "writable": true
         },
         {
@@ -529,8 +501,9 @@ export type Relayer = {
     {
       "name": "claimUsdc",
       "docs": [
-        "Claim bridged USDC and create an inflight `Flow` receipt binding the",
-        "eventual bONyc return to the originator's FOGO wallet."
+        "Redeem bridged USDC.s from FOGO via NTT and create an inflight `Flow`",
+        "receipt binding the eventual bONyc return to the originator's FOGO",
+        "wallet."
       ],
       "discriminator": [
         43,
@@ -594,26 +567,6 @@ export type Relayer = {
           }
         },
         {
-          "name": "redeemerAuthority",
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  114,
-                  101,
-                  100,
-                  101,
-                  101,
-                  109,
-                  101,
-                  114
-                ]
-              }
-            ]
-          }
-        },
-        {
           "name": "usdcMint",
           "relations": [
             "relayerConfig"
@@ -621,12 +574,6 @@ export type Relayer = {
         },
         {
           "name": "usdcAta",
-          "docs": [
-            "Long-lived authority-owned USDC sink. `claim_usdc` sweeps bridged",
-            "USDC here; downstream `swap_usdc_to_onyc` reads from the same ATA.",
-            "Boxed for stack-budget headroom (see `swap_usdc_to_onyc` for the",
-            "same rationale)."
-          ],
           "writable": true,
           "pda": {
             "seeds": [
@@ -683,75 +630,54 @@ export type Relayer = {
           }
         },
         {
-          "name": "redeemerUsdcAta",
+          "name": "nttInboxItem",
           "docs": [
-            "Short-lived intake ATA — TB mints into it during the CPI; we sweep",
-            "to `usdc_ata` in the same instruction."
+            "Per-VAA NTT inbox-item PDA — its pubkey seeds the flow PDA."
+          ]
+        },
+        {
+          "name": "nttTransceiverMessage",
+          "docs": [
+            "`owner = NTT_PROGRAM_ID` pins the writer; nothing outside NTT can",
+            "have crafted this data."
+          ]
+        },
+        {
+          "name": "inflightFlow",
+          "docs": [
+            "`init` blocks double-claims against the same NTT inbox item."
           ],
           "writable": true,
           "pda": {
             "seeds": [
               {
-                "kind": "account",
-                "path": "redeemerAuthority"
+                "kind": "const",
+                "value": [
+                  105,
+                  110,
+                  102,
+                  108,
+                  105,
+                  103,
+                  104,
+                  116
+                ]
               },
               {
                 "kind": "account",
-                "path": "tokenProgram"
-              },
-              {
-                "kind": "account",
-                "path": "usdcMint"
+                "path": "nttInboxItem"
               }
-            ],
-            "program": {
-              "kind": "const",
-              "value": [
-                140,
-                151,
-                37,
-                143,
-                78,
-                36,
-                137,
-                241,
-                187,
-                61,
-                16,
-                41,
-                20,
-                142,
-                13,
-                131,
-                11,
-                90,
-                19,
-                153,
-                218,
-                255,
-                16,
-                132,
-                4,
-                142,
-                123,
-                216,
-                219,
-                233,
-                248,
-                89
-              ]
-            }
+            ]
           }
         },
         {
           "name": "redemptionTracker",
           "docs": [
             "Withdraw-chain mutex gate. `SystemAccount` asserts",
-            "`owner == system_program::ID`, which is true iff the singleton",
-            "`RedemptionTracker` PDA does NOT currently exist. While a withdraw",
-            "redemption is in flight the tracker is `init`'d (program-owned) and",
-            "this constraint fails — pausing deposit USDC inflows so they can't",
-            "pollute `claim_redemption_usdc`'s snapshot/delta math."
+            "`owner == system_program::ID`, true iff the singleton",
+            "`RedemptionTracker` PDA does NOT currently exist — pausing deposit",
+            "USDC inflows so they can't pollute `claim_redemption_usdc`'s",
+            "snapshot/delta math."
           ],
           "pda": {
             "seeds": [
@@ -782,46 +708,6 @@ export type Relayer = {
           }
         },
         {
-          "name": "postedVaa",
-          "docs": [
-            "`fogo_sender` is read from on-chain (guardian-signed) data, not args."
-          ]
-        },
-        {
-          "name": "gatewayClaim",
-          "docs": [
-            "Per-VAA Gateway claim PDA — its pubkey seeds the flow PDA."
-          ]
-        },
-        {
-          "name": "inflightFlow",
-          "docs": [
-            "`init` blocks double-claims against the same gateway claim PDA."
-          ],
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  105,
-                  110,
-                  102,
-                  108,
-                  105,
-                  103,
-                  104,
-                  116
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "gatewayClaim"
-              }
-            ]
-          }
-        },
-        {
           "name": "tokenProgram"
         },
         {
@@ -829,22 +715,20 @@ export type Relayer = {
           "address": "11111111111111111111111111111111"
         }
       ],
-      "args": []
+      "args": [
+        {
+          "name": "redeemAccountsLen",
+          "type": "u8"
+        }
+      ]
     },
     {
       "name": "configure",
       "docs": [
         "Authority-only. `None` args leave the corresponding field unchanged.",
-        "`new_authority`: `Some(pk)` proposes; `Some(default())` cancels;",
-        "`None` leaves the proposal slot alone. Acceptance happens in",
-        "`accept_authority`.",
-        "",
-        "Fee changes are asymmetric: decreases apply instantly, increases",
-        "stage into `pending_fee` for `FEE_TIMELOCK_SLOTS` (~2 days). The",
-        "next `configure` call after the window elapses auto-promotes the",
-        "staged change onto the live fields before processing new args —",
-        "no separate apply/cancel ix exists. See `configure::handler` for",
-        "the full proposal semantics."
+        "Fee decreases apply instantly; increases stage into `pending_fee`",
+        "for `FEE_TIMELOCK_SLOTS` (~2 days), auto-promoted on the next",
+        "`configure` call after the window elapses."
       ],
       "discriminator": [
         245,
@@ -893,10 +777,6 @@ export type Relayer = {
         },
         {
           "name": "relayerAuthority",
-          "docs": [
-            "Re-derived so the associated-token derivation on `onyc_ata` resolves",
-            "for the anti-aliasing constraint."
-          ],
           "pda": {
             "seeds": [
               {
@@ -922,9 +802,6 @@ export type Relayer = {
         },
         {
           "name": "onycAta",
-          "docs": [
-            "Referenced solely to enforce `fee_vault != onyc_ata`."
-          ],
           "pda": {
             "seeds": [
               {
@@ -982,9 +859,8 @@ export type Relayer = {
         {
           "name": "feeVault",
           "docs": [
-            "`None` leaves the stored vault unchanged. The anti-aliasing check",
-            "runs in the handler — Anchor constraint exprs can't disambiguate",
-            "`Option::as_ref` against `InterfaceAccount`'s `AsRef` impls."
+            "`None` leaves the stored vault unchanged; anti-aliasing check runs",
+            "in the handler."
           ],
           "optional": true
         },
@@ -1081,31 +957,6 @@ export type Relayer = {
           }
         },
         {
-          "name": "redeemerAuthority",
-          "docs": [
-            "Serves as TB's payload-delivery signer in `CompleteWrappedWithPayload`",
-            "AND owns the short-lived USDC intake ATA (TB requires",
-            "`redeemer.key == to.owner`)."
-          ],
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  114,
-                  101,
-                  100,
-                  101,
-                  101,
-                  109,
-                  101,
-                  114
-                ]
-              }
-            ]
-          }
-        },
-        {
           "name": "usdcMint"
         },
         {
@@ -1184,67 +1035,6 @@ export type Relayer = {
               {
                 "kind": "account",
                 "path": "onycMint"
-              }
-            ],
-            "program": {
-              "kind": "const",
-              "value": [
-                140,
-                151,
-                37,
-                143,
-                78,
-                36,
-                137,
-                241,
-                187,
-                61,
-                16,
-                41,
-                20,
-                142,
-                13,
-                131,
-                11,
-                90,
-                19,
-                153,
-                218,
-                255,
-                16,
-                132,
-                4,
-                142,
-                123,
-                216,
-                219,
-                233,
-                248,
-                89
-              ]
-            }
-          }
-        },
-        {
-          "name": "redeemerUsdcAta",
-          "docs": [
-            "`claim_usdc` mints into this ATA via TB then immediately sweeps it",
-            "to `usdc_ata` under the redeemer's signature."
-          ],
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "account",
-                "path": "redeemerAuthority"
-              },
-              {
-                "kind": "account",
-                "path": "tokenProgram"
-              },
-              {
-                "kind": "account",
-                "path": "usdcMint"
               }
             ],
             "program": {
@@ -1447,13 +1237,10 @@ export type Relayer = {
           }
         },
         {
-          "name": "gatewayClaim"
+          "name": "nttInboxItem"
         },
         {
           "name": "inflightFlow",
-          "docs": [
-            "`close = rent_destination` blocks any second `lock_onyc` against this flow."
-          ],
           "writable": true,
           "pda": {
             "seeds": [
@@ -1472,7 +1259,7 @@ export type Relayer = {
               },
               {
                 "kind": "account",
-                "path": "gatewayClaim"
+                "path": "nttInboxItem"
               }
             ]
           }
@@ -1491,9 +1278,7 @@ export type Relayer = {
       "name": "requestRedemptionOnyc",
       "docs": [
         "Forward flow's ONyc to OnRe via `create_redemption_request` and",
-        "init the singleton tracker. Caller-permissionless. Fee taken pre-CPI.",
-        "Replaces the deleted `swap_onyc_to_usdc` because OnRe's withdraw",
-        "side is asymmetric."
+        "init the singleton tracker. Fee taken pre-CPI."
       ],
       "discriminator": [
         117,
@@ -1539,9 +1324,6 @@ export type Relayer = {
         },
         {
           "name": "relayerAuthority",
-          "docs": [
-            "`invoke_relayer_signed` for the OnRe CPI."
-          ],
           "pda": {
             "seeds": [
               {
@@ -1575,8 +1357,7 @@ export type Relayer = {
           "name": "usdcAta",
           "docs": [
             "Pre-balance snapshot source for the `claim_redemption_usdc` delta.",
-            "Boxed: total stack budget for `try_accounts` overflows the eBPF",
-            "4 KiB cap when every `InterfaceAccount<TokenAccount>` is inline."
+            "Boxed for stack budget."
           ],
           "writable": true,
           "pda": {
@@ -1636,9 +1417,8 @@ export type Relayer = {
         {
           "name": "onycAta",
           "docs": [
-            "Source of the fee transfer; OnRe's CPI also pulls from here via the",
-            "`redeemer_token_account` slot in `remaining_accounts`. Boxed for",
-            "the same stack-budget reason as `usdc_ata`."
+            "Source of the fee transfer; OnRe's CPI also pulls from here. Boxed",
+            "for stack budget."
           ],
           "writable": true,
           "pda": {
@@ -1707,9 +1487,6 @@ export type Relayer = {
         },
         {
           "name": "outflightFlow",
-          "docs": [
-            "Created by `unlock_onyc`; must be in `Claimed` status."
-          ],
           "writable": true,
           "pda": {
             "seeds": [
@@ -1738,7 +1515,7 @@ export type Relayer = {
           "name": "redemptionTracker",
           "docs": [
             "Singleton init — fails if any prior redemption is still in flight.",
-            "This is the on-chain mutex that makes the ATA-delta math safe."
+            "On-chain mutex that makes the ATA-delta math safe."
           ],
           "writable": true,
           "pda": {
@@ -1781,9 +1558,6 @@ export type Relayer = {
     },
     {
       "name": "sendUsdcToUser",
-      "docs": [
-        "Send USDC to `flow.fogo_sender` and close the PDA."
-      ],
       "discriminator": [
         34,
         19,
@@ -1909,16 +1683,10 @@ export type Relayer = {
           }
         },
         {
-          "name": "nttInboxItem",
-          "docs": [
-            "Same NTT inbox-item PDA used at `unlock_onyc` time."
-          ]
+          "name": "nttInboxItem"
         },
         {
           "name": "outflightFlow",
-          "docs": [
-            "Closing on success returns rent to the original payer and blocks replays."
-          ],
           "writable": true,
           "pda": {
             "seeds": [
@@ -1950,24 +1718,13 @@ export type Relayer = {
         {
           "name": "redemptionTracker",
           "docs": [
-            "Singleton redemption tracker slot — must NOT currently exist. Gating",
-            "`send_usdc_to_user` on this closes the outflow race in the withdraw-",
-            "chain delta math: while any `RedemptionTracker` is alive, a sibling",
-            "flow may be mid-redemption with its pre-balance snapshot pinned",
-            "against this very `usdc_ata`. A concurrent outflow here would poison",
-            "that delta (`B.redeemed − A.amount` instead of `B.redeemed`),",
-            "causing `BalanceUnderflow` or silent user under-credit.",
-            "",
-            "`SystemAccount` asserts `owner == system_program::ID`. Combined with",
-            "the seed pinning, this passes iff the PDA either never existed or",
-            "was closed (by `claim_redemption_usdc` / `cancel_redemption_onyc`)",
-            "and fails when a redemption is mid-flight — exactly the invariant",
-            "`claim_redemption_usdc`'s snapshot→reload math needs.",
-            "",
-            "Liveness note: already-`Swapped` flows wait on the pending redemption",
-            "to complete. Stuck redemptions are covered by",
-            "`cancel_redemption_onyc`. This is a deliberate correctness-over-",
-            "latency trade."
+            "Singleton redemption tracker slot — must NOT currently exist. While",
+            "any `RedemptionTracker` is alive, a sibling flow may be mid-redemption",
+            "with its pre-balance snapshot pinned against this `usdc_ata`. A",
+            "concurrent outflow here would poison that delta, causing",
+            "`BalanceUnderflow` or silent user under-credit. Stuck redemptions",
+            "are covered by `cancel_redemption_onyc` — deliberate",
+            "correctness-over-latency trade."
           ],
           "pda": {
             "seeds": [
@@ -2044,9 +1801,6 @@ export type Relayer = {
         },
         {
           "name": "relayerAuthority",
-          "docs": [
-            "and the post-swap fee transfer."
-          ],
           "pda": {
             "seeds": [
               {
@@ -2079,10 +1833,7 @@ export type Relayer = {
         {
           "name": "usdcAta",
           "docs": [
-            "USDC source for OnRe `take_offer_permissionless`. Owned by",
-            "`relayer_authority`; OnRe enforces `user_token_in_account.authority",
-            "== user`, satisfied because the relayer authority signs the CPI as",
-            "`user`. Boxed for stack budget."
+            "Boxed for stack budget."
           ],
           "writable": true,
           "pda": {
@@ -2141,10 +1892,6 @@ export type Relayer = {
         },
         {
           "name": "onycAta",
-          "docs": [
-            "ONyc destination for the swap; also the source of the post-swap fee",
-            "transfer. Same authority story as `usdc_ata`."
-          ],
           "writable": true,
           "pda": {
             "seeds": [
@@ -2202,10 +1949,6 @@ export type Relayer = {
         },
         {
           "name": "feeVault",
-          "docs": [
-            "Pinned by `has_one = fee_vault`. Any pre-existing ONyc account; need",
-            "not be relayer-owned."
-          ],
           "writable": true,
           "relations": [
             "relayerConfig"
@@ -2214,11 +1957,9 @@ export type Relayer = {
         {
           "name": "redemptionTracker",
           "docs": [
-            "Withdraw-chain mutex gate. `SystemAccount` asserts",
-            "`owner == system_program::ID`, true iff the singleton",
-            "`RedemptionTracker` PDA does NOT currently exist. While a withdraw",
-            "redemption is in flight this fails, pausing deposits so the",
-            "snapshot/delta math in `claim_redemption_usdc` stays correct."
+            "Withdraw-chain mutex gate. While a withdraw redemption is in flight",
+            "this fails, pausing deposits so `claim_redemption_usdc`'s",
+            "snapshot/delta math stays correct."
           ],
           "pda": {
             "seeds": [
@@ -2249,13 +1990,10 @@ export type Relayer = {
           }
         },
         {
-          "name": "gatewayClaim"
+          "name": "nttInboxItem"
         },
         {
           "name": "inflightFlow",
-          "docs": [
-            "Created by `claim_usdc`; must be in `Claimed` status."
-          ],
           "writable": true,
           "pda": {
             "seeds": [
@@ -2274,7 +2012,7 @@ export type Relayer = {
               },
               {
                 "kind": "account",
-                "path": "gatewayClaim"
+                "path": "nttInboxItem"
               }
             ]
           }
@@ -2424,16 +2162,12 @@ export type Relayer = {
         {
           "name": "nttTransceiverMessage",
           "docs": [
-            "`fogo_sender` is parsed from this already-validated bytes. `owner`",
-            "pins the writer to NTT (== transceiver in OnRe's deployment), so",
-            "nothing outside NTT can have crafted this data."
+            "`owner = NTT_PROGRAM_ID` pins the writer; nothing outside NTT can",
+            "have crafted this data."
           ]
         },
         {
           "name": "outflightFlow",
-          "docs": [
-            "`init` blocks replay (same NTT inbox → same PDA → already exists)."
-          ],
           "writable": true,
           "pda": {
             "seeds": [
@@ -2624,128 +2358,113 @@ export type Relayer = {
   "errors": [
     {
       "code": 6000,
-      "name": "invalidVaa",
-      "msg": "VAA verification failed or VAA is invalid"
-    },
-    {
-      "code": 6001,
       "name": "invalidAccountSplit",
       "msg": "remaining_accounts split point is out of range"
     },
     {
-      "code": 6002,
+      "code": 6001,
       "name": "authorityNotInAccounts",
       "msg": "Relayer authority PDA not present in forwarded CPI accounts"
     },
     {
-      "code": 6003,
-      "name": "vaaPayloadTooShort",
-      "msg": "VAA payload is shorter than the expected fogo_sender field"
-    },
-    {
-      "code": 6004,
+      "code": 6002,
       "name": "zeroFogoSender",
       "msg": "Parsed fogo_sender is the zero address"
     },
     {
-      "code": 6005,
+      "code": 6003,
       "name": "unauthorizedAuthority",
       "msg": "Caller is not the authority"
     },
     {
-      "code": 6006,
+      "code": 6004,
       "name": "flowStatusMismatch",
       "msg": "Flow is not in the expected status for this operation"
     },
     {
-      "code": 6007,
+      "code": 6005,
       "name": "balanceUnderflow",
       "msg": "Post-CPI balance is less than pre-CPI balance"
     },
     {
-      "code": 6008,
+      "code": 6006,
       "name": "zeroAmountFlow",
       "msg": "Bridge or swap produced zero tokens"
     },
     {
-      "code": 6009,
+      "code": 6007,
       "name": "feeBpsTooHigh",
       "msg": "Fee basis points exceed MAX_FEE_BPS"
     },
     {
-      "code": 6010,
+      "code": 6008,
       "name": "feeOverflow",
       "msg": "Fee computation overflow"
     },
     {
-      "code": 6011,
+      "code": 6009,
       "name": "missingSessionAuthority",
       "msg": "NTT session authority PDA not found in remaining_accounts"
     },
     {
-      "code": 6012,
+      "code": 6010,
       "name": "invalidTransceiverMessage",
       "msg": "NTT ValidatedTransceiverMessage account is malformed or too short"
     },
     {
-      "code": 6013,
+      "code": 6011,
       "name": "transceiverMessageMismatch",
       "msg": "ntt_transceiver_message does not match the account consumed by the NTT redeem CPI"
     },
     {
-      "code": 6014,
+      "code": 6012,
       "name": "inboxItemMismatch",
       "msg": "ntt_inbox_item does not match the account consumed by the NTT CPIs"
     },
     {
-      "code": 6015,
+      "code": 6013,
       "name": "recipientAtaMismatch",
       "msg": "Destination token account does not match the ATA consumed by the NTT release CPI"
     },
     {
-      "code": 6016,
-      "name": "postedVaaMismatch",
-      "msg": "posted_vaa does not match the VAA consumed by the Token Bridge CPI"
-    },
-    {
-      "code": 6017,
-      "name": "gatewayClaimMismatch",
-      "msg": "gateway_claim does not match the claim PDA consumed by the Token Bridge CPI"
-    },
-    {
-      "code": 6018,
+      "code": 6014,
       "name": "feeVaultAliasesUserAta",
       "msg": "fee_vault must not alias the relayer's ONyc operating ATA"
     },
     {
-      "code": 6019,
+      "code": 6015,
       "name": "noPendingAuthority",
       "msg": "No pending authority — nothing to accept"
     },
     {
-      "code": 6020,
+      "code": 6016,
       "name": "pendingAuthorityMismatch",
       "msg": "Signer does not match relayer_config.pending_authority"
     },
     {
-      "code": 6021,
+      "code": 6017,
       "name": "redemptionNotFulfilled",
       "msg": "OnRe RedemptionRequest PDA still exists — redemption_admin has not fulfilled yet"
     },
     {
-      "code": 6022,
+      "code": 6018,
       "name": "redemptionRequestMismatch",
       "msg": "Provided redemption_request account does not match tracker.redemption_request"
     },
     {
-      "code": 6023,
+      "code": 6019,
       "name": "redemptionTrackerFlowMismatch",
       "msg": "RedemptionTracker.flow does not match the bound Flow PDA"
     },
     {
-      "code": 6024,
+      "code": 6020,
       "name": "emptyPendingFee",
       "msg": "PendingFee bundle has no inner leg set — invariant violation"
+    },
+    {
+      "code": 6021,
+      "name": "wrongOriginChain",
+      "msg": "Inbound NTT message did not originate from the FOGO peer chain"
     }
   ],
   "types": [
@@ -2753,17 +2472,11 @@ export type Relayer = {
       "name": "flow",
       "docs": [
         "One-shot receipt binding an inbound bridge message to a FOGO user wallet.",
-        "Used by both legs — direction is implicit in the seed prefix",
-        "(`FLOW_INBOUND_SEED` vs `FLOW_OUTBOUND_SEED`).",
+        "PDA seeds: `[FLOW_*_SEED, bridge_claim_pda.key()]`. Replay protection is",
+        "delegated to the per-VAA claim account created by Wormhole Gateway / NTT.",
         "",
-        "PDA seeds: `[FLOW_*_SEED, bridge_claim_pda.key()]`. Uniqueness and replay",
-        "protection are delegated to the per-VAA claim account created by Wormhole",
-        "Gateway / NTT — no hashing needed here.",
-        "",
-        "**Field set is byte-stable.** Withdraw-chain redemption tracking lives",
-        "in the sidecar `RedemptionTracker` PDA below; nothing else attaches",
-        "to `Flow`. Already-allocated `Flow` PDAs from prior deploys must",
-        "continue to load."
+        "**Field set is byte-stable** — already-allocated `Flow` PDAs from prior",
+        "deploys must continue to load."
       ],
       "type": {
         "kind": "struct",
@@ -2790,16 +2503,10 @@ export type Relayer = {
           },
           {
             "name": "amount",
-            "docs": [
-              "Token amount for the current/next step."
-            ],
             "type": "u64"
           },
           {
             "name": "payer",
-            "docs": [
-              "Receives rent on close."
-            ],
             "type": "pubkey"
           },
           {
@@ -2836,7 +2543,7 @@ export type Relayer = {
             "type": "pubkey"
           },
           {
-            "name": "gatewayClaim",
+            "name": "nttInboxItem",
             "type": "pubkey"
           },
           {
@@ -2857,11 +2564,6 @@ export type Relayer = {
     },
     {
       "name": "onycSwapped",
-      "docs": [
-        "`gross_amount` = ONyc received from OnRe; `fee_amount` = deposit fee",
-        "retained; `net_amount` = ONyc recorded on Flow (== amount the eventual",
-        "`lock_onyc` ships back to FOGO)."
-      ],
       "type": {
         "kind": "struct",
         "fields": [
@@ -2915,28 +2617,17 @@ export type Relayer = {
     },
     {
       "name": "pendingFee",
-      "docs": [
-        "Bundled pending fee proposal. See `RelayerConfig::pending_fee` for the",
-        "non-empty invariant."
-      ],
       "type": {
         "kind": "struct",
         "fields": [
           {
             "name": "depositFeeBps",
-            "docs": [
-              "`None` → deposit leg unaffected by this proposal.",
-              "`Some(bps)` → staged deposit-fee increase, takes effect at `ready_slot`."
-            ],
             "type": {
               "option": "u16"
             }
           },
           {
             "name": "withdrawFeeBps",
-            "docs": [
-              "Same as above for the withdraw leg."
-            ],
             "type": {
               "option": "u16"
             }
@@ -2944,10 +2635,8 @@ export type Relayer = {
           {
             "name": "readySlot",
             "docs": [
-              "Earliest `Clock::slot` at which `configure`'s auto-promote step",
-              "will move this bundle onto the live fields.",
-              "Always `now + FEE_TIMELOCK_SLOTS` at proposal time, MAX-extended",
-              "by any subsequent raise so a follow-up never shortens the window."
+              "`now + FEE_TIMELOCK_SLOTS` at proposal time, MAX-extended by any",
+              "subsequent raise so a follow-up never shortens the window."
             ],
             "type": "u64"
           }
@@ -2957,13 +2646,9 @@ export type Relayer = {
     {
       "name": "redemptionCancelled",
       "docs": [
-        "Withdraw chain — emitted by `cancel_redemption_onyc` when the authority",
-        "aborts an in-flight OnRe redemption (e.g. stuck `redemption_admin`,",
-        "kill-switch, KYC issue). `returned_onyc_amount` is the ONyc that OnRe",
-        "has unlocked back into the relayer's `onyc_ata` and is now re-recorded",
-        "on the flow as `flow.amount` with status rolled back to `Claimed`.",
-        "Note: the withdraw fee taken by `request_redemption_onyc` is NOT",
-        "refunded by this path — operator off-chain reconciliation handles dust."
+        "`returned_onyc_amount` is re-recorded on the flow as `flow.amount`",
+        "with status rolled back to `Claimed`. The withdraw fee originally",
+        "taken by `request_redemption_onyc` is NOT refunded by this path."
       ],
       "type": {
         "kind": "struct",
@@ -2985,12 +2670,6 @@ export type Relayer = {
     },
     {
       "name": "redemptionClaimed",
-      "docs": [
-        "Withdraw chain — emitted by `claim_redemption_usdc` after OnRe has",
-        "fulfilled and we've recorded the USDC delta on the flow. `usdc_received`",
-        "is the post-fulfillment ATA delta and the amount `send_usdc_to_user`",
-        "will ship back to FOGO."
-      ],
       "type": {
         "kind": "struct",
         "fields": [
@@ -3015,11 +2694,6 @@ export type Relayer = {
     },
     {
       "name": "redemptionRequested",
-      "docs": [
-        "Withdraw chain — emitted by `request_redemption_onyc` when ONyc has been",
-        "forwarded to OnRe and the singleton tracker is initialised.",
-        "`redemption_request` is the OnRe `RedemptionRequest` PDA we'll poll."
-      ],
       "type": {
         "kind": "struct",
         "fields": [
@@ -3054,16 +2728,9 @@ export type Relayer = {
       "name": "redemptionTracker",
       "docs": [
         "Singleton sidecar PDA tracking the in-flight withdraw-chain redemption.",
-        "",
-        "PDA seeds: `[REDEMPTION_TRACKER_SEED]` (no per-flow discriminator —",
-        "only one withdraw redemption may be in flight across the whole program",
-        "at a time). The PDA's existence is the in-flight mutex: `init` in",
-        "`request_redemption_onyc` fails if another redemption is mid-flight,",
-        "preventing the USDC-delta race where two flows would otherwise read the",
-        "combined balance change as their own.",
-        "",
-        "Created by `request_redemption_onyc`; closed by `claim_redemption_usdc`",
-        "(rent → `payer`). Never exists on the deposit chain."
+        "PDA seeds: `[REDEMPTION_TRACKER_SEED]`. The PDA's existence is the",
+        "in-flight mutex — `init` in `request_redemption_onyc` fails if another",
+        "redemption is mid-flight, preventing the USDC-delta race."
       ],
       "type": {
         "kind": "struct",
@@ -3071,44 +2738,37 @@ export type Relayer = {
           {
             "name": "flow",
             "docs": [
-              "Outbound `Flow` PDA this tracker is bound to. Pinned by",
-              "`claim_redemption_usdc` via `tracker.flow == flow.key()`."
+              "Outbound `Flow` this tracker is bound to."
             ],
             "type": "pubkey"
           },
           {
             "name": "redemptionRequest",
             "docs": [
-              "OnRe `RedemptionRequest` PDA we created. The relayer polls for its",
-              "closure as the fulfillment signal — when this account no longer",
-              "exists on chain, OnRe's `redemption_admin` has fulfilled."
+              "OnRe `RedemptionRequest` PDA we created. Polled for closure as the",
+              "fulfillment signal."
             ],
             "type": "pubkey"
           },
           {
             "name": "usdcAtaPreBalance",
             "docs": [
-              "Relayer's USDC ATA balance snapshotted *before*",
-              "`create_redemption_request` fires. `claim_redemption_usdc` computes",
-              "the post-fulfillment delta against this. Safe under the singleton",
-              "constraint above — no sibling redemption can pollute the delta."
+              "Snapshot of relayer's USDC ATA balance *before* `create_redemption_request`.",
+              "`claim_redemption_usdc` computes the post-fulfillment delta against this."
             ],
             "type": "u64"
           },
           {
             "name": "onycAmountIn",
             "docs": [
-              "ONyc amount net-of-fee that we sent to OnRe. Audit-trail field;",
-              "not consumed by `claim_redemption_usdc` today, but emitted in events."
+              "Audit-trail field — net-of-fee ONyc sent to OnRe."
             ],
             "type": "u64"
           },
           {
             "name": "payer",
             "docs": [
-              "Pays for init, receives rent on close. Set to whoever called",
-              "`request_redemption_onyc`; may differ from the `claim_redemption_usdc`",
-              "caller."
+              "Pays for init, receives rent on close."
             ],
             "type": "pubkey"
           },
@@ -3122,26 +2782,13 @@ export type Relayer = {
     {
       "name": "relayerConfig",
       "docs": [
-        "The only long-lived state in this program.",
+        "The only long-lived state in this program. `authority` is a cold/admin",
+        "key used only for governance; operational instructions are permissionless.",
         "",
-        "`authority` is a cold/admin key used only for governance. All operational",
-        "instructions are permissionless — recipients are VAA-bound, amounts are",
-        "flow-bound, and CPI targets are compile-time constants.",
-        "",
-        "**Layout-change hazard (operator-accepted).** `pending_fee` was",
-        "appended to this struct, growing `INIT_SPACE`. Any `RelayerConfig`",
-        "PDA created by a *previous* build of this program — on **any**",
-        "cluster (localnet, devnet, mainnet) under the same program ID",
-        "declared in `Anchor.toml` — is now under-sized, and every",
-        "instruction that takes `Account<'info, RelayerConfig>` will fail",
-        "to deserialize the stale bytes until the account is reallocated",
-        "and zero-filled (Borsh `Option::None` = `0u8`).",
-        "",
-        "**No migration instruction ships in this build.** The deployer's",
-        "accepted recovery for any cluster that already holds a",
-        "pre-rollout PDA is to close it out-of-band (e.g. via a one-shot",
-        "upgrade carrying a temporary realloc ix, or by re-`initialize`",
-        "after closing) before invoking any operational instruction."
+        "**Layout-change hazard.** `pending_fee` was appended, growing",
+        "`INIT_SPACE`. Any pre-existing `RelayerConfig` PDA from a prior build",
+        "is now under-sized and must be reallocated/zero-filled before any",
+        "instruction can deserialize it. No migration ix ships in this build."
       ],
       "type": {
         "kind": "struct",
@@ -3153,10 +2800,9 @@ export type Relayer = {
           {
             "name": "pendingAuthority",
             "docs": [
-              "Two-step rotation accommodates multisig→multisig handoffs where the two",
-              "parties cannot atomically co-sign (e.g. two independent Squads vaults).",
-              "`None` when no rotation is in flight; set by `configure(new_authority)`,",
-              "promoted to `authority` by a separate `accept_authority` tx from this key."
+              "Two-step rotation accommodates multisig→multisig handoffs where the",
+              "two parties cannot atomically co-sign. Promoted to `authority` by",
+              "`accept_authority` from this key."
             ],
             "type": {
               "option": "pubkey"
@@ -3172,10 +2818,6 @@ export type Relayer = {
           },
           {
             "name": "feeVault",
-            "docs": [
-              "Single PDA-addressed token account holding ALL accumulated fees from",
-              "both legs (denominated in ONyc)."
-            ],
             "type": "pubkey"
           },
           {
@@ -3188,34 +2830,19 @@ export type Relayer = {
           },
           {
             "name": "depositFeeBps",
-            "docs": [
-              "Deposit-leg fee in bps (1 bps = 0.01%)."
-            ],
             "type": "u16"
           },
           {
             "name": "withdrawFeeBps",
-            "docs": [
-              "Withdrawal-leg fee in bps."
-            ],
             "type": "u16"
           },
           {
             "name": "pendingFee",
             "docs": [
-              "Staged fee *increase*, auto-promoted on the next `configure`",
-              "call once `pending_fee.ready_slot` has elapsed.",
-              "",
-              "`None` ⟺ no proposal in flight. Invariant when `Some`: at least",
-              "one inner leg is `Some`. Maintained in `configure` by collapsing",
-              "to `None` whenever the last inner field clears, so",
-              "`pending_fee.is_some()` is the canonical \"is anything staged?\"",
-              "check at every other call site.",
-              "",
-              "Decreases never use this field — they apply instantly in",
-              "`configure`. The `FEE_TIMELOCK_SLOTS` window (~2 days) is the",
-              "user's guarantee: a watcher who sees a staged raise has a full",
-              "epoch to claim/withdraw at the old rate before promotion."
+              "Staged fee *increase*, auto-promoted on the next `configure` call",
+              "once `pending_fee.ready_slot` has elapsed. `None` ⟺ no proposal.",
+              "Invariant when `Some`: at least one inner leg is `Some` (collapsed",
+              "to `None` on empty). Decreases never use this field."
             ],
             "type": {
               "option": {
@@ -3238,7 +2865,7 @@ export type Relayer = {
             "type": "pubkey"
           },
           {
-            "name": "gatewayClaim",
+            "name": "nttInboxItem",
             "type": "pubkey"
           },
           {

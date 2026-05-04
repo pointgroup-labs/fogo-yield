@@ -49,3 +49,28 @@ pub const VALIDATED_TRANSCEIVER_MESSAGE_DISC: [u8; 8] =
 /// Offset of `NttManagerMessage.sender` (originating FOGO user wallet) in
 /// `ValidatedTransceiverMessage<NativeTokenTransfer<_>>`.
 pub const TRANSCEIVER_MESSAGE_SENDER_OFFSET: usize = 106;
+
+const NTT_MANAGER_PEER_SEED: &[u8] = b"peer";
+const NTT_INBOX_RATE_LIMIT_SEED: &[u8] = b"inbox_rate_limit";
+
+/// Derive the NTT manager's `peer` PDA for a given Wormhole chain id.
+/// The relayer pins this against `FOGO_WORMHOLE_CHAIN_ID` to refuse
+/// inbound NTT messages whose origin chain isn't FOGO — without this
+/// check, a future non-FOGO peer registration on the NTT manager would
+/// let foreign-chain VAAs create Flow PDAs that the relayer would then
+/// blindly bridge back to FOGO.
+pub fn derive_ntt_peer(chain_id: u16) -> (Pubkey, u8) {
+    Pubkey::find_program_address(
+        &[NTT_MANAGER_PEER_SEED, &chain_id.to_be_bytes()],
+        &NTT_PROGRAM_ID,
+    )
+}
+
+/// Derive the NTT manager's per-chain `inbox_rate_limit` PDA. Same
+/// chain-pinning rationale as `derive_ntt_peer`.
+pub fn derive_ntt_inbox_rate_limit(chain_id: u16) -> (Pubkey, u8) {
+    Pubkey::find_program_address(
+        &[NTT_INBOX_RATE_LIMIT_SEED, &chain_id.to_be_bytes()],
+        &NTT_PROGRAM_ID,
+    )
+}

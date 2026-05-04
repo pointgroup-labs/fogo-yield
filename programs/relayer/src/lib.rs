@@ -10,7 +10,6 @@ pub mod instructions;
 pub mod ntt;
 pub mod onre;
 pub mod state;
-pub mod vaa;
 
 use instructions::*;
 
@@ -19,13 +18,13 @@ declare_id!("onrenRKgX54qtWeK3cuaTBE71xx7dWMXn82ubH61vAp");
 /// Stateless cross-chain relayer between FOGO and Solana.
 ///
 /// All operational instructions are permissionless. Safety comes from the
-/// Flow PDA design: each inbound Wormhole message carries the originating
-/// FOGO user's wallet in its payload. `claim_usdc` / `unlock_onyc` persist
-/// that wallet in a one-shot `Flow` PDA keyed by the bridge's per-VAA claim
-/// account; `lock_onyc` / `send_usdc_to_user` consume the PDA to choose the
-/// outbound recipient. A stolen operator key cannot redirect outbound
-/// transfers — the claim PDA is CPI-created by the bridge program and
-/// unforgeable.
+/// Flow PDA design: each inbound NTT message carries the originating FOGO
+/// user's wallet as `NttManagerMessage.sender`. `claim_usdc` /
+/// `unlock_onyc` persist that wallet in a one-shot `Flow` PDA keyed by
+/// the per-VAA NTT `inbox_item` PDA; `lock_onyc` / `send_usdc_to_user`
+/// consume the PDA to choose the outbound recipient. A stolen operator
+/// key cannot redirect outbound transfers — the inbox-item PDA is
+/// CPI-created by the NTT program and unforgeable.
 #[program]
 pub mod relayer {
     use super::*;
@@ -39,10 +38,14 @@ pub mod relayer {
         initialize::handler(ctx, deposit_fee_bps, withdraw_fee_bps)
     }
 
-    /// Claim bridged USDC and create an inflight `Flow` receipt binding the
-    /// eventual bONyc return to the originator's FOGO wallet.
-    pub fn claim_usdc<'info>(ctx: Context<'info, ClaimUsdc<'info>>) -> Result<()> {
-        claim_usdc::handler(ctx)
+    /// Redeem bridged USDC.s from FOGO via NTT and create an inflight `Flow`
+    /// receipt binding the eventual bONyc return to the originator's FOGO
+    /// wallet.
+    pub fn claim_usdc<'info>(
+        ctx: Context<'info, ClaimUsdc<'info>>,
+        redeem_accounts_len: u8,
+    ) -> Result<()> {
+        claim_usdc::handler(ctx, redeem_accounts_len)
     }
 
     pub fn swap_usdc_to_onyc<'info>(ctx: Context<'info, SwapUsdcToOnyc<'info>>) -> Result<()> {

@@ -3,19 +3,32 @@
 import { isEstablished, useSession } from '@fogo/sessions-sdk-react'
 import { useState } from 'react'
 import AmountInput from '@/components/AmountInput'
+import QuoteRow from '@/components/QuoteRow'
 import StatusLine from '@/components/StatusLine'
+import { useProtocolState } from '@/hooks/useProtocolState'
 import { useWithdraw } from '@/hooks/useWithdraw'
-import { BONYC_DECIMALS } from '@/lib/config'
+import { BONYC_DECIMALS, USDC_DECIMALS } from '@/lib/config'
+import { safeQuoteWithdraw } from '@/lib/quote'
 import { parseAmount } from '@/lib/tx'
 
 export default function WithdrawCard() {
   const sessionState = useSession()
   const { status, withdraw } = useWithdraw(sessionState)
+  const protocol = useProtocolState()
   const [input, setInput] = useState('')
 
   const parsed = parseAmount(input, BONYC_DECIMALS)
   const ready = isEstablished(sessionState) && parsed !== null && parsed > 0n
   const submitting = status.kind === 'pending'
+
+  const quote = parsed && parsed > 0n && protocol
+    ? safeQuoteWithdraw({
+        inputBonyc: parsed,
+        withdrawFeeBps: protocol.withdrawFeeBps,
+        price: protocol.price,
+        onycPrice: protocol.onycPrice,
+      })
+    : null
 
   const onSubmit = async () => {
     if (!ready || parsed === null) {
@@ -38,6 +51,23 @@ export default function WithdrawCard() {
         symbol="bONyc"
         disabled={submitting}
       />
+      <div className="flex flex-col gap-1.5">
+        <QuoteRow
+          label="Fee"
+          amount={quote?.feeOnyc ?? null}
+          decimals={BONYC_DECIMALS}
+          symbol="ONyc"
+          hint={protocol ? `${protocol.withdrawFeeBps} bps` : undefined}
+        />
+        <QuoteRow label="Redeemed" amount={quote?.netOnyc ?? null} decimals={BONYC_DECIMALS} symbol="ONyc" />
+        <QuoteRow
+          label="You receive"
+          amount={quote?.outputUsdc ?? null}
+          decimals={USDC_DECIMALS}
+          symbol="USDC.s"
+          hint="approx"
+        />
+      </div>
       <button
         type="button"
         onClick={onSubmit}

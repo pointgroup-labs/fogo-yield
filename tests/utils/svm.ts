@@ -11,17 +11,36 @@ const FIXTURES_DIR = path.resolve(
   '../fixtures',
 )
 
+/** In-repo program — loaded from `target/deploy/`, never from the fixtures dir. */
+const RELAYER_PROGRAM_ID = 'onrenRKgX54qtWeK3cuaTBE71xx7dWMXn82ubH61vAp'
+const RELAYER_SO_PATH = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '../../target/deploy/fogo_onre_relayer.so',
+)
+
 /**
- * Create a LiteSVM instance with all program `.so` files loaded from
- * `tests/fixtures/programs/`. Filename (minus `.so`) is the program ID.
+ * Create a LiteSVM instance. Third-party programs (NTT, OnRe, Wormhole core
+ * + token bridge) come from `tests/fixtures/programs/` (filename = program
+ * ID). The relayer itself is loaded straight from the `anchor build` output
+ * so tests always run against the current source — no fixture sync required.
  */
 export function createSvm(): LiteSVM {
   const svm = new LiteSVM()
   const programsDir = path.join(FIXTURES_DIR, 'programs')
   for (const file of fs.readdirSync(programsDir).filter(f => f.endsWith('.so'))) {
     const programId = path.basename(file, '.so')
+    if (programId === RELAYER_PROGRAM_ID) {
+      continue
+    }
     svm.addProgramFromFile(new PublicKey(programId), path.join(programsDir, file))
   }
+  if (!fs.existsSync(RELAYER_SO_PATH)) {
+    throw new Error(
+      `Relayer .so not found at ${RELAYER_SO_PATH}. Run \`anchor build\` first `
+      + `(or rely on the \`pretest\` hook).`,
+    )
+  }
+  svm.addProgramFromFile(new PublicKey(RELAYER_PROGRAM_ID), RELAYER_SO_PATH)
   return svm
 }
 

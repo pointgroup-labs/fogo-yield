@@ -2,19 +2,18 @@ import type { LiteSVM } from 'litesvm'
 import {
   findAuthorityPda,
   findConfigPda,
+  findInboxRateLimitPda,
   findInflightFlowPda,
+  findNttPeerPda,
   findOutflightFlowPda,
   FOGO_WORMHOLE_CHAIN_ID,
-  GATEWAY_PROGRAM_ID,
   NTT_PROGRAM_ID,
   ONRE_PROGRAM_ID,
   RelayerClient,
-  WORMHOLE_CORE_BRIDGE_ID,
 } from '@fogo-onre/sdk'
 import { getAssociatedTokenAddressSync } from '@solana/spl-token'
 import { Keypair, PublicKey } from '@solana/web3.js'
 import {
-  buildPostedVaaData,
   createAta,
   createMint,
   createProvider,
@@ -27,7 +26,6 @@ import {
   logMatches,
   mintTo,
   setFlowAccount,
-  setPostedVaa,
   setValidatedTransceiverMessage,
 } from './utils'
 
@@ -179,13 +177,13 @@ describe('relayer', () => {
           onycMint: onycMint.publicKey,
           feeVault,
           depositFeeBps: 0,
-          withdrawFeeBps: 10_000,
+          withdrawFeeBps: 1_000,
         })
         .rpc()
 
       const config = await client.fetchConfig()
       expect(config.depositFeeBps).toBe(0)
-      expect(config.withdrawFeeBps).toBe(10_000)
+      expect(config.withdrawFeeBps).toBe(1_000)
     })
   })
 
@@ -497,181 +495,31 @@ describe('relayer', () => {
         .rpc()
     })
 
-    it('claim_usdc rejects posted VAA not owned by Core Bridge', async () => {
-      const fakeVaa = Keypair.generate()
-      const fakeClaim = Keypair.generate()
-
-      // VAA-shaped account owned by system program (wrong owner)
-      svm.setAccount(fakeVaa.publicKey, {
-        executable: false,
-        owner: new PublicKey('11111111111111111111111111111111'),
-        lamports: 1_000_000,
-        data: new Uint8Array(200),
-        rentEpoch: 0,
-      })
-
-      // Anchor's `owner = WORMHOLE_CORE_BRIDGE_ID` constraint on `posted_vaa`
-      // emits `ConstraintOwner` (Anchor 2004). Asserting on the code rules
-      // out unrelated failures (signer / seeds / some other accidental
-      // mis-config from succeeding on the owner check).
-      await expectError(
-        () =>
-          client
-            .claimUsdc({
-              payer: authority.publicKey,
-              usdcMint: usdcMint.publicKey,
-              postedVaa: fakeVaa.publicKey,
-              gatewayClaim: fakeClaim.publicKey,
-            })
-            .rpc(),
-        'ConstraintOwner',
-      )
-    })
-
-    it('claim_usdc rejects too-short remaining_accounts (InvalidAccountSplit)', async () => {
-      const vaaKeypair = Keypair.generate()
-      const gatewayClaim = Keypair.generate()
-
-      setPostedVaa(svm, vaaKeypair.publicKey, {
-        fogoSender,
-        amount: 1_000_000n,
-      })
-
-      // claim_usdc pins `posted_vaa` and `gateway_claim` to fixed positional
-      // slots inside `remaining_accounts` (slots 2 and 3) to defend against
-      // a VAA-substitution attack on the TB CPI. Passing a short list trips
-      // `InvalidAccountSplit` BEFORE VAA parsing or the CPI — proving the
-      // length guard fires first.
-      await expectError(
-        () =>
-          client
-            .claimUsdc({
-              payer: authority.publicKey,
-              usdcMint: usdcMint.publicKey,
-              postedVaa: vaaKeypair.publicKey,
-              gatewayClaim: gatewayClaim.publicKey,
-            })
-            .remainingAccounts([
-              { pubkey: GATEWAY_PROGRAM_ID, isSigner: false, isWritable: false },
-              { pubkey: client.authorityPda, isSigner: false, isWritable: false },
-            ])
-            .rpc(),
-        'InvalidAccountSplit',
-      )
-    })
-
-    it('claim_usdc rejects VAA with corrupted msg tag (InvalidVaa)', async () => {
-      const vaaKeypair = Keypair.generate()
-      const gatewayClaim = Keypair.generate()
-      const data = buildPostedVaaData({ fogoSender, amount: 1_000_000n })
-      data[0] = 0x00 // corrupt "msg" tag
-      data[1] = 0x00
-      data[2] = 0x00
-
-      svm.setAccount(vaaKeypair.publicKey, {
-        executable: false,
-        owner: WORMHOLE_CORE_BRIDGE_ID,
-        lamports: 1_000_000,
-        data,
-        rentEpoch: 0,
-      })
-
-      // The vaa.rs parser asserts the leading 3 bytes are "msg" or "msu";
-      // anything else returns InvalidVaa. Asserting on the specific code
-      // proves we hit that exact check rather than an upstream owner /
-      // discriminator failure. Pad remaining_accounts with vaaKeypair at
-      // slot 2 and gatewayClaim at slot 3 so the relayer's positional
-      // binding guards pass and execution reaches the parser.
-      await expectError(
-        () =>
-          client
-            .claimUsdc({
-              payer: authority.publicKey,
-              usdcMint: usdcMint.publicKey,
-              postedVaa: vaaKeypair.publicKey,
-              gatewayClaim: gatewayClaim.publicKey,
-            })
-            .remainingAccounts([
-              { pubkey: PublicKey.default, isSigner: false, isWritable: false },
-              { pubkey: PublicKey.default, isSigner: false, isWritable: false },
-              { pubkey: vaaKeypair.publicKey, isSigner: false, isWritable: false },
-              { pubkey: gatewayClaim.publicKey, isSigner: false, isWritable: false },
-            ])
-            .rpc(),
-        'InvalidVaa',
-      )
-    })
-
-    it('claim_usdc rejects PostedVaaMismatch when remaining_accounts[2] differs from named posted_vaa', async () => {
-      // VAA-substitution defense: if TB reads VAA_A positionally (slot 2)
-      // but our handler parses VAA_B from the named `posted_vaa`, an
-      // attacker could ship VAA_A's USDC to VAA_B's parsed `fogo_sender`.
-      // The position-binding guard at claim_usdc.rs:56-58 prevents that.
-      const namedVaa = Keypair.generate()
-      const wrongVaa = Keypair.generate()
-      const gatewayClaim = Keypair.generate()
-      setPostedVaa(svm, namedVaa.publicKey, { fogoSender, amount: 1_000_000n })
-      // wrongVaa needs to exist as a CB-owned account too; it's only checked
-      // by the position-binding require! before TB runs.
-      setPostedVaa(svm, wrongVaa.publicKey, { fogoSender, amount: 1_000_000n })
-
-      await expectError(
-        () =>
-          client
-            .claimUsdc({
-              payer: authority.publicKey,
-              usdcMint: usdcMint.publicKey,
-              postedVaa: namedVaa.publicKey,
-              gatewayClaim: gatewayClaim.publicKey,
-            })
-            .remainingAccounts([
-              { pubkey: PublicKey.default, isSigner: false, isWritable: false },
-              { pubkey: PublicKey.default, isSigner: false, isWritable: false },
-              { pubkey: wrongVaa.publicKey, isSigner: false, isWritable: false }, // slot 2 — mismatched
-              { pubkey: gatewayClaim.publicKey, isSigner: false, isWritable: false },
-            ])
-            .rpc(),
-        'PostedVaaMismatch',
-      )
-    })
-
-    it('claim_usdc rejects GatewayClaimMismatch when remaining_accounts[3] differs from named gateway_claim', async () => {
-      // Symmetric defense: TB derives + creates the claim PDA from the slot-3
-      // account. If the named `gateway_claim` (which seeds the inflight Flow
-      // PDA) differs from slot 3, the Flow PDA could be seeded with one
-      // claim while TB protects against replay using a different claim —
-      // a different attack vector with the same fix.
-      const namedClaim = Keypair.generate()
-      const wrongClaim = Keypair.generate()
-      const vaaKeypair = Keypair.generate()
-      setPostedVaa(svm, vaaKeypair.publicKey, { fogoSender, amount: 1_000_000n })
-
-      await expectError(
-        () =>
-          client
-            .claimUsdc({
-              payer: authority.publicKey,
-              usdcMint: usdcMint.publicKey,
-              postedVaa: vaaKeypair.publicKey,
-              gatewayClaim: namedClaim.publicKey,
-            })
-            .remainingAccounts([
-              { pubkey: PublicKey.default, isSigner: false, isWritable: false },
-              { pubkey: PublicKey.default, isSigner: false, isWritable: false },
-              { pubkey: vaaKeypair.publicKey, isSigner: false, isWritable: false },
-              { pubkey: wrongClaim.publicKey, isSigner: false, isWritable: false }, // slot 3 — mismatched
-            ])
-            .rpc(),
-        'GatewayClaimMismatch',
-      )
-    })
+    // Reused across the NTT-shape claim_usdc failure tests below — `sender`
+    // is the only field the handler reads; everything else is arbitrary.
+    function makeTransceiverMessage(senderBytes: Uint8Array, messageId: Uint8Array) {
+      return {
+        fromChain: FOGO_WORMHOLE_CHAIN_ID,
+        sourceNttManager: new Uint8Array(32).fill(0x22),
+        recipientNttManager: NTT_PROGRAM_ID.toBytes(),
+        message: {
+          id: messageId,
+          sender: senderBytes,
+          trimmedAmount: 1_000_000n,
+          trimmedDecimals: 6,
+          sourceToken: new Uint8Array(32).fill(0x33),
+          toChain: 1,
+          to: new Uint8Array(32).fill(0x44),
+        },
+      }
+    }
 
     it('claim_usdc rejects replay when inflight Flow PDA already exists', async () => {
-      const gatewayClaim = Keypair.generate()
+      const nttInboxItem = Keypair.generate()
 
-      // Inject a Flow PDA at the expected inflight address to simulate
-      // a prior claim_usdc having already created it
-      const [inflightPda, bump] = findInflightFlowPda(gatewayClaim.publicKey, client.program.programId)
+      // Inject a Flow PDA at the expected inflight address to simulate a
+      // prior claim_usdc having already created it.
+      const [inflightPda, bump] = findInflightFlowPda(nttInboxItem.publicKey, client.program.programId)
       setFlowAccount(svm, inflightPda, {
         fogoSender,
         status: FlowStatus.Claimed,
@@ -680,23 +528,37 @@ describe('relayer', () => {
         bump,
       }, client.program.programId)
 
-      const vaaKeypair = Keypair.generate()
-      setPostedVaa(svm, vaaKeypair.publicKey, { fogoSender, amount: 1_000_000n })
+      const messageId = new Uint8Array(32)
+      crypto.getRandomValues(messageId)
+      const [validatedMsgPda] = findValidatedTransceiverMessagePda(
+        FOGO_WORMHOLE_CHAIN_ID,
+        messageId,
+        NTT_PROGRAM_ID,
+      )
+      setValidatedTransceiverMessage(
+        svm,
+        validatedMsgPda,
+        NTT_PROGRAM_ID,
+        makeTransceiverMessage(fogoSender, messageId),
+      )
 
       // Anchor `init` on a PDA with pre-existing lamports → system program
-      // returns "already in use" (custom error 0x0). Same fingerprint as the
-      // double-init test but for the inflight Flow PDA. Matching the log
-      // line proves the init guard fired and no other validation gave up
-      // first.
+      // returns "already in use" (custom error 0x0). Matching the log line
+      // proves the init guard fired and no other validation gave up first.
       await expectFailure(
         () =>
           client
             .claimUsdc({
               payer: authority.publicKey,
               usdcMint: usdcMint.publicKey,
-              postedVaa: vaaKeypair.publicKey,
-              gatewayClaim: gatewayClaim.publicKey,
+              nttInboxItem: nttInboxItem.publicKey,
+              nttTransceiverMessage: validatedMsgPda,
+              redeemAccountsLen: 1,
             })
+            .remainingAccounts([
+              { pubkey: NTT_PROGRAM_ID, isSigner: false, isWritable: false },
+              { pubkey: client.authorityPda, isSigner: false, isWritable: false },
+            ])
             .rpc(),
         logMatches(/already in use/i),
         'inflight Flow init constraint should fire (account already exists)',
@@ -704,8 +566,8 @@ describe('relayer', () => {
     })
 
     it('swap_usdc_to_onyc rejects flow not in Claimed status', async () => {
-      const gatewayClaim = Keypair.generate()
-      const [inflightPda, bump] = findInflightFlowPda(gatewayClaim.publicKey, client.program.programId)
+      const nttInboxItem = Keypair.generate()
+      const [inflightPda, bump] = findInflightFlowPda(nttInboxItem.publicKey, client.program.programId)
 
       // Inject a Swapped flow — swap_usdc_to_onyc requires Claimed
       setFlowAccount(svm, inflightPda, {
@@ -722,7 +584,7 @@ describe('relayer', () => {
             .swapUsdcToOnyc({
               usdcMint: usdcMint.publicKey,
               onycMint: onycMint.publicKey,
-              gatewayClaim: gatewayClaim.publicKey,
+              nttInboxItem: nttInboxItem.publicKey,
             })
             .remainingAccounts([
               { pubkey: ONRE_PROGRAM_ID, isSigner: false, isWritable: false },
@@ -734,8 +596,8 @@ describe('relayer', () => {
     })
 
     it('swap_usdc_to_onyc with Claimed flow attempts OnRe CPI', async () => {
-      const gatewayClaim = Keypair.generate()
-      const [inflightPda, bump] = findInflightFlowPda(gatewayClaim.publicKey, client.program.programId)
+      const nttInboxItem = Keypair.generate()
+      const [inflightPda, bump] = findInflightFlowPda(nttInboxItem.publicKey, client.program.programId)
 
       // Inject a Claimed flow
       setFlowAccount(svm, inflightPda, {
@@ -759,7 +621,7 @@ describe('relayer', () => {
             .swapUsdcToOnyc({
               usdcMint: usdcMint.publicKey,
               onycMint: onycMint.publicKey,
-              gatewayClaim: gatewayClaim.publicKey,
+              nttInboxItem: nttInboxItem.publicKey,
             })
             .remainingAccounts([
               { pubkey: ONRE_PROGRAM_ID, isSigner: false, isWritable: false },
@@ -772,8 +634,8 @@ describe('relayer', () => {
     })
 
     it('lock_onyc rejects flow not in Swapped status', async () => {
-      const gatewayClaim = Keypair.generate()
-      const [inflightPda, bump] = findInflightFlowPda(gatewayClaim.publicKey, client.program.programId)
+      const nttInboxItem = Keypair.generate()
+      const [inflightPda, bump] = findInflightFlowPda(nttInboxItem.publicKey, client.program.programId)
 
       // Inject a Claimed flow — lock_onyc requires Swapped
       setFlowAccount(svm, inflightPda, {
@@ -790,7 +652,7 @@ describe('relayer', () => {
             .lockOnyc({
               payer: authority.publicKey,
               onycMint: onycMint.publicKey,
-              gatewayClaim: gatewayClaim.publicKey,
+              nttInboxItem: nttInboxItem.publicKey,
               rentDestination: authority.publicKey,
             })
             .remainingAccounts([
@@ -803,8 +665,8 @@ describe('relayer', () => {
     })
 
     it('lock_onyc rejects wrong rent destination', async () => {
-      const gatewayClaim = Keypair.generate()
-      const [inflightPda, bump] = findInflightFlowPda(gatewayClaim.publicKey, client.program.programId)
+      const nttInboxItem = Keypair.generate()
+      const [inflightPda, bump] = findInflightFlowPda(nttInboxItem.publicKey, client.program.programId)
       const rando = Keypair.generate()
       svm.airdrop(rando.publicKey, BigInt(1e9))
 
@@ -819,15 +681,14 @@ describe('relayer', () => {
 
       // `#[account(mut, address = inflight_flow.payer)]` on rent_destination
       // makes Anchor emit `ConstraintAddress` when the supplied account
-      // doesn't equal the stored payer. Asserting on the code rules out
-      // the test passing because of, e.g., a missing-signer issue.
+      // doesn't equal the stored payer.
       await expectError(
         () =>
           client
             .lockOnyc({
               payer: authority.publicKey,
               onycMint: onycMint.publicKey,
-              gatewayClaim: gatewayClaim.publicKey,
+              nttInboxItem: nttInboxItem.publicKey,
               rentDestination: rando.publicKey,
             })
             .remainingAccounts([
@@ -840,8 +701,8 @@ describe('relayer', () => {
     })
 
     it('lock_onyc rejects Swapped flow without session authority PDA', async () => {
-      const gatewayClaim = Keypair.generate()
-      const [inflightPda, bump] = findInflightFlowPda(gatewayClaim.publicKey, client.program.programId)
+      const nttInboxItem = Keypair.generate()
+      const [inflightPda, bump] = findInflightFlowPda(nttInboxItem.publicKey, client.program.programId)
 
       // Inject a Swapped flow
       setFlowAccount(svm, inflightPda, {
@@ -858,16 +719,14 @@ describe('relayer', () => {
 
       // Test omits the NTT session-authority PDA from remaining_accounts.
       // The relayer's own preflight check (`MissingSessionAuthority`) should
-      // fire before any NTT CPI runs — proving the relayer enforces the
-      // upstream NTT account requirement up front rather than letting NTT
-      // surface a confusing "wrong signer" error mid-CPI.
+      // fire before any NTT CPI runs.
       await expectError(
         () =>
           client
             .lockOnyc({
               payer: authority.publicKey,
               onycMint: onycMint.publicKey,
-              gatewayClaim: gatewayClaim.publicKey,
+              nttInboxItem: nttInboxItem.publicKey,
               rentDestination: authority.publicKey,
             })
             .remainingAccounts([
@@ -1061,6 +920,13 @@ describe('relayer', () => {
     }) {
       const PAD = { pubkey: PublicKey.default, isSigner: false, isWritable: false }
       const ra = Array.from({ length: 18 }, () => ({ ...PAD }))
+      // Pin slots 2 (peer) and 7 (inbox rate-limit) to the FOGO-derived PDAs
+      // so the WrongOriginChain checks pass and execution reaches the
+      // mismatch the individual test wants to fire.
+      const [peerPda] = findNttPeerPda(FOGO_WORMHOLE_CHAIN_ID)
+      const [inboxRlPda] = findInboxRateLimitPda(FOGO_WORMHOLE_CHAIN_ID)
+      ra[2] = { pubkey: peerPda, isSigner: false, isWritable: false }
+      ra[7] = { pubkey: inboxRlPda, isSigner: false, isWritable: false }
       ra[3] = { pubkey: slots.redeem3, isSigner: false, isWritable: false }
       ra[6] = { pubkey: slots.redeem6, isSigner: false, isWritable: false }
       ra[10 + 2] = { pubkey: slots.release2, isSigner: false, isWritable: false }
@@ -1216,7 +1082,7 @@ describe('relayer', () => {
               rentDestination: authority.publicKey,
             })
             .remainingAccounts([
-              { pubkey: GATEWAY_PROGRAM_ID, isSigner: false, isWritable: false },
+              { pubkey: NTT_PROGRAM_ID, isSigner: false, isWritable: false },
               { pubkey: client.authorityPda, isSigner: false, isWritable: false },
             ])
             .rpc(),
@@ -1252,7 +1118,7 @@ describe('relayer', () => {
               rentDestination: rando.publicKey,
             })
             .remainingAccounts([
-              { pubkey: GATEWAY_PROGRAM_ID, isSigner: false, isWritable: false },
+              { pubkey: NTT_PROGRAM_ID, isSigner: false, isWritable: false },
               { pubkey: client.authorityPda, isSigner: false, isWritable: false },
             ])
             .rpc(),
@@ -1292,11 +1158,11 @@ describe('relayer', () => {
               rentDestination: authority.publicKey,
             })
             .remainingAccounts([
-              { pubkey: GATEWAY_PROGRAM_ID, isSigner: false, isWritable: false },
+              { pubkey: NTT_PROGRAM_ID, isSigner: false, isWritable: false },
               { pubkey: client.authorityPda, isSigner: false, isWritable: false },
             ])
             .rpc(),
-        'AuthorityNotInAccounts',
+        'MissingSessionAuthority',
       )
     })
   })

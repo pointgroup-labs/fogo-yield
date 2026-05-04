@@ -142,8 +142,8 @@ describe('lock_onyc e2e (NTT transfer_lock)', () => {
   })
 
   it('lock_onyc succeeds with full NTT CPI (transfer_lock)', async () => {
-    const gatewayClaim = Keypair.generate()
-    const [inflightPda, bump] = findInflightFlowPda(gatewayClaim.publicKey, client.program.programId)
+    const nttInboxItem = Keypair.generate()
+    const [inflightPda, bump] = findInflightFlowPda(nttInboxItem.publicKey, client.program.programId)
 
     const amount = 500_000n
 
@@ -179,7 +179,7 @@ describe('lock_onyc e2e (NTT transfer_lock)', () => {
         .lockOnyc({
           payer: authority.publicKey,
           onycMint: onycMint.publicKey,
-          gatewayClaim: gatewayClaim.publicKey,
+          nttInboxItem: nttInboxItem.publicKey,
           rentDestination: authority.publicKey,
           flowAmount: amount,
           flowFogoSender: fogoSender,

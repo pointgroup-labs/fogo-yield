@@ -2,23 +2,18 @@ use anchor_lang::prelude::*;
 
 pub const ONRE_PROGRAM_ID: Pubkey = pubkey!("onreuGhHHgVzMWSkj2oQDLDtvvGvoepBPkqyaubFcwe");
 
-pub const WORMHOLE_CORE_BRIDGE_ID: Pubkey = pubkey!("worm2ZoG2kUd4vFXhvjh93UUH596ayRfgQ2MgjNMTth");
-
-pub const GATEWAY_PROGRAM_ID: Pubkey = pubkey!("wormDTUJ6AWPNvk59vGQbDvGJmqbDTdgWgAqcLBCgUb");
-
 pub const NTT_PROGRAM_ID: Pubkey = pubkey!("nttu74CdAmsErx5daJVCQNoDZujswFrskMzonoZSdGk");
 
-// Outbound recipient model: each inbound VAA carries the originating FOGO
-// user wallet in its payload. `claim_usdc` / `unlock_onyc` parse it and
-// persist to a `Flow` PDA seeded by the bridge's per-VAA claim account.
-// `lock_onyc` / `send_usdc_to_user` then read `fogo_sender` as the outbound
-// recipient. A stolen operator key cannot forge a claim PDA (CPI-created by
-// the bridge program) and thus cannot redirect outbound transfers.
+// Outbound recipient model: each inbound NTT message carries the originating
+// FOGO user wallet as `NttManagerMessage.sender`. `claim_usdc` /
+// `unlock_onyc` parse it from the `ValidatedTransceiverMessage` account
+// (owned by the NTT program — unforgeable) and persist it to a `Flow` PDA
+// seeded by the per-VAA `inbox_item` PDA. `lock_onyc` /
+// `send_usdc_to_user` then read `fogo_sender` as the outbound recipient.
+// A stolen operator key cannot forge an `inbox_item` (CPI-created by NTT)
+// and thus cannot redirect outbound transfers.
 
 pub const FOGO_WORMHOLE_CHAIN_ID: u16 = 51;
-
-pub const GATEWAY_COMPLETE_TRANSFER_IX: [u8; 1] = [10];
-pub const GATEWAY_TRANSFER_OUT_IX: [u8; 1] = [11];
 
 pub const NTT_TRANSFER_LOCK_IX: [u8; 8] = [179, 158, 146, 148, 151, 46, 176, 200];
 pub const NTT_REDEEM_IX: [u8; 8] = [184, 12, 86, 149, 70, 196, 97, 225];
@@ -60,20 +55,11 @@ pub const ONRE_REDEMPTION_OFFER_VAULT_AUTHORITY_SEED: &[u8] = b"redemption_offer
 /// can exist at a time, doubling as the in-flight mutex.
 pub const REDEMPTION_TRACKER_SEED: &[u8] = b"redemption_tracker";
 
-/// Needed for the NTT session-authority delegate handshake in `lock_onyc`.
+/// Needed for the NTT session-authority delegate handshake in `lock_onyc`
+/// and `send_usdc_to_user`.
 pub const SPL_TOKEN_APPROVE_IX_TAG: u8 = 4;
 
 pub const RELAYER_SEED: &[u8] = b"relayer";
-
-/// TB enforces that the inbound token account's owner equals either `vaa.to`
-/// or this redeemer PDA, so `claim_usdc` uses a redeemer-owned USDC ATA as
-/// the TB `to` account, then sweeps into the authority-owned ATA.
-pub const REDEEMER_SEED: &[u8] = b"redeemer";
-
-/// TB `sender` PDA, used only by `send_usdc_to_user`. When the outbound CPI
-/// sets `cpi_program_id = Some(crate::ID)`, TB requires the caller to sign
-/// as `["sender"]` under that program.
-pub const SENDER_SEED: &[u8] = b"sender";
 
 pub const CONFIG_SEED: &[u8] = b"relayer_config";
 
@@ -93,3 +79,4 @@ pub const FLOW_OUTBOUND_SEED: &[u8] = b"outflight";
 
 /// Approved as SPL `Approve` delegate before NTT `transfer_lock`.
 pub const NTT_SESSION_AUTHORITY_SEED: &[u8] = b"session_authority";
+

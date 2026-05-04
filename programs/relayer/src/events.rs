@@ -8,7 +8,7 @@ use anchor_lang::prelude::*;
 #[event]
 pub struct UsdcClaimed {
     pub flow: Pubkey,
-    pub gateway_claim: Pubkey,
+    pub ntt_inbox_item: Pubkey,
     pub fogo_sender: [u8; 32],
     pub amount: u64,
 }
@@ -32,7 +32,7 @@ pub struct OnycSwapped {
 #[event]
 pub struct OnycLocked {
     pub flow: Pubkey,
-    pub gateway_claim: Pubkey,
+    pub ntt_inbox_item: Pubkey,
     pub fogo_sender: [u8; 32],
     pub amount: u64,
 }

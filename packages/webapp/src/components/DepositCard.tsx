@@ -3,19 +3,32 @@
 import { isEstablished, useSession } from '@fogo/sessions-sdk-react'
 import { useState } from 'react'
 import AmountInput from '@/components/AmountInput'
+import QuoteRow from '@/components/QuoteRow'
 import StatusLine from '@/components/StatusLine'
 import { useDeposit } from '@/hooks/useDeposit'
-import { USDC_S_DECIMALS } from '@/lib/config'
+import { useProtocolState } from '@/hooks/useProtocolState'
+import { BONYC_DECIMALS, USDC_DECIMALS } from '@/lib/config'
+import { safeQuoteDeposit } from '@/lib/quote'
 import { parseAmount } from '@/lib/tx'
 
 export default function DepositCard() {
   const sessionState = useSession()
   const { status, deposit } = useDeposit(sessionState)
+  const protocol = useProtocolState()
   const [input, setInput] = useState('')
 
-  const parsed = parseAmount(input, USDC_S_DECIMALS)
+  const parsed = parseAmount(input, USDC_DECIMALS)
   const ready = isEstablished(sessionState) && parsed !== null && parsed > 0n
   const submitting = status.kind === 'pending'
+
+  const quote = parsed && parsed > 0n && protocol
+    ? safeQuoteDeposit({
+        inputUsdc: parsed,
+        depositFeeBps: protocol.depositFeeBps,
+        price: protocol.price,
+        onycPrice: protocol.onycPrice,
+      })
+    : null
 
   const onSubmit = async () => {
     if (!ready || parsed === null) {
@@ -38,6 +51,17 @@ export default function DepositCard() {
         symbol="USDC.s"
         disabled={submitting}
       />
+      <div className="flex flex-col gap-1.5">
+        <QuoteRow label="Gross" amount={quote?.grossOnyc ?? null} decimals={BONYC_DECIMALS} symbol="ONyc" />
+        <QuoteRow
+          label="Fee"
+          amount={quote?.feeOnyc ?? null}
+          decimals={BONYC_DECIMALS}
+          symbol="ONyc"
+          hint={protocol ? `${protocol.depositFeeBps} bps` : undefined}
+        />
+        <QuoteRow label="You receive" amount={quote?.outputBonyc ?? null} decimals={BONYC_DECIMALS} symbol="bONyc" />
+      </div>
       <button
         type="button"
         onClick={onSubmit}

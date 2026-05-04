@@ -1,15 +1,19 @@
 /**
- * Shared scaffolding for the four withdraw-chain test files.
+ * Shared scaffolding for the withdraw-chain test files (legs 1-3).
  *
- * Centralizes the ~150 lines of identical setup boilerplate:
+ * Centralizes the identical setup boilerplate:
  *   - OnRe binary sha256 pin
  *   - LiteSVM + clock + relayer initialization
- *   - Wrapped USDC.s mint + ONyc mint + fee vault
- *   - Token Bridge fixtures
+ *   - USDC.s mint + ONyc mint (NTT-managed) + fee vault
  *   - NTT custody pre-fund + ONyc supply bump
  *   - NTT config patch + peer/rate-limit fixtures (with timestamps zeroed)
  *   - OnRe State fixture + airdrops
  *   - Optional leg 1 (`unlock_onyc`) helper for tests that need a pre-claimed flow
+ *
+ * Leg 4 (`send_usdc_to_user`) is NOT covered here: NTT's Config PDA is a
+ * per-program singleton, and this rig binds it to the ONyc mint for leg 1.
+ * USDC.s outbound NTT lives in `send-usdc-to-user-e2e.test.ts` with its
+ * own rig that binds the singleton to USDC.s instead.
  */
 
 import type { LiteSVM } from 'litesvm'
@@ -21,7 +25,6 @@ import {
   findInboxItemPda,
   findOutflightFlowPda,
   findTokenAuthorityPda,
-  findTokenBridgeSenderPda,
   FOGO_WORMHOLE_CHAIN_ID,
   NTT_PROGRAM_ID,
   ONRE_STATE_FIXTURE,
@@ -29,19 +32,22 @@ import {
 } from '@fogo-onre/sdk'
 import { keccak_256 } from '@noble/hashes/sha3.js'
 import { getAssociatedTokenAddressSync, TOKEN_PROGRAM_ID } from '@solana/spl-token'
-import { Keypair, PublicKey, SystemProgram } from '@solana/web3.js'
+import { Keypair, PublicKey } from '@solana/web3.js'
 import { Clock } from 'litesvm'
 import { loadFixture } from './fixture-loader'
-import { createAta, createMintWithAuthority } from './mint'
-import { computeInboxItemHash, findValidatedTransceiverMessagePda, loadAndPatchNttConfig, NTT_INBOX_RL_FIXTURE, NTT_OUTBOX_RL_FIXTURE, NTT_PEER_FIXTURE, readPeerAddress, setRegisteredTransceiver, setValidatedTransceiverMessage } from './ntt-accounts'
-import { createProvider, createSvm } from './svm'
+import { createAta, createMint, createMintWithAuthority } from './mint'
 import {
-  createWrappedMint,
-  setupForeignEndpoint,
-  setupMintAuthority,
-  setupTokenBridgeConfig,
-  setupWrappedMeta,
-} from './wormhole-fixtures'
+  computeInboxItemHash,
+  findValidatedTransceiverMessagePda,
+  loadAndPatchNttConfig,
+  NTT_INBOX_RL_FIXTURE,
+  NTT_OUTBOX_RL_FIXTURE,
+  NTT_PEER_FIXTURE,
+  readPeerAddress,
+  setRegisteredTransceiver,
+  setValidatedTransceiverMessage,
+} from './ntt-accounts'
+import { createProvider, createSvm } from './svm'
 
 /** Constants shared by every withdraw-chain test. */
 export const WITHDRAW_TEST_CONSTANTS = {
@@ -49,8 +55,6 @@ export const WITHDRAW_TEST_CONSTANTS = {
   NET_ONYC_TO_ONRE: 990_000n,
   CUSTODY_BALANCE: 10_000_000n,
   USDC_PRE_BALANCE: 50_000n,
-  FOGO_TB_EMITTER: new Uint8Array(32).fill(0xEE),
-  USDCS_TOKEN_ADDR: new Uint8Array(32).fill(0xCC),
   fogoSender: new Uint8Array(32).fill(0x7F),
 } as const
 
@@ -82,7 +86,7 @@ export interface WithdrawRig {
   svm: LiteSVM
   authority: Keypair
   client: RelayerClient
-  usdcMint: { publicKey: PublicKey }
+  usdcMint: Keypair
   onycMint: Keypair
   relayerAuthorityPda: PublicKey
   nttTokenAuthorityPda: PublicKey
@@ -93,15 +97,15 @@ export interface WithdrawRig {
 
 /**
  * Build the withdraw-chain test rig: SVM + clock + relayer initialized +
- * mints + NTT custody pre-funded + NTT fixtures loaded + rate-limit
+ * mints + NTT custody pre-funded (ONyc) + NTT fixtures loaded + rate-limit
  * timestamps zeroed + OnRe State fixture loaded + airdrops.
  */
 export async function setupWithdrawRig(): Promise<WithdrawRig> {
-  const { CUSTODY_BALANCE, FOGO_TB_EMITTER, USDCS_TOKEN_ADDR } = WITHDRAW_TEST_CONSTANTS
+  const { CUSTODY_BALANCE } = WITHDRAW_TEST_CONSTANTS
 
   const svm = createSvm()
-  // Core Bridge stamps message.timestamp from the sysvar; any non-zero
-  // value works. Same value used in `send-usdc-to-user-e2e.test.ts`.
+  // Non-zero wall clock keeps NTT's `last_tx_timestamp <= now` happy
+  // even after we zero the rate-limit timestamps below.
   svm.setClock(new Clock(0n, 0n, 0n, 0n, 1_773_882_000n))
 
   const authority = Keypair.generate()
@@ -110,16 +114,12 @@ export async function setupWithdrawRig(): Promise<WithdrawRig> {
 
   const [nttTokenAuthorityPda] = findTokenAuthorityPda()
 
-  // `usdc_mint` MUST be the wrapped-USDC TB PDA so leg 4's outbound burn
-  // passes TB's "wrapped == derived(meta)" constraint.
-  const usdcMint = createWrappedMint(svm, FOGO_WORMHOLE_CHAIN_ID, USDCS_TOKEN_ADDR, 6)
+  // USDC.s here is just a plain SPL mint — leg 4 (NTT outbound) does not
+  // run in this rig. Tests that need real USDC.s NTT outbound use a
+  // separate rig that binds NTT Config to USDC.s instead of ONyc.
+  const usdcMint = createMint(svm, authority, 6)
   const onycMint = createMintWithAuthority(svm, authority, nttTokenAuthorityPda, 6)
   const feeVault = createAta(svm, authority, onycMint.publicKey, authority.publicKey)
-
-  setupTokenBridgeConfig(svm)
-  setupForeignEndpoint(svm, FOGO_WORMHOLE_CHAIN_ID, FOGO_TB_EMITTER)
-  setupWrappedMeta(svm, usdcMint.publicKey, FOGO_WORMHOLE_CHAIN_ID, USDCS_TOKEN_ADDR, 6)
-  setupMintAuthority(svm)
 
   await client
     .initialize({
@@ -181,28 +181,9 @@ export async function setupWithdrawRig(): Promise<WithdrawRig> {
   }
   setRegisteredTransceiver(svm, NTT_PROGRAM_ID, 0)
 
-  // Token Bridge fixtures + synthesized sender PDA — only leg 4 (the
-  // happy-path send_usdc_to_user) actually needs these, but loading
-  // mainnet TB state into LiteSVM is harmless for tests that skip leg 4.
-  loadFixture(svm, '7oPa2PHQdZmjSPqvpZN7MQxnC7Dcf3uL4oLqknGLk2S3')
-  loadFixture(svm, 'Gv1KWf8DT1jKv5pKBmGaTmVszqa56Xn8YGx2Pg7i7qAk')
-  loadFixture(svm, '2yVjuQwpsvdsrywzsJJVs9Ueh4zayyo5DYJbBNc3DDpn')
-  loadFixture(svm, '9bFNrXNb2WTx8fMHXCheaZqkLZ3YCCaiqTftHxeintHy')
-
   // Required by `create_redemption_request`'s `seeds=[STATE]` constraint
   // and the `!is_killed` check (mainnet capture has is_killed=0).
   loadFixture(svm, ONRE_STATE_FIXTURE)
-
-  {
-    const [senderPda] = findTokenBridgeSenderPda(client.program.programId)
-    svm.setAccount(senderPda, {
-      executable: false,
-      owner: SystemProgram.programId,
-      lamports: 1_000_000,
-      data: new Uint8Array(0),
-      rentEpoch: 0,
-    })
-  }
 
   svm.airdrop(relayerAuthorityPda, BigInt(5e9))
   svm.airdrop(nttTokenAuthorityPda, BigInt(1e9))

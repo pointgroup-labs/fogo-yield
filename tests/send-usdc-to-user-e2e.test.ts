@@ -1,94 +1,73 @@
 /**
- * E2E test for `send_usdc_to_user` against the real Wormhole Token Bridge `.so`.
+ * E2E test for `send_usdc_to_user`: exercises the full outbound CPI path
+ * through the real NTT program binary in Locking mode on the USDC.s mint:
+ *   1. NTT `transfer_lock` — moves USDC.s out of the relayer ATA into NTT
+ *                            custody, posts an outbox item, closes the
+ *                            outflight Flow PDA.
  *
- * Independently verifies the outbound PDA helpers in
- * `packages/sdk/src/gateway.ts` (authority_signer, emitter, sender, Sequence,
- * Bridge config, fee_collector) and the 19-account ordering of
- * `buildTransferWrappedRemainingAccounts`. If any seed is wrong, TB
- * re-derives internally and the CPI fails with a constraint or
- * "AccountNotFound" error.
- *
- * Setup is intentionally minimal:
- *   - Flow PDA is synthesized in `Swapped` status — `send_usdc_to_user` only
- *     reads `status`, `amount`, `fogo_sender`, `payer`.
- *   - Wrapped-USDC ATA is hand-funded; mint supply patched to match so the
- *     burn doesn't underflow.
- *   - 4 mainnet PDAs loaded from on-disk fixtures; the relayer-scoped TB
- *     `sender` PDA is synthesized (no mainnet capture exists for our custom
- *     program ID).
+ * Mirrors `lock-onyc-e2e.test.ts` with USDC.s substituted for ONyc as the
+ * NTT-managed mint. Because NTT's Config PDA is a per-program singleton,
+ * binding it to USDC.s precludes any ONyc NTT activity in this SVM — so
+ * the ONyc mint exists only because `initialize()` requires it.
  */
 
+import type { LiteSVM } from 'litesvm'
 import {
   findAuthorityPda,
-  findCoreBridgeSequencePda,
   findOutflightFlowPda,
-  findTokenBridgeEmitterPda,
-  findTokenBridgeSenderPda,
+  findSessionAuthorityPda,
+  findTokenAuthorityPda,
   FOGO_WORMHOLE_CHAIN_ID,
+  nttTransferArgsHash,
   RelayerClient,
-  WORMHOLE_CORE_BRIDGE_ID,
 } from '@fogo-onre/sdk'
-import { getAssociatedTokenAddressSync } from '@solana/spl-token'
-import { Keypair, PublicKey, SystemProgram } from '@solana/web3.js'
-import { Clock, LiteSVM } from 'litesvm'
+import { getAssociatedTokenAddressSync, TOKEN_PROGRAM_ID } from '@solana/spl-token'
+import { Keypair, PublicKey } from '@solana/web3.js'
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
   createAta,
   createMint,
+  createMintWithAuthority,
   createProvider,
   createSvm,
-  createWrappedMint,
   FlowStatus,
+  loadAndPatchNttConfig,
   loadFixture,
+  NTT_INBOX_RL_FIXTURE,
+  NTT_OUTBOX_RL_FIXTURE,
+  NTT_PEER_FIXTURE,
   setFlowAccount,
-  setupForeignEndpoint,
-  setupMintAuthority,
-  setupTokenBridgeConfig,
-  setupWrappedMeta,
 } from './utils'
 
-// Mainnet captures used in-place; helper re-derivation is asserted by
-// `tests/gateway-pda-derivations.test.ts`.
-const TB_AUTHORITY_SIGNER_FIXTURE = '7oPa2PHQdZmjSPqvpZN7MQxnC7Dcf3uL4oLqknGLk2S3'
-const TB_EMITTER_FIXTURE = 'Gv1KWf8DT1jKv5pKBmGaTmVszqa56Xn8YGx2Pg7i7qAk'
-const CB_CONFIG_FIXTURE = '2yVjuQwpsvdsrywzsJJVs9Ueh4zayyo5DYJbBNc3DDpn'
-const CB_FEE_COLLECTOR_FIXTURE = '9bFNrXNb2WTx8fMHXCheaZqkLZ3YCCaiqTftHxeintHy'
-
-describe('send_usdc_to_user e2e (outbound TB TransferWrappedWithPayload CPI)', () => {
+describe('send_usdc_to_user e2e (NTT transfer_lock outbound on USDC.s, Locking mode)', () => {
   let svm: LiteSVM
   let authority: Keypair
   let client: RelayerClient
-  /** Wrapped USDC.s mint = TB PDA, no private key. */
-  let usdcMint: { publicKey: PublicKey }
+  let usdcMint: Keypair
   let onycMint: Keypair
   let relayerAuthorityPda: PublicKey
+  let nttTokenAuthorityPda: PublicKey
+  let custodyAta: PublicKey
+  let usdcAta: PublicKey
   let nttInboxItem: PublicKey
   let outflightFlow: PublicKey
 
   const fogoSender = new Uint8Array(32).fill(0xCD)
-  const USDCS_SOURCE_CHAIN = FOGO_WORMHOLE_CHAIN_ID // 51
-  const USDCS_TOKEN_ADDR = new Uint8Array(32).fill(0xCC)
-  const FOGO_TB_EMITTER = new Uint8Array(32).fill(0xEE)
   const sendAmount = 200_000n // 0.2 USDC.s
+  const ATA_PRE_BALANCE = sendAmount // exactly the amount being transferred out
 
   beforeEach(async () => {
     svm = createSvm()
-    // Core Bridge stamps message.timestamp from the sysvar; any real value works.
-    svm.setClock(new Clock(0n, 0n, 0n, 0n, 1_773_882_000n))
-
     authority = Keypair.generate()
     const provider = createProvider(svm, authority)
     client = new RelayerClient(provider as any)
+
     ;[relayerAuthorityPda] = findAuthorityPda(client.program.programId)
+    ;[nttTokenAuthorityPda] = findTokenAuthorityPda()
 
-    // Wormhole TB state — same PDAs in both directions for wrapped USDC.
-    usdcMint = createWrappedMint(svm, USDCS_SOURCE_CHAIN, USDCS_TOKEN_ADDR, 6)
-    setupTokenBridgeConfig(svm)
-    setupForeignEndpoint(svm, USDCS_SOURCE_CHAIN, FOGO_TB_EMITTER)
-    setupWrappedMeta(svm, usdcMint.publicKey, USDCS_SOURCE_CHAIN, USDCS_TOKEN_ADDR, 6)
-    setupMintAuthority(svm)
-
-    // ONyc mint exists only because `initialize()` requires it.
+    // USDC.s is the NTT-managed mint here — `token_authority` PDA must hold
+    // mint authority so `transfer_lock` can move USDC.s into custody.
+    usdcMint = createMintWithAuthority(svm, authority, nttTokenAuthorityPda, 6)
     onycMint = createMint(svm, authority, 6)
     const feeVault = createAta(svm, authority, onycMint.publicKey, authority.publicKey)
 
@@ -103,43 +82,68 @@ describe('send_usdc_to_user e2e (outbound TB TransferWrappedWithPayload CPI)', (
       })
       .rpc()
 
-    // Several internal CPIs cost rent for ephemeral accounts.
+    usdcAta = getAssociatedTokenAddressSync(usdcMint.publicKey, relayerAuthorityPda, true)
+
+    // Custody ATA owned by NTT token_authority — receives the locked USDC.
+    custodyAta = getAssociatedTokenAddressSync(usdcMint.publicKey, nttTokenAuthorityPda, true)
+    {
+      const data = new Uint8Array(165)
+      data.set(usdcMint.publicKey.toBytes(), 0)
+      data.set(nttTokenAuthorityPda.toBytes(), 32)
+      // amount stays 0 — the lock will deposit into it
+      data[108] = 1 // state = Initialized
+      svm.setAccount(custodyAta, {
+        executable: false,
+        owner: TOKEN_PROGRAM_ID,
+        lamports: 2_039_280,
+        data,
+        rentEpoch: 0,
+      })
+    }
+
+    // Pre-fund relayer USDC ATA + bump mint supply to match.
+    {
+      const ataAcct = svm.getAccount(usdcAta)!
+      const ataData = new Uint8Array(ataAcct.data)
+      new DataView(ataData.buffer, ataData.byteOffset).setBigUint64(64, ATA_PRE_BALANCE, true)
+      svm.setAccount(usdcAta, { ...ataAcct, data: ataData })
+
+      const mintAcct = svm.getAccount(usdcMint.publicKey)!
+      const mintData = new Uint8Array(mintAcct.data)
+      new DataView(mintData.buffer, mintData.byteOffset).setBigUint64(36, ATA_PRE_BALANCE, true)
+      svm.setAccount(usdcMint.publicKey, { ...mintAcct, data: mintData })
+    }
+
+    // Load + patch NTT state fixtures (singleton Config bound to USDC.s).
+    loadAndPatchNttConfig(svm, usdcMint.publicKey, custodyAta)
+    loadFixture(svm, NTT_PEER_FIXTURE)
+    loadFixture(svm, NTT_INBOX_RL_FIXTURE)
+    loadFixture(svm, NTT_OUTBOX_RL_FIXTURE)
+
+    // Zero rate-limit timestamps so `last_tx_timestamp <= now` holds.
+    {
+      const pda = new PublicKey(NTT_OUTBOX_RL_FIXTURE)
+      const acct = svm.getAccount(pda)!
+      const data = new Uint8Array(acct.data)
+      new DataView(data.buffer).setBigInt64(24, 0n, true)
+      svm.setAccount(pda, { ...acct, data })
+    }
+    {
+      const pda = new PublicKey(NTT_INBOX_RL_FIXTURE)
+      const acct = svm.getAccount(pda)!
+      const data = new Uint8Array(acct.data)
+      new DataView(data.buffer).setBigInt64(25, 0n, true)
+      svm.setAccount(pda, { ...acct, data })
+    }
+
     svm.airdrop(relayerAuthorityPda, BigInt(5e9))
+    svm.airdrop(nttTokenAuthorityPda, BigInt(1e9))
 
-    // Pre-fund relayer USDC ATA + bump wrapped mint supply to match.
-    // SPL TokenAccount: amount @ offset 64. SPL Mint: supply @ offset 36.
-    const usdcAta = getAssociatedTokenAddressSync(usdcMint.publicKey, relayerAuthorityPda, true)
-    const ataAcct = svm.getAccount(usdcAta)!
-    const ataData = new Uint8Array(ataAcct.data)
-    new DataView(ataData.buffer, ataData.byteOffset).setBigUint64(64, sendAmount, true)
-    svm.setAccount(usdcAta, { ...ataAcct, data: ataData })
-
-    const mintAcct = svm.getAccount(usdcMint.publicKey)!
-    const mintData = new Uint8Array(mintAcct.data)
-    new DataView(mintData.buffer, mintData.byteOffset).setBigUint64(36, sendAmount, true)
-    svm.setAccount(usdcMint.publicKey, { ...mintAcct, data: mintData })
-
-    loadFixture(svm, TB_AUTHORITY_SIGNER_FIXTURE)
-    loadFixture(svm, TB_EMITTER_FIXTURE)
-    loadFixture(svm, CB_CONFIG_FIXTURE)
-    loadFixture(svm, CB_FEE_COLLECTOR_FIXTURE)
-
-    // TB sender PDA — no mainnet capture (seed depends on our program ID).
-    // TB checks the address but doesn't read data; empty system account suffices.
-    const [senderPda] = findTokenBridgeSenderPda(client.program.programId)
-    svm.setAccount(senderPda, {
-      executable: false,
-      owner: SystemProgram.programId,
-      lamports: 1_000_000,
-      data: new Uint8Array(0),
-      rentEpoch: 0,
-    })
-
-    // Synthesize Flow at status=Swapped — `send_usdc_to_user` reads only
-    // these four fields.
+    // Synthesize an outflight Flow at status=Swapped — `send_usdc_to_user`
+    // reads only `status`, `amount`, `fogo_sender`, `payer`.
     nttInboxItem = Keypair.generate().publicKey
-    let outflightFlowBump: number
-    ;[outflightFlow, outflightFlowBump] = findOutflightFlowPda(nttInboxItem, client.program.programId)
+    let bump: number
+    ;[outflightFlow, bump] = findOutflightFlowPda(nttInboxItem, client.program.programId)
     setFlowAccount(
       svm,
       outflightFlow,
@@ -148,15 +152,25 @@ describe('send_usdc_to_user e2e (outbound TB TransferWrappedWithPayload CPI)', (
         status: FlowStatus.Swapped,
         amount: sendAmount,
         payer: authority.publicKey,
-        bump: outflightFlowBump,
+        bump,
       },
       client.program.programId,
     )
   })
 
-  it('cPIs into TB TransferWrappedWithPayload, posts CB message, closes flow', async () => {
-    const messageKp = Keypair.generate()
-    const usdcAta = getAssociatedTokenAddressSync(usdcMint.publicKey, relayerAuthorityPda, true)
+  it('cPIs into NTT transfer_lock, moves USDC into custody, closes flow', async () => {
+    // The on-chain handler binds `session_authority` to a hash of the NTT
+    // TransferArgs; LiteSVM needs that PDA to exist before the CPI runs.
+    const argsHash = nttTransferArgsHash({
+      amount: sendAmount,
+      recipientChain: FOGO_WORMHOLE_CHAIN_ID,
+      recipientAddress: fogoSender,
+      shouldQueue: false,
+    })
+    const [sessionAuthorityPda] = findSessionAuthorityPda(relayerAuthorityPda, argsHash)
+    svm.airdrop(sessionAuthorityPda, BigInt(1e9))
+
+    const outboxItem = Keypair.generate()
 
     try {
       await client
@@ -165,15 +179,15 @@ describe('send_usdc_to_user e2e (outbound TB TransferWrappedWithPayload CPI)', (
           usdcMint: usdcMint.publicKey,
           nttInboxItem,
           rentDestination: authority.publicKey,
-          tokenBridge: {
-            wrappedMint: usdcMint.publicKey,
-            recipientChain: FOGO_WORMHOLE_CHAIN_ID,
-          },
-          message: messageKp.publicKey,
+          flowAmount: sendAmount,
+          flowFogoSender: fogoSender,
+          outboxItem: outboxItem.publicKey,
+          ntt: { custody: custodyAta },
         })
-        .signers([messageKp])
+        .signers([outboxItem])
         .rpc()
-    } catch (e: any) {
+    }
+    catch (e: any) {
       console.log('SEND ERROR:', e.message)
       if (e.logs) {
         console.log('SEND LOGS:', e.logs)
@@ -184,25 +198,18 @@ describe('send_usdc_to_user e2e (outbound TB TransferWrappedWithPayload CPI)', (
     // Flow PDA closed → rent refunded.
     expect(svm.getAccount(outflightFlow)).toBeNull()
 
-    // Wrapped-USDC ATA drained by the burn.
-    const finalAta = svm.getAccount(usdcAta)!
-    const finalBal = new DataView(
-      finalAta.data.buffer,
-      finalAta.data.byteOffset,
-    ).getBigUint64(64, true)
-    expect(finalBal).toEqual(0n)
+    // Relayer USDC ATA drained.
+    {
+      const acct = svm.getAccount(usdcAta)!
+      const bal = new DataView(acct.data.buffer, acct.data.byteOffset).getBigUint64(64, true)
+      expect(bal).toEqual(0n)
+    }
 
-    // CB-created message account.
-    const messageAcct = svm.getAccount(messageKp.publicKey)
-    expect(messageAcct).not.toBeNull()
-    expect(messageAcct!.owner.toBase58()).toEqual(WORMHOLE_CORE_BRIDGE_ID.toBase58())
-
-    // Sequence PDA initialized off the TB emitter — proves
-    // findCoreBridgeSequencePda + findTokenBridgeEmitterPda agree with TB.
-    const [emitterPda] = findTokenBridgeEmitterPda()
-    const [sequencePda] = findCoreBridgeSequencePda(emitterPda)
-    const seqAcct = svm.getAccount(sequencePda)
-    expect(seqAcct).not.toBeNull()
-    expect(seqAcct!.owner.toBase58()).toEqual(WORMHOLE_CORE_BRIDGE_ID.toBase58())
+    // Custody ATA received the locked USDC.
+    {
+      const acct = svm.getAccount(custodyAta)!
+      const bal = new DataView(acct.data.buffer, acct.data.byteOffset).getBigUint64(64, true)
+      expect(bal).toEqual(sendAmount)
+    }
   })
 })

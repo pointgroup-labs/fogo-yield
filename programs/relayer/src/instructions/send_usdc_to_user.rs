@@ -3,33 +3,18 @@ use anchor_lang::solana_program::program::invoke_signed;
 use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
 
 use crate::constants::{
-    CONFIG_SEED, FLOW_OUTBOUND_SEED, FOGO_WORMHOLE_CHAIN_ID, GATEWAY_PROGRAM_ID,
-    GATEWAY_TRANSFER_OUT_IX, REDEMPTION_TRACKER_SEED, RELAYER_SEED, SENDER_SEED,
+    CONFIG_SEED, FLOW_OUTBOUND_SEED, FOGO_WORMHOLE_CHAIN_ID, NTT_PROGRAM_ID, NTT_TRANSFER_LOCK_IX,
+    REDEMPTION_TRACKER_SEED, RELAYER_SEED, SPL_TOKEN_APPROVE_IX_TAG,
 };
-use crate::cpi::{invoke_relayer_signed_with_extra, ExtraSigner};
+use crate::cpi::invoke_relayer_signed;
 use crate::error::RelayerError;
 use crate::events::UsdcSentToUser;
+use crate::ntt::{derive_session_authority, NttTransferArgs};
 use crate::state::{Flow, FlowStatus, RelayerConfig};
 
-const TB_AUTHORITY_SIGNER_SEED: &[u8] = b"authority_signer";
-
-/// Layout MUST match upstream
-/// `solana/modules/token_bridge/program/src/api/transfer.rs::TransferWrappedWithPayloadData`.
-/// `cpi_program_id = Some(crate::ID)` binds TB's expected `sender` PDA to
-/// `["sender"]` under crate::ID, which the relayer can sign for.
-#[derive(AnchorSerialize, AnchorDeserialize)]
-struct GatewayTransferArgs {
-    nonce: u32,
-    amount: u64,
-    target_address: [u8; 32],
-    target_chain: u16,
-    payload: Vec<u8>,
-    cpi_program_id: Option<Pubkey>,
-}
-
-/// Send the flow's USDC to the FOGO user recorded in the `Flow` PDA.
-/// Permissionless — recipient bound to `flow.fogo_sender`; replay blocked
-/// by closing the PDA.
+/// Lock the flow's USDC via Wormhole NTT, sending USDC.s back to
+/// `flow.fogo_sender`. Permissionless; closing the PDA returns rent and
+/// blocks replay.
 pub fn handler<'info>(ctx: Context<'info, SendUsdcToUser<'info>>) -> Result<()> {
     let flow = &mut ctx.accounts.outflight_flow;
     require!(
@@ -42,60 +27,59 @@ pub fn handler<'info>(ctx: Context<'info, SendUsdcToUser<'info>>) -> Result<()> 
 
     let recipient = flow.fogo_sender;
 
-    // ["sender"] under crate::ID, NOT under Gateway. Binding to our program
-    // ID is asserted via `cpi_program_id` in the instruction data.
-    let (sender_pda, sender_bump) = Pubkey::find_program_address(&[SENDER_SEED], &crate::ID);
+    let transfer_args = NttTransferArgs {
+        amount,
+        recipient_chain: FOGO_WORMHOLE_CHAIN_ID,
+        recipient_address: recipient,
+        should_queue: false,
+    };
 
-    // TB's burn step calls `spl_token::burn(authority = authority_signer)`,
-    // so `onyc_ata` must first delegate `amount` of burn rights.
-    let (auth_signer_pda, _) =
-        Pubkey::find_program_address(&[TB_AUTHORITY_SIGNER_SEED], &GATEWAY_PROGRAM_ID);
-    let auth_signer_info = ctx
+    // NTT binds session-authority to a hash of the transfer args.
+    let (session_authority, _) =
+        derive_session_authority(&ctx.accounts.relayer_authority.key(), &transfer_args);
+
+    let bump = [ctx.accounts.relayer_config.relayer_authority_bump];
+    let signer_seeds: &[&[u8]] = &[RELAYER_SEED, &bump];
+
+    let approve_ix = instruction::Instruction {
+        program_id: ctx.accounts.token_program.key(),
+        accounts: vec![
+            AccountMeta::new(ctx.accounts.usdc_ata.key(), false),
+            AccountMeta::new_readonly(session_authority, false),
+            AccountMeta::new_readonly(ctx.accounts.relayer_authority.key(), true),
+        ],
+        data: {
+            let mut d = Vec::with_capacity(9);
+            d.push(SPL_TOKEN_APPROVE_IX_TAG);
+            d.extend_from_slice(&amount.to_le_bytes());
+            d
+        },
+    };
+
+    let session_auth_info = ctx
         .remaining_accounts
         .iter()
-        .find(|a| a.key == &auth_signer_pda)
-        .ok_or(RelayerError::AuthorityNotInAccounts)?;
+        .find(|a| a.key() == session_authority)
+        .ok_or(RelayerError::MissingSessionAuthority)?;
 
-    let approve_ix = anchor_spl::token::spl_token::instruction::approve(
-        &anchor_spl::token::spl_token::ID,
-        &ctx.accounts.usdc_ata.key(),
-        &auth_signer_pda,
-        &ctx.accounts.relayer_authority.key(),
-        &[],
-        amount,
-    )?;
-    let auth_bump_arr = [ctx.accounts.relayer_config.relayer_authority_bump];
-    let auth_seeds: &[&[u8]] = &[RELAYER_SEED, &auth_bump_arr];
     invoke_signed(
         &approve_ix,
         &[
             ctx.accounts.usdc_ata.to_account_info(),
-            auth_signer_info.clone(),
+            session_auth_info.to_account_info(),
             ctx.accounts.relayer_authority.to_account_info(),
             ctx.accounts.token_program.to_account_info(),
         ],
-        &[auth_seeds],
+        &[signer_seeds],
     )?;
 
-    invoke_relayer_signed_with_extra(
-        GATEWAY_PROGRAM_ID,
-        &GATEWAY_TRANSFER_OUT_IX,
-        &GatewayTransferArgs {
-            nonce: 0,
-            amount,
-            target_address: recipient,
-            target_chain: FOGO_WORMHOLE_CHAIN_ID,
-            payload: Vec::new(),
-            cpi_program_id: Some(crate::ID),
-        },
+    invoke_relayer_signed(
+        NTT_PROGRAM_ID,
+        &NTT_TRANSFER_LOCK_IX,
+        &transfer_args,
         ctx.remaining_accounts,
         &ctx.accounts.relayer_authority.to_account_info(),
         ctx.accounts.relayer_config.relayer_authority_bump,
-        Some(ExtraSigner {
-            key: sender_pda,
-            seed: SENDER_SEED,
-            bump: sender_bump,
-        }),
     )?;
 
     emit!(UsdcSentToUser {
@@ -145,7 +129,7 @@ pub struct SendUsdcToUser<'info> {
     )]
     pub outflight_flow: Account<'info, Flow>,
 
-    /// CHECK: validated against `outflight_flow.payer`.
+    /// CHECK: pinned to the flow PDA's stored `payer`; receives rent refund.
     #[account(mut, address = outflight_flow.payer)]
     pub rent_destination: UncheckedAccount<'info>,
 

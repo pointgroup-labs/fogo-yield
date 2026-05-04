@@ -4,13 +4,14 @@
   "packageManager": "pnpm@10.33.0",
   "scripts": {
     "sdk": "pnpm --filter @fogo-onre/sdk",
+    "webapp": "pnpm --filter @fogo-onre/webapp",
     "lint": "eslint --cache .",
     "lint:fix": "pnpm lint --fix",
-    "pretest": "pnpm sdk build",
+    "pretest": "pnpm sdk build && anchor build",
     "test": "vitest"
   },
   "dependencies": {
-    "@anchor-lang/core": "^1.0.1",
+    "@anchor-lang/core": "^1.0.2",
     "@fogo-onre/sdk": "workspace:*",
     "@solana/web3.js": "^1.98.4"
   },

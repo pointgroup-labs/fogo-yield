@@ -2,6 +2,18 @@ allowBuilds:
   bigint-buffer: true
 shellEmulator: true
 
-trustPolicy: no-downgrade
+# `no-downgrade` blocks install whenever any transitive was republished
+# without provenance. The Wormhole / WalletConnect / React-Native graph
+# trips this on ~half a dozen unrelated packages (undici-types,
+# @noble/curves, @noble/hashes, semver, ...). `signatures` still
+# requires valid registry signatures, just drops the downgrade heuristic.
+trustPolicy: signatures
+
+overrides:
+  # @types/node@22.7.5 (transitive via ethers) drags in undici-types@6.19.8
+  # which lost its provenance attestation. The 25.x line uses
+  # undici-types@~7.19 which has provenance.
+  '@types/node': ^25.6.0
+
 packages:
   - packages/*

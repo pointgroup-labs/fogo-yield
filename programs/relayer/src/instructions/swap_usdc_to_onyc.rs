@@ -131,11 +131,11 @@ pub struct SwapUsdcToOnyc<'info> {
     pub redemption_tracker: SystemAccount<'info>,
 
     /// CHECK: validated transitively via the flow PDA seeds.
-    pub gateway_claim: UncheckedAccount<'info>,
+    pub ntt_inbox_item: UncheckedAccount<'info>,
 
     #[account(
         mut,
-        seeds = [FLOW_INBOUND_SEED, gateway_claim.key().as_ref()],
+        seeds = [FLOW_INBOUND_SEED, ntt_inbox_item.key().as_ref()],
         bump = inflight_flow.bump,
     )]
     pub inflight_flow: Account<'info, Flow>,

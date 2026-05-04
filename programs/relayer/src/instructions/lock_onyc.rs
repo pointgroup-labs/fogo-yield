@@ -84,7 +84,7 @@ pub fn handler<'info>(ctx: Context<'info, LockOnyc<'info>>) -> Result<()> {
 
     emit!(OnycLocked {
         flow: ctx.accounts.inflight_flow.key(),
-        gateway_claim: ctx.accounts.gateway_claim.key(),
+        ntt_inbox_item: ctx.accounts.ntt_inbox_item.key(),
         fogo_sender: recipient,
         amount,
     });
@@ -119,12 +119,12 @@ pub struct LockOnyc<'info> {
     pub onyc_ata: InterfaceAccount<'info, TokenAccount>,
 
     /// CHECK: seed material only; validated transitively via the flow PDA.
-    pub gateway_claim: UncheckedAccount<'info>,
+    pub ntt_inbox_item: UncheckedAccount<'info>,
 
     #[account(
         mut,
         close = rent_destination,
-        seeds = [FLOW_INBOUND_SEED, gateway_claim.key().as_ref()],
+        seeds = [FLOW_INBOUND_SEED, ntt_inbox_item.key().as_ref()],
         bump = inflight_flow.bump,
     )]
     pub inflight_flow: Account<'info, Flow>,

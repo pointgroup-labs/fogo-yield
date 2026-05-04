@@ -4,7 +4,7 @@ use anchor_spl::{
     token_interface::{Mint, TokenAccount, TokenInterface},
 };
 
-use crate::constants::{CONFIG_SEED, REDEEMER_SEED, RELAYER_SEED};
+use crate::constants::{CONFIG_SEED, RELAYER_SEED};
 use crate::error::RelayerError;
 use crate::state::RelayerConfig;
 
@@ -29,10 +29,9 @@ pub fn handler(
     config.validate()?;
 
     msg!(
-        "Relayer initialized. USDC ATA: {}. ONyc ATA: {}. Redeemer USDC intake ATA: {}. Fee vault: {}.",
+        "Relayer initialized. USDC ATA: {}. ONyc ATA: {}. Fee vault: {}.",
         ctx.accounts.usdc_ata.key(),
         ctx.accounts.onyc_ata.key(),
-        ctx.accounts.redeemer_usdc_ata.key(),
         ctx.accounts.fee_vault.key(),
     );
 
@@ -60,16 +59,6 @@ pub struct Initialize<'info> {
     )]
     pub relayer_authority: UncheckedAccount<'info>,
 
-    /// Serves as TB's payload-delivery signer in `CompleteWrappedWithPayload`
-    /// AND owns the short-lived USDC intake ATA (TB requires
-    /// `redeemer.key == to.owner`).
-    /// CHECK: PDA derived from REDEEMER_SEED.
-    #[account(
-        seeds = [REDEEMER_SEED],
-        bump,
-    )]
-    pub redeemer_authority: UncheckedAccount<'info>,
-
     pub usdc_mint: InterfaceAccount<'info, Mint>,
 
     pub onyc_mint: InterfaceAccount<'info, Mint>,
@@ -91,15 +80,6 @@ pub struct Initialize<'info> {
         associated_token::token_program = token_program,
     )]
     pub onyc_ata: Box<InterfaceAccount<'info, TokenAccount>>,
-
-    #[account(
-        init,
-        payer = authority,
-        associated_token::mint = usdc_mint,
-        associated_token::authority = redeemer_authority,
-        associated_token::token_program = token_program,
-    )]
-    pub redeemer_usdc_ata: Box<InterfaceAccount<'info, TokenAccount>>,
 
     /// Anti-aliasing constraint: forbidding `fee_vault == onyc_ata`
     /// prevents silent self-transfer no-ops that would commingle user

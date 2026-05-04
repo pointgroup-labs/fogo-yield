@@ -27,6 +27,16 @@ dist/
 
 test-ledger/
 
+# logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+tsconfig.tsbuildinfo
+
+
 # Mac OSX temporary files
 .DS_Store
 **/.DS_Store
@@ -42,3 +52,9 @@ CLAUDE.md
 /tmp
 
 /keypair.json
+
+# Next.js build output
+**/.next/
+
+# Local scratch files
+/test.ts

@@ -1,42 +1,38 @@
 /**
- * Full withdraw-chain e2e:
- *   unlock_onyc → request_redemption_onyc → claim_redemption_usdc → send_usdc_to_user
+ * Withdraw-chain e2e covering legs 1-3:
+ *   unlock_onyc → request_redemption_onyc → claim_redemption_usdc
  *
- * **Real CPI coverage** (4 of 4 legs):
+ * **Real CPI coverage** (3 of 3 legs):
  *   - leg 1  unlock_onyc           — NTT redeem + release_inbound_unlock against the NTT `.so` (Locking mode)
  *   - leg 2  request_redemption_onyc — full relayer handler + real OnRe `create_redemption_request` CPI
  *                                    against the OnRe `.so`. Withdraw-side OnRe state (RedemptionOffer
  *                                    + vault ATA) is synthesized from the upstream struct definitions
- *                                    in `tests/utils/onre-fixtures.ts::synthesizeOnreRedemptionOffer`,
- *                                    not captured from mainnet — the layout is fully known and `state`
- *                                    is the only mainnet-cloned account this leg needs.
+ *                                    in `tests/utils/onre-fixtures.ts::synthesizeOnreRedemptionOffer`.
  *   - leg 3  claim_redemption_usdc — full relayer handler (issues no CPI of its own; just verifies the
  *                                    closed `RedemptionRequest` PDA, computes USDC delta, advances
  *                                    Flow, closes singleton tracker)
- *   - leg 4  send_usdc_to_user     — TB `TransferWrappedWithPayload` against the Token Bridge `.so`
+ *
+ * Leg 4 (`send_usdc_to_user`) lives in `send-usdc-to-user-e2e.test.ts`. It cannot
+ * be exercised here because NTT's Config PDA is a per-program singleton, and this
+ * rig binds it to the ONyc mint for leg 1 — leg 4 needs USDC.s as the NTT-managed
+ * mint instead.
  *
  * **Synthesized** (off-chain admin step):
  *   OnRe `redemption_admin` fulfillment — close the `RedemptionRequest` PDA (zero lamports,
  *   system-owned, empty data) and credit USDC to the relayer ATA. This mirrors what
- *   `fulfill_redemption_request` does on chain. There is no instruction the relayer issues
- *   for this; the relayer only *observes* it via the closed-PDA signal that
- *   `claim_redemption_usdc` checks. The `redemption_admin` keypair is OnRe-private, so this
- *   step cannot be invoked from a test environment — synthesizing the post-state is the
- *   only viable approach.
+ *   `fulfill_redemption_request` does on chain. The `redemption_admin` keypair is
+ *   OnRe-private, so this step cannot be invoked from a test environment — synthesizing
+ *   the post-state is the only viable approach.
  */
 
 import type { WithdrawRig } from './utils'
 import {
-  findCoreBridgeSequencePda,
   findOnreRedemptionRequestPda,
   findOnreRedemptionVaultAuthorityPda,
   findRedemptionTrackerPda,
-  findTokenBridgeEmitterPda,
-  FOGO_WORMHOLE_CHAIN_ID,
-  WORMHOLE_CORE_BRIDGE_ID,
 } from '@fogo-onre/sdk'
 import { getAssociatedTokenAddressSync } from '@solana/spl-token'
-import { Keypair, PublicKey, SystemProgram } from '@solana/web3.js'
+import { PublicKey, SystemProgram } from '@solana/web3.js'
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
   FlowStatus,
@@ -45,10 +41,9 @@ import {
   setupWithdrawRig,
   synthesizeOnreRedemptionOffer,
   WITHDRAW_TEST_CONSTANTS,
-
 } from './utils'
 
-describe('withdraw flow e2e (unlock_onyc → [request_redemption_onyc synth] → claim_redemption_usdc → send_usdc_to_user)', () => {
+describe('withdraw flow e2e (unlock_onyc → request_redemption_onyc → claim_redemption_usdc)', () => {
   let rig: WithdrawRig
 
   const {
@@ -77,7 +72,7 @@ describe('withdraw flow e2e (unlock_onyc → [request_redemption_onyc synth] →
     rig = await setupWithdrawRig()
   })
 
-  it('chains real NTT inbound + real claim_redemption_usdc + real TB outbound', async () => {
+  it('chains real NTT inbound + real request_redemption_onyc + real claim_redemption_usdc', async () => {
     const {
       svm,
       authority,
@@ -106,10 +101,6 @@ describe('withdraw flow e2e (unlock_onyc → [request_redemption_onyc synth] →
     }
 
     // Leg 2 — REAL request_redemption_onyc (CPIs OnRe).
-    // Synthesize OnRe withdraw-side state from scratch (RedemptionOffer
-    // + vault ATA), derive the RedemptionRequest PDA from
-    // request_counter=0 (fresh offer), pre-fund USDC ATA so leg 3's
-    // delta math has a non-zero baseline, then call the relayer.
     const { redemptionOffer } = synthesizeOnreRedemptionOffer(
       svm,
       onycMint.publicKey,
@@ -129,7 +120,7 @@ describe('withdraw flow e2e (unlock_onyc → [request_redemption_onyc synth] →
         .setBigUint64(64, USDC_PRE_BALANCE, true)
       svm.setAccount(usdcAta, { ...ataAcct, data: ataData })
 
-      // Bump wrapped-USDC mint supply (covers pre + post for leg 4's burn).
+      // Bump USDC mint supply to cover pre + post-redemption credit.
       const mintAcct = svm.getAccount(usdcMint.publicKey)!
       const mintData = new Uint8Array(mintAcct.data)
       new DataView(mintData.buffer, mintData.byteOffset)
@@ -147,7 +138,8 @@ describe('withdraw flow e2e (unlock_onyc → [request_redemption_onyc synth] →
           onre: { redemptionRequest: redemptionRequestPda },
         })
         .rpc()
-    } catch (e: any) {
+    }
+    catch (e: any) {
       console.log('REQUEST_REDEMPTION ERROR:', e.message)
       if (e.logs) {
         console.log('REQUEST_REDEMPTION LOGS:', e.logs)
@@ -156,20 +148,6 @@ describe('withdraw flow e2e (unlock_onyc → [request_redemption_onyc synth] →
     }
 
     // Leg 2 post-conditions: prove the real OnRe binary executed.
-    //
-    // Each assertion below checks a state mutation that ONLY the real
-    // binary's `create_redemption_request` handler performs — none of the
-    // relayer-side bookkeeping or Anchor's stub success-paths would
-    // produce these:
-    //
-    //   1. Flow advances Claimed → RedemptionPending with `amount = net`.
-    //   2. RedemptionTracker initialized with `tracker.redemption_request`
-    //      bound to the PDA OnRe just created (relayer-side binding from
-    //      `ctx.remaining_accounts[INDEX=2]` after the CPI returns Ok).
-    //   3. RedemptionOffer.request_counter incremented 0 → 1.
-    //   4. RedemptionOffer.requested_redemptions credited NET_ONYC_TO_ONRE.
-    //   5. Vault ONyc ATA holds NET_ONYC_TO_ONRE.
-    //   6. RedemptionRequest PDA written with the canonical layout.
     {
       const flow = svm.getAccount(outflightPda)!
       expect(flow.data[40]).toBe(FlowStatus.RedemptionPending)
@@ -178,7 +156,6 @@ describe('withdraw flow e2e (unlock_onyc → [request_redemption_onyc synth] →
       expect(recordedAmount).toBe(NET_ONYC_TO_ONRE)
 
       const tracker = svm.getAccount(redemptionTrackerPda)!
-      // Tracker layout: disc(8) + flow(32) + redemption_request(32) + ...
       const trackerRequest = new PublicKey(tracker.data.slice(40, 72))
       expect(trackerRequest.toBase58()).toBe(redemptionRequestPda.toBase58())
 
@@ -187,10 +164,8 @@ describe('withdraw flow e2e (unlock_onyc → [request_redemption_onyc synth] →
         new PublicKey('onreuGhHHgVzMWSkj2oQDLDtvvGvoepBPkqyaubFcwe').toBase58(),
       )
       const offerView = new DataView(offerAcct.data.buffer, offerAcct.data.byteOffset)
-      // requested_redemptions u128 LE at offset 120
       expect(offerView.getBigUint64(120, true)).toBe(NET_ONYC_TO_ONRE)
-      expect(offerView.getBigUint64(128, true)).toBe(0n) // u128 high half
-      // request_counter u64 LE at offset 138
+      expect(offerView.getBigUint64(128, true)).toBe(0n)
       expect(offerView.getBigUint64(138, true)).toBe(1n)
 
       const [vaultAuthority] = findOnreRedemptionVaultAuthorityPda()
@@ -207,28 +182,19 @@ describe('withdraw flow e2e (unlock_onyc → [request_redemption_onyc synth] →
       expect(reqAcct.owner.toBase58()).toBe(
         new PublicKey('onreuGhHHgVzMWSkj2oQDLDtvvGvoepBPkqyaubFcwe').toBase58(),
       )
-      // RedemptionRequest layout: disc(8) + offer(32) + request_id(8) +
-      // redeemer(32) + amount(8) + bump(1) + reserved[127]
-      // Anchor account discriminator = sha256("account:RedemptionRequest")[..8]
       const reqDisc = Array.from(reqAcct.data.slice(0, 8))
       expect(reqDisc).toEqual([117, 157, 214, 214, 64, 160, 31, 58])
       const reqOffer = new PublicKey(reqAcct.data.slice(8, 40))
       expect(reqOffer.toBase58()).toBe(redemptionOffer.toBase58())
       const reqView = new DataView(reqAcct.data.buffer, reqAcct.data.byteOffset)
-      expect(reqView.getBigUint64(40, true)).toBe(0n) // request_id
+      expect(reqView.getBigUint64(40, true)).toBe(0n)
       const reqRedeemer = new PublicKey(reqAcct.data.slice(48, 80))
       expect(reqRedeemer.toBase58()).toBe(relayerAuthorityPda.toBase58())
       expect(reqView.getBigUint64(80, true)).toBe(NET_ONYC_TO_ONRE)
     }
 
-    // OnRe `redemption_admin` fulfillment (synthesized). Two effects on chain:
-    //   (a) `RedemptionRequest` PDA closed (zero lamports, system-owned,
-    //       empty data) — the signal `claim_redemption_usdc` checks.
-    //   (b) USDC delta credited to the relayer USDC ATA.
+    // OnRe `redemption_admin` fulfillment (synthesized).
     {
-      // LiteSVM treats a "closed" account as owner == system_program::ID
-      // and zero-length data. `claim_redemption_usdc`'s
-      // RedemptionNotFulfilled check requires `lamports() == 0`.
       svm.setAccount(redemptionRequestPda, {
         executable: false,
         owner: SystemProgram.programId,
@@ -254,7 +220,8 @@ describe('withdraw flow e2e (unlock_onyc → [request_redemption_onyc synth] →
           payerForClose: authority.publicKey,
         })
         .rpc()
-    } catch (e: any) {
+    }
+    catch (e: any) {
       console.log('CLAIM_REDEMPTION ERROR:', e.message)
       if (e.logs) {
         console.log('CLAIM_REDEMPTION LOGS:', e.logs)
@@ -272,58 +239,11 @@ describe('withdraw flow e2e (unlock_onyc → [request_redemption_onyc synth] →
         .getBigUint64(41, true)
       expect(recordedAmount).toBe(USDC_FROM_REDEMPTION)
 
-      // Anchor's `close` constraint reverts ownership to the system program
-      // and zeroes data — but the account may also be fully absent.
       const tracker = svm.getAccount(redemptionTrackerPda)
       if (tracker !== null) {
         expect(tracker.owner.toBase58()).toEqual(SystemProgram.programId.toBase58())
         expect(tracker.data.length).toBe(0)
       }
     }
-
-    const messageKp = Keypair.generate()
-    try {
-      await client
-        .sendUsdcToUser({
-          payer: authority.publicKey,
-          usdcMint: usdcMint.publicKey,
-          nttInboxItem: inboxItemPda,
-          rentDestination: authority.publicKey,
-          tokenBridge: {
-            wrappedMint: usdcMint.publicKey,
-            recipientChain: FOGO_WORMHOLE_CHAIN_ID,
-          },
-          message: messageKp.publicKey,
-        })
-        .signers([messageKp])
-        .rpc()
-    } catch (e: any) {
-      console.log('SEND ERROR:', e.message)
-      if (e.logs) {
-        console.log('SEND LOGS:', e.logs)
-      }
-      throw e
-    }
-
-    // Leg 4 post-conditions: Flow PDA closed (rent refunded), USDC ATA
-    // burns the post-redemption delta back down to the pre-balance the
-    // ATA started with (only `flow.amount = USDC_FROM_REDEMPTION` is
-    // burned; pre-existing USDC stays).
-    expect(svm.getAccount(outflightPda)).toBeNull()
-
-    const finalAta = svm.getAccount(usdcAta)!
-    const finalBal = new DataView(finalAta.data.buffer, finalAta.data.byteOffset)
-      .getBigUint64(64, true)
-    expect(finalBal).toEqual(USDC_PRE_BALANCE)
-
-    const messageAcct = svm.getAccount(messageKp.publicKey)
-    expect(messageAcct).not.toBeNull()
-    expect(messageAcct!.owner.toBase58()).toEqual(WORMHOLE_CORE_BRIDGE_ID.toBase58())
-
-    const [emitterPda] = findTokenBridgeEmitterPda()
-    const [sequencePda] = findCoreBridgeSequencePda(emitterPda)
-    const seqAcct = svm.getAccount(sequencePda)
-    expect(seqAcct).not.toBeNull()
-    expect(seqAcct!.owner.toBase58()).toEqual(WORMHOLE_CORE_BRIDGE_ID.toBase58())
   })
 })
