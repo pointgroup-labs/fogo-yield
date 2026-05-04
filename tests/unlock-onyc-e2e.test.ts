@@ -196,7 +196,6 @@ describe('unlock_onyc e2e (NTT redeem + release_inbound_unlock, Locking mode)', 
           nttTransceiverMessage: validatedMsgPda,
           ntt: {
             transceiverAddress: NTT_PROGRAM_ID,
-            custody: custodyAta,
           },
         })
         .rpc()

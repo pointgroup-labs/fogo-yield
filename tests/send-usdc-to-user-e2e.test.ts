@@ -184,7 +184,6 @@ describe('send_usdc_to_user e2e (NTT transfer_lock outbound on USDC.s, Locking m
           flowAmount: sendAmount,
           flowFogoSender: fogoSender,
           outboxItem: outboxItem.publicKey,
-          ntt: { custody: custodyAta },
         })
         .signers([outboxItem])
         .rpc()

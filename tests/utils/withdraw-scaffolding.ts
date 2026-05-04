@@ -281,7 +281,7 @@ export async function runUnlockOnycLeg1(rig: WithdrawRig): Promise<{
       onycMint: onycMint.publicKey,
       nttInboxItem: inboxItemPda,
       nttTransceiverMessage: validatedMsgPda,
-      ntt: { transceiverAddress: NTT_PROGRAM_ID, custody: custodyAta },
+      ntt: { transceiverAddress: NTT_PROGRAM_ID },
     })
     .rpc()
 

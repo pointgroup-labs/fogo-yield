@@ -186,7 +186,6 @@ describe('lock_onyc e2e (NTT transfer_lock)', () => {
           flowAmount: amount,
           flowFogoSender: fogoSender,
           outboxItem: outboxItem.publicKey,
-          ntt: { custody: custodyAta },
         })
         .signers([outboxItem])
         .rpc()

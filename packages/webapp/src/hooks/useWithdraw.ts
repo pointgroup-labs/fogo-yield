@@ -7,13 +7,17 @@ import {
   RELAYER_PROGRAM_ID,
 } from '@fogo-onre/sdk'
 import { isEstablished, TransactionResultType } from '@fogo/sessions-sdk-react'
+import { Keypair } from '@solana/web3.js'
 import { useState } from 'react'
-import { BONYC_MINT } from '@/lib/config'
+import {
+  BONYC_MINT,
+  FOGO_BONYC_NTT_MANAGER_ID,
+} from '@/lib/config'
 import { error, idle, pending, success, type TxStatus } from '@/lib/tx'
 
 /**
  * Builds and sends the FOGO-side withdraw transaction: a Wormhole NTT
- * `transfer_lock` of bONyc back to Solana, addressed to the relayer
+ * `transfer_burn` of bONyc back to Solana, addressed to the relayer
  * authority PDA. The originator's FOGO wallet is carried as
  * `NttManagerMessage.sender` automatically.
  *
@@ -32,13 +36,18 @@ export function useWithdraw(sessionState: SessionState) {
     setStatus(pending)
     try {
       const [recipientOnSolana] = findAuthorityPda(RELAYER_PROGRAM_ID)
+      const outboxItemKp = Keypair.generate()
       const ix = buildFogoNttWithdrawIx({
         payer: sessionState.walletPublicKey,
-        bonycMint: BONYC_MINT,
+        nttManagerProgramId: FOGO_BONYC_NTT_MANAGER_ID,
+        mint: BONYC_MINT,
+        outboxItem: outboxItemKp.publicKey,
         amount,
         recipientOnSolana,
       })
-      const result = await sessionState.sendTransaction([ix])
+      const result = await sessionState.sendTransaction([ix], {
+        extraSigners: [outboxItemKp],
+      })
       if (result.type === TransactionResultType.Failed) {
         const message = result.error instanceof Error
           ? result.error.message

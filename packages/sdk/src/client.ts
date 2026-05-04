@@ -1,6 +1,6 @@
 import type { Provider } from '@anchor-lang/core'
 import type { PublicKey } from '@solana/web3.js'
-import type { NttRedeemContext, NttTransferLockContext } from './ntt'
+import type { NttRedeemContext } from './ntt'
 import type { OnreSwapContext } from './onre'
 import type { Relayer } from './types/fogo_onre_relayer'
 import { BN, Program } from '@anchor-lang/core'
@@ -16,14 +16,14 @@ import {
 import { FOGO_WORMHOLE_CHAIN_ID, NTT_PROGRAM_ID } from './constants'
 import IDL from './idl/fogo_onre_relayer.json' with { type: 'json' }
 import {
+  buildNttTransferLockAccountList,
   findInboxRateLimitPda,
   findNttConfigPda,
+  findNttCustodyAta,
   findNttPeerPda,
   findOutboxRateLimitPda,
   findRegisteredTransceiverPda,
-  findSessionAuthorityPda,
   findTokenAuthorityPda,
-  nttTransferArgsHash,
 } from './ntt'
 import {
   buildOnreCancelRedemptionRequestRemainingAccounts,
@@ -37,6 +37,11 @@ import {
   findOutflightFlowPda,
   findRedemptionTrackerPda,
 } from './pda'
+
+/** Coerce a BN | bigint amount into a bigint without losing precision. */
+function toBigInt(value: BN | bigint): bigint {
+  return typeof value === 'bigint' ? value : BigInt(value.toString())
+}
 
 export class RelayerClient {
   readonly program: Program<Relayer>
@@ -94,9 +99,7 @@ export class RelayerClient {
     withdrawFeeBps?: number | null
     newAuthority?: PublicKey | null
   } = {}) {
-    const authority = params.authority
-      ?? (this.program.provider as any).wallet?.publicKey
-      ?? (this.program.provider as any).publicKey
+    const authority = params.authority ?? this.providerPublicKey()
     if (!authority) {
       throw new Error('configure: no authority provided and provider has no wallet')
     }
@@ -123,9 +126,7 @@ export class RelayerClient {
   async acceptAuthority(params: {
     pendingAuthority?: PublicKey
   } = {}) {
-    const pending = params.pendingAuthority
-      ?? (this.program.provider as any).wallet?.publicKey
-      ?? (this.program.provider as any).publicKey
+    const pending = params.pendingAuthority ?? this.providerPublicKey()
     if (!pending) {
       throw new Error('acceptAuthority: no pendingAuthority provided and provider has no wallet')
     }
@@ -230,6 +231,10 @@ export class RelayerClient {
    * inflight Flow PDA. Caller MUST fetch the flow first to obtain
    * `flowAmount`/`flowFogoSender` (needed for `session_authority` derivation),
    * and supply a fresh `outboxItem` keypair (also via `.signers([])`).
+   *
+   * The NTT `transfer_lock` remaining-accounts list is appended automatically
+   * when all three of `flowAmount`, `flowFogoSender`, and `outboxItem` are
+   * supplied; failure-path tests omit them to assert on the bare instruction.
    */
   lockOnyc(params: {
     payer: PublicKey
@@ -239,7 +244,6 @@ export class RelayerClient {
     flowAmount?: BN | bigint
     flowFogoSender?: Uint8Array
     outboxItem?: PublicKey
-    ntt?: NttTransferLockContext
   }) {
     const builder = this.program.methods
       .lockOnyc()
@@ -255,23 +259,21 @@ export class RelayerClient {
         tokenProgram: TOKEN_PROGRAM_ID,
       } as any)
 
-    if (!params.ntt) {
+    if (!params.flowAmount || !params.flowFogoSender || !params.outboxItem) {
       return builder
     }
 
-    if (!params.flowAmount || !params.flowFogoSender || !params.outboxItem) {
-      throw new Error('lockOnyc: when `ntt` is provided, `flowAmount`, `flowFogoSender`, and `outboxItem` are also required')
-    }
-
     return builder.remainingAccounts(
-      this.buildNttTransferLockAccounts({
+      buildNttTransferLockAccountList({
+        nttProgramId: NTT_PROGRAM_ID,
+        fromOwner: this.authorityPda,
+        fromOwnerIsSigner: false,
+        fromTokenAccount: this.ata(params.onycMint),
         mint: params.onycMint,
-        flowAmount: typeof params.flowAmount === 'bigint'
-          ? params.flowAmount
-          : BigInt(params.flowAmount.toString()),
-        flowFogoSender: params.flowFogoSender,
         outboxItem: params.outboxItem,
-        ntt: params.ntt,
+        recipientChain: FOGO_WORMHOLE_CHAIN_ID,
+        recipientAddress: params.flowFogoSender,
+        amount: toBigInt(params.flowAmount),
       }),
     )
   }
@@ -318,7 +320,9 @@ export class RelayerClient {
 
   /**
    * Send USDC.s back to `flow.fogo_sender` via NTT `transfer_lock`. Closes
-   * the outflight Flow PDA. Mirrors `lockOnyc` on the USDC mint.
+   * the outflight Flow PDA. Mirrors `lockOnyc` on the USDC mint — the NTT
+   * remaining-accounts list is appended automatically when `flowAmount`,
+   * `flowFogoSender`, and `outboxItem` are all supplied.
    */
   sendUsdcToUser(params: {
     payer: PublicKey
@@ -328,7 +332,6 @@ export class RelayerClient {
     flowAmount?: BN | bigint
     flowFogoSender?: Uint8Array
     outboxItem?: PublicKey
-    ntt?: NttTransferLockContext
   }) {
     const [outflightFlow] = findOutflightFlowPda(params.nttInboxItem, this.program.programId)
     const [redemptionTracker] = findRedemptionTrackerPda(this.program.programId)
@@ -347,23 +350,21 @@ export class RelayerClient {
         tokenProgram: TOKEN_PROGRAM_ID,
       } as any)
 
-    if (!params.ntt) {
+    if (!params.flowAmount || !params.flowFogoSender || !params.outboxItem) {
       return builder
     }
 
-    if (!params.flowAmount || !params.flowFogoSender || !params.outboxItem) {
-      throw new Error('sendUsdcToUser: when `ntt` is provided, `flowAmount`, `flowFogoSender`, and `outboxItem` are also required')
-    }
-
     return builder.remainingAccounts(
-      this.buildNttTransferLockAccounts({
+      buildNttTransferLockAccountList({
+        nttProgramId: NTT_PROGRAM_ID,
+        fromOwner: this.authorityPda,
+        fromOwnerIsSigner: false,
+        fromTokenAccount: this.ata(params.usdcMint),
         mint: params.usdcMint,
-        flowAmount: typeof params.flowAmount === 'bigint'
-          ? params.flowAmount
-          : BigInt(params.flowAmount.toString()),
-        flowFogoSender: params.flowFogoSender,
         outboxItem: params.outboxItem,
-        ntt: params.ntt,
+        recipientChain: FOGO_WORMHOLE_CHAIN_ID,
+        recipientAddress: params.flowFogoSender,
+        amount: toBigInt(params.flowAmount),
       }),
     )
   }
@@ -394,6 +395,7 @@ export class RelayerClient {
     const [inboxRateLimitPda] = findInboxRateLimitPda(fromChain)
     const [outboxRateLimitPda] = findOutboxRateLimitPda()
     const [tokenAuthorityPda] = findTokenAuthorityPda()
+    const custody = findNttCustodyAta(params.mint)
 
     const redeem = [
       { pubkey: this.authorityPda, isSigner: false, isWritable: true },
@@ -416,7 +418,7 @@ export class RelayerClient {
       { pubkey: tokenAuthorityPda, isSigner: false, isWritable: false },
       { pubkey: params.mint, isSigner: false, isWritable: true },
       { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
-      { pubkey: params.ntt.custody, isSigner: false, isWritable: true },
+      { pubkey: custody, isSigner: false, isWritable: true },
     ]
 
     const nttProgramMeta = { pubkey: NTT_PROGRAM_ID, isSigner: false, isWritable: false }
@@ -429,51 +431,6 @@ export class RelayerClient {
       ],
       redeemAccountsLen: redeem.length + 1,
     }
-  }
-
-  /**
-   * Build the NTT `transfer_lock` account list for `lock_onyc` /
-   * `send_usdc_to_user`. Mint-agnostic.
-   */
-  private buildNttTransferLockAccounts(params: {
-    mint: PublicKey
-    flowAmount: bigint
-    flowFogoSender: Uint8Array
-    outboxItem: PublicKey
-    ntt: NttTransferLockContext
-  }) {
-    const recipientChain = FOGO_WORMHOLE_CHAIN_ID
-    const mintAta = this.ata(params.mint)
-    const [configPda] = findNttConfigPda()
-    const [peerPda] = findNttPeerPda(recipientChain)
-    const [outboxRateLimitPda] = findOutboxRateLimitPda()
-    const [inboxRateLimitPda] = findInboxRateLimitPda(recipientChain)
-    const [tokenAuthorityPda] = findTokenAuthorityPda()
-
-    const argsHash = nttTransferArgsHash({
-      amount: params.flowAmount,
-      recipientChain,
-      recipientAddress: params.flowFogoSender,
-      shouldQueue: false,
-    })
-    const [sessionAuthorityPda] = findSessionAuthorityPda(this.authorityPda, argsHash)
-
-    return [
-      { pubkey: this.authorityPda, isSigner: false, isWritable: true },
-      { pubkey: configPda, isSigner: false, isWritable: false },
-      { pubkey: params.mint, isSigner: false, isWritable: true },
-      { pubkey: mintAta, isSigner: false, isWritable: true },
-      { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
-      { pubkey: params.outboxItem, isSigner: true, isWritable: true },
-      { pubkey: outboxRateLimitPda, isSigner: false, isWritable: true },
-      { pubkey: params.ntt.custody, isSigner: false, isWritable: true },
-      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-      { pubkey: inboxRateLimitPda, isSigner: false, isWritable: true },
-      { pubkey: peerPda, isSigner: false, isWritable: false },
-      { pubkey: sessionAuthorityPda, isSigner: false, isWritable: false },
-      { pubkey: tokenAuthorityPda, isSigner: false, isWritable: false },
-      { pubkey: NTT_PROGRAM_ID, isSigner: false, isWritable: false },
-    ]
   }
 
   requestRedemptionOnyc(params: {
@@ -615,5 +572,11 @@ export class RelayerClient {
 
   private ata(mint: PublicKey, owner: PublicKey = this.authorityPda) {
     return getAssociatedTokenAddressSync(mint, owner, true)
+  }
+
+  /** Resolve the provider's wallet pubkey, supporting both anchor wallet and bare-key shapes. */
+  private providerPublicKey(): PublicKey | undefined {
+    const provider = this.program.provider as any
+    return provider.wallet?.publicKey ?? provider.publicKey
   }
 }

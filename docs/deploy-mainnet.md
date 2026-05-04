@@ -18,8 +18,10 @@ follow it end to end.
 | `relayer` Anchor program                     | Solana mainnet-beta        | ✅                                         |
 | Solana-side NTT manager (ONyc, locking mode) | Solana mainnet-beta        | ✅ — deployed via `ntt` CLI, see §7.1      |
 | FOGO-side NTT manager (bONyc, burning mode)  | FOGO chain                 | ✅ — deployed via `ntt` CLI, see §7.1      |
+| Solana-side NTT manager (USDC.s, wrap mode)  | Solana mainnet-beta        | ❌ — already live, you only reference it   |
+| FOGO-side NTT manager (USDC.s, native mode)  | FOGO chain                 | ❌ — already live, you only reference it   |
 | `@fogo-onre/sdk` (TS client)                 | npm (or internal registry) | ✅                                         |
-| Wormhole Core / Gateway / OnRe programs      | Solana                     | ❌ — already live, you only reference them |
+| OnRe program                                 | Solana                     | ❌ — already live, you only reference it   |
 
 There is **no FOGO-side smart contract written by us** beyond the NTT
 manager scaffold. Users hold bONyc directly on FOGO (it's the
@@ -34,16 +36,18 @@ Source: `Anchor.toml` `[programs.mainnet]` and
 **External program IDs** (hardcoded in
 `programs/relayer/src/constants.rs`):
 
-| Program                         | Address                                       |
-|---------------------------------|-----------------------------------------------|
-| Wormhole Core Bridge            | `worm2ZoG2kUd4vFXhvjh93UUH596ayRfgQ2MgjNMTth` |
-| Wormhole Token Bridge / Gateway | `wormDTUJ6AWPNvk59vGQbDvGJmqbDTdgWgAqcLBCgUb` |
-| Wormhole NTT Manager            | `nttu74CdAmsErx5daJVCQNoDZujswFrskMzonoZSdGk` |
-| OnRe                            | `onreuGhHHgVzMWSkj2oQDLDtvvGvoepBPkqyaubFcwe` |
-| FOGO Wormhole chain ID          | `51`                                          |
+| Program                | Address                                       |
+|------------------------|-----------------------------------------------|
+| Wormhole NTT Manager   | `nttu74CdAmsErx5daJVCQNoDZujswFrskMzonoZSdGk` |
+| OnRe                   | `onreuGhHHgVzMWSkj2oQDLDtvvGvoepBPkqyaubFcwe` |
+| FOGO Wormhole chain ID | `51`                                          |
 
-Re-verify each against mainnet (`solana program show <id>`) before
-deploying — see deploy-checklist.md §4.
+The relayer does **not** CPI Wormhole Core or the legacy Token Bridge /
+Gateway. Both bridge legs (USDC.s ↔ USDC and ONyc ↔ bONyc) go through
+the single NTT manager program ID above; verifying NTT setup (§7.1) is
+therefore on the deploy critical path. Re-verify each ID against
+mainnet (`solana program show <id>`) before deploying — see
+deploy-checklist.md §4.
 
 ---
 
@@ -132,7 +136,7 @@ Assuming FOGO uses Solana-identical rent parameters:
 
 The relayer itself does **not** run on FOGO — the entire FOGO budget
 is for the NTT manager + bONyc setup. End users need their own FOGO
-for Gateway gas, but that's a UX concern, not a deploy budget.
+for NTT-send gas, but that's a UX concern, not a deploy budget.
 
 ---
 
@@ -351,7 +355,7 @@ failures.
 | **OnRe `Offer` (USDC → ONyc)**           | Live `Offer` PDA at `[b"offer", USDC_mint, ONyc_mint]` under OnRe. `swap_usdc_to_onyc` reverts without it.                                                                      | OnRe operator                                                |
 | **OnRe `RedemptionOffer` (ONyc → USDC)** | Required by `request_redemption_onyc`. Verify funded and active per deploy-checklist.md §4.                                                                                     | OnRe operator                                                |
 | **OnRe `redemption_admin` liveness**     | Asynchronously fulfills `RedemptionRequest` PDAs created by `request_redemption_onyc`. Latency is the user-visible withdraw SLA. See security.md §3 and deploy-checklist.md §8. | OnRe operator                                                |
-| **Wormhole Gateway USDC.s wrapped mint** | The FOGO USDC.s mint must be attested for chain ID 51. Verify with `findTokenBridgeWrappedMetaPda()`.                                                                           | Wormhole guardians (already done if USDC.s exists on Solana) |
+| **USDC.s NTT manager (FOGO ↔ Solana USDC)** | The USDC.s NTT deployment must already be live and the relayer's expected peers / rate limits configured. `claim_usdc` and `send_usdc_to_user` CPI it directly.                       | USDC.s NTT manager admin (third party)                       |
 | **OnRe price-vector update authority**   | Documented per deploy-checklist.md §6. Governs ONyc price evolution, which is what generates user yield.                                                                        | OnRe operator                                                |
 
 ### 7.1. NTT setup for ONyc ↔ bONyc (one-time, before any deposit can land)
@@ -475,11 +479,11 @@ to users.
 
 ### 8.1. Deposit cycle (FOGO → bONyc on FOGO)
 
-1. From a test FOGO wallet, send a small amount of USDC.s via Gateway,
-   addressed to the relayer's payload destination.
-2. Wait for the Wormhole guardian VAA attestation.
+1. From a test FOGO wallet, NTT-send a small amount of USDC.s to
+   Solana, addressed to the relayer's payload destination.
+2. Wait for the NTT attestation.
 3. Crank `claim_usdc` (any wallet — permissionless). Confirm a Flow PDA
-   exists at `findInflightFlowPda(gatewayClaim)`.
+   exists at `findInflightFlowPda(nttInboxItem)`.
 4. Crank `swap_usdc_to_onyc`. Confirm the relayer's ONyc ATA balance
    increases.
 5. Crank `lock_onyc`. Confirm:
@@ -504,7 +508,7 @@ to users.
 6. Crank `claim_redemption_usdc`. Confirm USDC lands in the relayer's
    USDC ATA and the `RedemptionTracker` advances to `Claimed`.
 7. Crank `send_usdc_to_user`. Confirm:
-  - USDC.s lands on the test FOGO wallet via Gateway
+  - USDC.s lands on the test FOGO wallet via NTT
   - The Flow PDA closes (rent returned to the cranker)
   - The `RedemptionTracker` closes (rent returned to whoever paid for it)
   - Fees applied per `apply_fee_bps` (`programs/relayer/src/state.rs`)
@@ -601,7 +605,7 @@ Anyone with SOL for tx fees can crank them.
 
 ## 12. Glossary
 
-- **USDC.s** — the Wormhole-bridged USDC on FOGO. What users deposit
+- **USDC.s** — the NTT-bridged USDC on FOGO. What users deposit
   and what they receive on withdraw.
 - **ONyc** — OnRe's yield-bearing token, native on Solana. Held in NTT
   custody on Solana while users hold its bONyc representation on FOGO.

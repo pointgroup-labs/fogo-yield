@@ -7,13 +7,17 @@ import {
   RELAYER_PROGRAM_ID,
 } from '@fogo-onre/sdk'
 import { isEstablished, TransactionResultType } from '@fogo/sessions-sdk-react'
+import { Keypair } from '@solana/web3.js'
 import { useState } from 'react'
-import { USDC_S_MINT } from '@/lib/config'
+import {
+  FOGO_USDC_S_NTT_MANAGER_ID,
+  USDC_S_MINT,
+} from '@/lib/config'
 import { error, idle, pending, success, type TxStatus } from '@/lib/tx'
 
 /**
  * Builds and sends the FOGO-side deposit transaction: a Wormhole NTT
- * `transfer_lock` of USDC.s from the user to the relayer authority PDA on
+ * `transfer_burn` of USDC.s from the user to the relayer authority PDA on
  * Solana. The originator's FOGO wallet is carried automatically as
  * `NttManagerMessage.sender`; no custom payload is needed.
  *
@@ -31,13 +35,18 @@ export function useDeposit(sessionState: SessionState) {
     setStatus(pending)
     try {
       const [recipientOnSolana] = findAuthorityPda(RELAYER_PROGRAM_ID)
+      const outboxItemKp = Keypair.generate()
       const ix = buildFogoNttDepositIx({
         payer: sessionState.walletPublicKey,
-        usdcSMint: USDC_S_MINT,
+        nttManagerProgramId: FOGO_USDC_S_NTT_MANAGER_ID,
+        mint: USDC_S_MINT,
+        outboxItem: outboxItemKp.publicKey,
         amount,
         recipientOnSolana,
       })
-      const result = await sessionState.sendTransaction([ix])
+      const result = await sessionState.sendTransaction([ix], {
+        extraSigners: [outboxItemKp],
+      })
       if (result.type === TransactionResultType.Failed) {
         const message = result.error instanceof Error
           ? result.error.message

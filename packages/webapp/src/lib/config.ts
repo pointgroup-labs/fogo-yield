@@ -45,6 +45,19 @@ export const USDC_S_MINT = new PublicKey('uSd2czE61Evaf76RNbq4KPpXnkiL3irdzgLFUM
 // (see docs/deploy-mainnet.md §7.1).
 export const BONYC_MINT = new PublicKey('11111111111111111111111111111111')
 
+// FOGO-side NTT manager program IDs. Burning-mode managers, one per
+// bridged mint. The user-signed `transfer_burn` instruction is dispatched
+// to these.
+//
+// USDC.s: published in
+// https://configs.labsapis.com/mainnet/tokens.ntt.json (`USDC.s` entry,
+// chain=Fogo). Identical address to the Solana-side USDC NTT manager —
+// same program deployed at the same key on both chains.
+export const FOGO_USDC_S_NTT_MANAGER_ID = new PublicKey('nttu74CdAmsErx5daJVCQNoDZujswFrskMzonoZSdGk')
+// bONyc: TODO once Wormhole publishes the FOGO ↔ Solana ONyc deployment
+// (see docs/deploy-mainnet.md §7.1).
+export const FOGO_BONYC_NTT_MANAGER_ID = new PublicKey('11111111111111111111111111111111')
+
 // Token decimals are protocol invariants and live in the SDK.
 export { BONYC_DECIMALS, USDC_DECIMALS }
 

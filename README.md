@@ -8,23 +8,23 @@ receive USDC.s.
 
 The on-chain bridge is a single immutable Solana program (the
 **relayer**) that holds no funds at rest and routes capital between
-[Wormhole Gateway](https://wormhole.com/products/gateway) (USDC),
 [Wormhole NTT](https://wormhole.com/products/native-token-transfers)
-(ONyc/bONyc), and [OnRe](https://github.com/onre-finance/onre-sol)
-(USDC ↔ ONyc).
+(both USDC.s ↔ USDC and ONyc ↔ bONyc) and
+[OnRe](https://github.com/onre-finance/onre-sol) (USDC ↔ ONyc on
+Solana).
 
 ## How it works
 
 ```
-              FOGO                                 Solana
-              ────                                 ──────
-deposit:   USDC.s ──Gateway──> USDC ──swap──> ONyc ──NTT──> bONyc
-withdraw:  bONyc  ──NTT─────> ONyc ──redeem──> USDC ──Gateway──> USDC.s
+              FOGO                              Solana
+              ────                              ──────
+deposit:   USDC.s ──NTT──> USDC ──swap──> ONyc ──NTT──> bONyc
+withdraw:  bONyc  ──NTT──> ONyc ──redeem──> USDC ──NTT──> USDC.s
 ```
 
 **Deposit** (one user transaction on FOGO; the rest is permissionless cranking):
 
-1. User sends USDC.s via Gateway → relayer receives USDC on Solana
+1. User NTT-sends USDC.s → relayer receives USDC on Solana
 2. Relayer swaps USDC → ONyc on OnRe
 3. Relayer NTT-locks ONyc → bONyc minted to user on FOGO
 
@@ -33,7 +33,7 @@ withdraw:  bONyc  ──NTT─────> ONyc ──redeem──> USDC ──
 1. User NTT-sends bONyc → relayer receives ONyc on Solana
 2. Relayer requests redemption from OnRe (`request_redemption_onyc`)
 3. OnRe's `redemption_admin` fulfills the request, paying out USDC
-4. Relayer claims the USDC and Gateway-sends USDC.s back to the user
+4. Relayer claims the USDC and NTT-sends USDC.s back to the user
 
 Yield accrues automatically: bONyc represents a claim on ONyc, whose
 on-chain price advances as OnRe's reinsurance positions earn.
@@ -41,7 +41,7 @@ on-chain price advances as OnRe's reinsurance positions earn.
 ## Trust model in one paragraph
 
 The relayer is the user's trust boundary. Its program ID is canonical,
-its CPI destinations (Gateway, NTT, OnRe) are hardcoded, and it cannot
+its CPI destinations (NTT, OnRe) are hardcoded, and it cannot
 move funds outside the user-signed flow — no admin can drain the
 in-transit ATAs. The config authority can adjust fees (capped at **10%
 per leg**, with a 2-day timelock on increases) and rotate the fee

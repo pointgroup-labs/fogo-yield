@@ -1,10 +1,8 @@
+import type { AccountMeta } from '@solana/web3.js'
 import { keccak_256 } from '@noble/hashes/sha3.js'
-import { PublicKey } from '@solana/web3.js'
+import { getAssociatedTokenAddressSync, TOKEN_PROGRAM_ID } from '@solana/spl-token'
+import { PublicKey, SystemProgram } from '@solana/web3.js'
 import { NTT_PROGRAM_ID } from './constants'
-
-// ---------------------------------------------------------------------------
-// PDA seed constants (mirror Wormhole NTT manager source)
-// ---------------------------------------------------------------------------
 
 const CONFIG_SEED = Buffer.from('config')
 const NTT_MANAGER_PEER_SEED = Buffer.from('peer')
@@ -20,10 +18,6 @@ function chainIdBeBuf(chainId: number): Buffer {
   buf.writeUInt16BE(chainId)
   return buf
 }
-
-// ---------------------------------------------------------------------------
-// PDA derivations — Wormhole NTT manager (Solana, Locking mode for ONyc)
-// ---------------------------------------------------------------------------
 
 export function findNttConfigPda(programId: PublicKey = NTT_PROGRAM_ID): [PublicKey, number] {
   return PublicKey.findProgramAddressSync([CONFIG_SEED], programId)
@@ -82,6 +76,24 @@ export function findInboxItemPda(
 }
 
 /**
+ * NTT's `Config.custody` is set during `initialize` via the
+ * `associated_token::mint = mint, associated_token::authority =
+ * token_authority` Anchor constraints — i.e. the (possibly off-curve) ATA
+ * of the manager's `token_authority` PDA for the bridged mint. Because
+ * `initialize` is the only writer of `Config.custody` and the constraint
+ * pins the address, custody is fully derivable from `(mint, programId)`
+ * without an RPC fetch. Verified against FOGO mainnet USDC.s
+ * (`uSd2czE…` / manager `nttu74…` → custody `F1dShvAq…`).
+ */
+export function findNttCustodyAta(
+  mint: PublicKey,
+  programId: PublicKey = NTT_PROGRAM_ID,
+): PublicKey {
+  const [tokenAuthorityPda] = findTokenAuthorityPda(programId)
+  return getAssociatedTokenAddressSync(mint, tokenAuthorityPda, true)
+}
+
+/**
  * NTT binds the per-call `session_authority` PDA to a hash of the
  * outbound transfer args. The relayer pre-approves this PDA as SPL
  * delegate before invoking `transfer_lock`, so the SDK must compute the
@@ -103,12 +115,17 @@ export function findSessionAuthorityPda(
  * `TransferArgs::keccak256()` implementation:
  *   keccak256(amount BE u64 ‖ recipient_chain BE u16 ‖ recipient_address[32] ‖ should_queue u8)
  */
-export function nttTransferArgsHash(args: {
+export interface NttTransferArgs {
   amount: bigint
   recipientChain: number
   recipientAddress: Uint8Array
   shouldQueue: boolean
-}): Uint8Array {
+}
+
+export function nttTransferArgsHash(args: NttTransferArgs): Uint8Array {
+  if (args.recipientAddress.length !== 32) {
+    throw new Error('nttTransferArgsHash: recipientAddress must be 32 bytes')
+  }
   const buf = new Uint8Array(8 + 2 + 32 + 1)
   const view = new DataView(buf.buffer)
   view.setBigUint64(0, args.amount, false) // BE
@@ -118,9 +135,23 @@ export function nttTransferArgsHash(args: {
   return keccak_256(buf)
 }
 
-// ---------------------------------------------------------------------------
-// Context types — caller-supplied "anchor points" the SDK can't derive itself
-// ---------------------------------------------------------------------------
+/**
+ * Borsh-encode `TransferArgs` for the NTT instruction `data` payload.
+ * Distinct from `nttTransferArgsHash`: borsh is little-endian, ChainId is
+ * a single u16 field, and the encoder produces 43 bytes (no discriminator).
+ */
+export function encodeNttTransferArgsBorsh(args: NttTransferArgs): Uint8Array {
+  if (args.recipientAddress.length !== 32) {
+    throw new Error('encodeNttTransferArgsBorsh: recipientAddress must be 32 bytes')
+  }
+  const buf = new Uint8Array(8 + 2 + 32 + 1)
+  const view = new DataView(buf.buffer)
+  view.setBigUint64(0, args.amount, true) // LE
+  view.setUint16(8, args.recipientChain, true) // LE
+  buf.set(args.recipientAddress, 10)
+  buf[42] = args.shouldQueue ? 1 : 0
+  return buf
+}
 
 /**
  * Inputs needed to build the NTT redeem + release_inbound_unlock account
@@ -136,22 +167,81 @@ export function nttTransferArgsHash(args: {
 export interface NttRedeemContext {
   /** Address of the registered transceiver program (for OnRe = NTT itself). */
   transceiverAddress: PublicKey
-  /** ONyc custody token account (from NTT config). */
-  custody: PublicKey
 }
 
 /**
- * Inputs needed to build the NTT transfer_lock account list for `lock_onyc`.
- * The SDK fetches the Flow PDA to learn `amount` + `fogo_sender`, so callers
- * only need to supply the on-chain anchor points.
+ * Build the 14-entry account list expected by NTT v1's outbound
+ * `transfer_lock` instruction. Mode-, mint-, and program-id-agnostic — the
+ * relayer's Solana-side `lock_onyc` / `send_usdc_to_user` use it under the
+ * canonical `NTT_PROGRAM_ID` with the relayer authority PDA as the
+ * non-signer source owner; FOGO-side user-signed flows use it with the
+ * FOGO NTT manager program ID and the user's wallet as a signer source.
  *
- * NOTE: recipient chain is fixed to FOGO (51). The relayer-program hardcodes
- * `recipient_chain: FOGO_WORMHOLE_CHAIN_ID` in its NTT `TransferArgs`; any
- * SDK-side override would derive a different `session_authority` PDA from
- * the args hash, causing the relayer's pre-CPI SPL `Approve` to delegate
- * tokens to the wrong PDA — silent CPI failure.
+ * The order matches the NTT v1 `TransferLock` Anchor accounts struct
+ * (verified against the relayer's Rust `lock_onyc` handler). Reordering
+ * any entry silently breaks the CPI — keep these in lockstep with NTT
+ * upstream.
  */
-export interface NttTransferLockContext {
-  /** ONyc custody token account (from NTT config). */
-  custody: PublicKey
+export interface BuildNttTransferLockAccountListParams {
+  /** NTT manager program id — Solana for relayer-side, FOGO-side for user-signed. */
+  nttProgramId: PublicKey
+  /** Source token-account owner. PDA on the relayer side, user wallet on the user side. */
+  fromOwner: PublicKey
+  /** True iff `fromOwner` is a tx-level signer (user-side); false when signed via PDA seeds. */
+  fromOwnerIsSigner: boolean
+  /** SPL token account holding the tokens to transfer. */
+  fromTokenAccount: PublicKey
+  /** Mint of `fromTokenAccount`. */
+  mint: PublicKey
+  /** Fresh keypair pubkey — must sign and is `init`'d as the per-call outbox item. */
+  outboxItem: PublicKey
+  /** Wormhole chain id of the destination chain. */
+  recipientChain: number
+  /** 32-byte address on the destination chain (left-padded as needed). */
+  recipientAddress: Uint8Array
+  /** Transfer amount in token base units. */
+  amount: bigint
+  /** Optional NTT outbound queue toggle; defaults false (immediate send). */
+  shouldQueue?: boolean
+}
+
+export function buildNttTransferLockAccountList(
+  params: BuildNttTransferLockAccountListParams,
+): AccountMeta[] {
+  const shouldQueue = params.shouldQueue ?? false
+  const [configPda] = findNttConfigPda(params.nttProgramId)
+  const [peerPda] = findNttPeerPda(params.recipientChain, params.nttProgramId)
+  const [outboxRateLimitPda] = findOutboxRateLimitPda(params.nttProgramId)
+  const [inboxRateLimitPda] = findInboxRateLimitPda(params.recipientChain, params.nttProgramId)
+  const [tokenAuthorityPda] = findTokenAuthorityPda(params.nttProgramId)
+  const custody = findNttCustodyAta(params.mint, params.nttProgramId)
+
+  const argsHash = nttTransferArgsHash({
+    amount: params.amount,
+    recipientChain: params.recipientChain,
+    recipientAddress: params.recipientAddress,
+    shouldQueue,
+  })
+  const [sessionAuthorityPda] = findSessionAuthorityPda(
+    params.fromOwner,
+    argsHash,
+    params.nttProgramId,
+  )
+
+  return [
+    { pubkey: params.fromOwner, isSigner: params.fromOwnerIsSigner, isWritable: true },
+    { pubkey: configPda, isSigner: false, isWritable: false },
+    { pubkey: params.mint, isSigner: false, isWritable: true },
+    { pubkey: params.fromTokenAccount, isSigner: false, isWritable: true },
+    { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+    { pubkey: params.outboxItem, isSigner: true, isWritable: true },
+    { pubkey: outboxRateLimitPda, isSigner: false, isWritable: true },
+    { pubkey: custody, isSigner: false, isWritable: true },
+    { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+    { pubkey: inboxRateLimitPda, isSigner: false, isWritable: true },
+    { pubkey: peerPda, isSigner: false, isWritable: false },
+    { pubkey: sessionAuthorityPda, isSigner: false, isWritable: false },
+    { pubkey: tokenAuthorityPda, isSigner: false, isWritable: false },
+    { pubkey: params.nttProgramId, isSigner: false, isWritable: false },
+  ]
 }

@@ -239,7 +239,6 @@ describe('deposit flow e2e (claim_usdc → swap_usdc_to_onyc)', () => {
           nttTransceiverMessage: validatedMsgPda,
           ntt: {
             transceiverAddress: NTT_PROGRAM_ID,
-            custody: getAssociatedTokenAddressSync(usdcMint.publicKey, nttTokenAuthorityPda, true),
           },
         })
         .rpc()

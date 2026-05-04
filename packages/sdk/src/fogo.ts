@@ -1,74 +1,138 @@
-import type { TransactionInstruction } from '@solana/web3.js'
-import { PublicKey } from '@solana/web3.js'
+import type { PublicKey } from '@solana/web3.js'
+import type { NttTransferArgs } from './ntt'
+import { sha256 } from '@noble/hashes/sha2.js'
+import { getAssociatedTokenAddressSync, TOKEN_PROGRAM_ID } from '@solana/spl-token'
+import { SystemProgram, TransactionInstruction } from '@solana/web3.js'
+import { SOLANA_WORMHOLE_CHAIN_ID } from './constants'
+import {
+  encodeNttTransferArgsBorsh,
+  findInboxRateLimitPda,
+  findNttConfigPda,
+  findNttCustodyAta,
+  findNttPeerPda,
+  findOutboxRateLimitPda,
+  findSessionAuthorityPda,
+  findTokenAuthorityPda,
+  nttTransferArgsHash,
+} from './ntt'
 
 /**
- * FOGO-side instruction builders for the user-facing deposit / withdraw
- * flows. The user signs ONE FOGO transaction; the rest of the chain is
- * cranked permissionlessly by anyone (including the relayer's own keeper).
- *
- * Both legs use Wormhole NTT (USDC.s out, bONyc out). NTT manager messages
- * carry `NttManagerMessage.sender = transfer_lock signer`, so the
- * originator's FOGO wallet is bound to the VAA without any custom payload.
- * The Solana relayer reads it back from the per-VAA inbox-item PDA.
- *
- * NOT IMPLEMENTED YET — these throw a clearly-typed error so the webapp
- * can render a "coming soon" state without stringly-coupled magic. Real
- * bodies need the FOGO NTT manager program IDs (USDC.s + bONyc), the
- * matching IDLs / discriminators, and the published peer registrations.
+ * Anchor instruction discriminators for NTT v1's burning-mode transfer.
+ * Computed as `sha256("global:transfer_burn").slice(0, 8)` — matches the
+ * upstream Anchor-generated sighash. Cached at module init.
  */
+const TRANSFER_BURN_DISCRIMINATOR = sha256(
+  new TextEncoder().encode('global:transfer_burn'),
+).slice(0, 8)
 
-export class FogoBuilderNotImplementedError extends Error {
-  constructor(builder: string) {
-    super(
-      `${builder} is not implemented yet. The FOGO-side NTT manager `
-      + `program IDs and IDLs need to be wired in. See packages/sdk/src/fogo.ts `
-      + `for the expected interface.`,
-    )
-    this.name = 'FogoBuilderNotImplementedError'
-  }
-}
-
-export interface BuildDepositTransferParams {
+export interface BuildFogoNttTransferParams {
   /** User's FOGO wallet — signer; encoded as `NttManagerMessage.sender`. */
   payer: PublicKey
-  /** USDC.s mint on FOGO. */
-  usdcSMint: PublicKey
-  /** Amount in USDC.s base units (6 decimals). */
+  /** FOGO-side NTT manager program ID for this mint (USDC.s or bONyc). */
+  nttManagerProgramId: PublicKey
+  /** Bridged mint on FOGO (USDC.s for deposit, bONyc for withdraw). */
+  mint: PublicKey
+  /**
+   * Fresh ephemeral keypair pubkey used as the `outbox_item`. The caller
+   * MUST add the matching `Keypair` to the transaction's signer set —
+   * NTT `init`s the account, so it must sign at submission.
+   */
+  outboxItem: PublicKey
+  /** Amount in mint base units (USDC.s = 6 decimals, bONyc = 9). */
   amount: bigint
-  /** Solana-side relayer authority PDA — see `findAuthorityPda`. Owns the destination USDC ATA. */
+  /**
+   * Solana-side recipient — the relayer authority PDA for both legs (see
+   * `findAuthorityPda`). The relayer is the only address that can crank
+   * the Solana side; routing user funds anywhere else would orphan them.
+   */
   recipientOnSolana: PublicKey
+  /**
+   * Optional override for the source token account. Defaults to the
+   * payer's ATA for `mint`.
+   */
+  fromTokenAccount?: PublicKey
+  /** NTT outbound queue toggle. Defaults false (immediate send). */
+  shouldQueue?: boolean
 }
 
 /**
- * Build the FOGO NTT `transfer_lock` instruction that initiates a deposit.
- * The relayer cranks the Solana side via `claim_usdc` + `swap_usdc_to_onyc`
- * + `lock_onyc`, with the eventual bONyc routed back to `payer`.
+ * Build the FOGO NTT `transfer_burn` instruction. Account order mirrors
+ * the upstream `TransferBurn` Anchor struct: the embedded `Transfer`
+ * common struct (9 accounts) is flattened first, then the burn-specific
+ * accounts (4) are appended.
+ */
+function buildFogoNttTransferBurnIx(
+  params: BuildFogoNttTransferParams,
+): TransactionInstruction {
+  const shouldQueue = params.shouldQueue ?? false
+  const recipientChain = SOLANA_WORMHOLE_CHAIN_ID
+  const fromTokenAccount = params.fromTokenAccount
+    ?? getAssociatedTokenAddressSync(params.mint, params.payer)
+
+  const [configPda] = findNttConfigPda(params.nttManagerProgramId)
+  const [outboxRateLimitPda] = findOutboxRateLimitPda(params.nttManagerProgramId)
+  const [inboxRateLimitPda] = findInboxRateLimitPda(recipientChain, params.nttManagerProgramId)
+  const [peerPda] = findNttPeerPda(recipientChain, params.nttManagerProgramId)
+  const [tokenAuthorityPda] = findTokenAuthorityPda(params.nttManagerProgramId)
+  const custody = findNttCustodyAta(params.mint, params.nttManagerProgramId)
+
+  const args: NttTransferArgs = {
+    amount: params.amount,
+    recipientChain,
+    recipientAddress: params.recipientOnSolana.toBuffer(),
+    shouldQueue,
+  }
+  const [sessionAuthorityPda] = findSessionAuthorityPda(
+    params.payer,
+    nttTransferArgsHash(args),
+    params.nttManagerProgramId,
+  )
+
+  const keys = [
+    { pubkey: params.payer, isSigner: true, isWritable: true },
+    { pubkey: configPda, isSigner: false, isWritable: false },
+    { pubkey: params.mint, isSigner: false, isWritable: true },
+    { pubkey: fromTokenAccount, isSigner: false, isWritable: true },
+    { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+    { pubkey: params.outboxItem, isSigner: true, isWritable: true },
+    { pubkey: outboxRateLimitPda, isSigner: false, isWritable: true },
+    { pubkey: custody, isSigner: false, isWritable: true },
+    { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+    { pubkey: inboxRateLimitPda, isSigner: false, isWritable: true },
+    { pubkey: peerPda, isSigner: false, isWritable: false },
+    { pubkey: sessionAuthorityPda, isSigner: false, isWritable: false },
+    { pubkey: tokenAuthorityPda, isSigner: false, isWritable: false },
+  ]
+
+  const argsBytes = encodeNttTransferArgsBorsh(args)
+  const data = Buffer.alloc(TRANSFER_BURN_DISCRIMINATOR.length + argsBytes.length)
+  data.set(TRANSFER_BURN_DISCRIMINATOR, 0)
+  data.set(argsBytes, TRANSFER_BURN_DISCRIMINATOR.length)
+
+  return new TransactionInstruction({ programId: params.nttManagerProgramId, keys, data })
+}
+
+/**
+ * FOGO NTT `transfer_burn` initiating a deposit (USDC.s burned on FOGO →
+ * Solana USDC custody released to the relayer authority PDA). The relayer
+ * cranks `claim_usdc` → `swap_usdc_to_onyc` → `lock_onyc`, ultimately
+ * delivering bONyc back to `payer` via the bONyc NTT manager.
  */
 export function buildFogoNttDepositIx(
-  _params: BuildDepositTransferParams,
+  params: BuildFogoNttTransferParams,
 ): TransactionInstruction {
-  throw new FogoBuilderNotImplementedError('buildFogoNttDepositIx')
-}
-
-export interface BuildWithdrawTransferParams {
-  /** User's FOGO wallet — signer; encoded as `NttManagerMessage.sender`. */
-  payer: PublicKey
-  /** bONyc mint on FOGO (NTT-bridged ONyc). */
-  bonycMint: PublicKey
-  /** Amount in bONyc base units (9 decimals). */
-  amount: bigint
-  /** Solana-side relayer authority PDA — see `findAuthorityPda`. Owns the destination ONyc ATA. */
-  recipientOnSolana: PublicKey
+  return buildFogoNttTransferBurnIx(params)
 }
 
 /**
- * Build the FOGO NTT `transfer_lock` instruction that initiates a withdraw.
- * The relayer cranks `unlock_onyc` + `request_redemption_onyc` +
- * `claim_redemption_usdc` + `send_usdc_to_user` on Solana, returning USDC.s
- * to `payer` on FOGO.
+ * FOGO NTT `transfer_burn` initiating a withdraw (bONyc burned on FOGO →
+ * Solana ONyc custody released to the relayer authority PDA). The relayer
+ * cranks `unlock_onyc` → `request_redemption_onyc` →
+ * `claim_redemption_usdc` → `send_usdc_to_user`, returning USDC.s to
+ * `payer` on FOGO.
  */
 export function buildFogoNttWithdrawIx(
-  _params: BuildWithdrawTransferParams,
+  params: BuildFogoNttTransferParams,
 ): TransactionInstruction {
-  throw new FogoBuilderNotImplementedError('buildFogoNttWithdrawIx')
+  return buildFogoNttTransferBurnIx(params)
 }
