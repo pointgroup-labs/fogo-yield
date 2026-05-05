@@ -4,7 +4,8 @@
     "name": "relayer",
     "version": "0.1.0",
     "spec": "0.1.0",
-    "description": "Fogo OnRe relayer — stateless PDA-custody relay between Wormhole Gateway, OnRe, and Wormhole NTT on Solana"
+    "description": "Fogo OnRe relayer — stateless PDA-custody bridge between OnRe and Wormhole NTT on Solana",
+    "repository": "https://github.com/pointgroup-labs/fogo-onre"
   },
   "docs": [
     "Stateless cross-chain relayer between FOGO and Solana.",
@@ -2459,18 +2460,21 @@
       "code": 6021,
       "name": "WrongOriginChain",
       "msg": "Inbound NTT message did not originate from the FOGO peer chain"
+    },
+    {
+      "code": 6022,
+      "name": "UnexpectedOnycConsumed",
+      "msg": "Post-CPI ONyc balance dropped — OnRe consumed ONyc unexpectedly"
     }
   ],
   "types": [
     {
       "name": "Flow",
       "docs": [
-        "One-shot receipt binding an inbound bridge message to a FOGO user wallet.",
-        "PDA seeds: `[FLOW_*_SEED, bridge_claim_pda.key()]`. Replay protection is",
-        "delegated to the per-VAA claim account created by Wormhole Gateway / NTT.",
-        "",
-        "**Field set is byte-stable** — already-allocated `Flow` PDAs from prior",
-        "deploys must continue to load."
+        "One-shot receipt binding an inbound bridge message to a FOGO wallet.",
+        "Seeds: `[FLOW_*_SEED, bridge_claim_pda.key()]`. Replay protection",
+        "lives in the per-VAA claim account from NTT. Field set is",
+        "byte-stable — older PDAs must keep deserializing."
       ],
       "type": {
         "kind": "struct",
@@ -2629,8 +2633,8 @@
           {
             "name": "ready_slot",
             "docs": [
-              "`now + FEE_TIMELOCK_SLOTS` at proposal time, MAX-extended by any",
-              "subsequent raise so a follow-up never shortens the window."
+              "`now + FEE_TIMELOCK_SLOTS` at proposal time, MAX-extended on any",
+              "later raise so a follow-up never shortens the window."
             ],
             "type": "u64"
           }
@@ -2721,10 +2725,9 @@
     {
       "name": "RedemptionTracker",
       "docs": [
-        "Singleton sidecar PDA tracking the in-flight withdraw-chain redemption.",
-        "PDA seeds: `[REDEMPTION_TRACKER_SEED]`. The PDA's existence is the",
-        "in-flight mutex — `init` in `request_redemption_onyc` fails if another",
-        "redemption is mid-flight, preventing the USDC-delta race."
+        "Singleton mutex for the in-flight withdraw-chain redemption.",
+        "Seeds: `[REDEMPTION_TRACKER_SEED]`. `init` here fails if another",
+        "redemption is mid-flight, blocking the USDC-delta race."
       ],
       "type": {
         "kind": "struct",
@@ -2739,23 +2742,23 @@
           {
             "name": "redemption_request",
             "docs": [
-              "OnRe `RedemptionRequest` PDA we created. Polled for closure as the",
-              "fulfillment signal."
+              "OnRe `RedemptionRequest` PDA we created. Polled for closure as",
+              "the fulfillment signal."
             ],
             "type": "pubkey"
           },
           {
             "name": "usdc_ata_pre_balance",
             "docs": [
-              "Snapshot of relayer's USDC ATA balance *before* `create_redemption_request`.",
-              "`claim_redemption_usdc` computes the post-fulfillment delta against this."
+              "Relayer USDC ATA balance *before* `create_redemption_request`.",
+              "`claim_redemption_usdc` uses the post-fulfillment delta vs this."
             ],
             "type": "u64"
           },
           {
             "name": "onyc_amount_in",
             "docs": [
-              "Audit-trail field — net-of-fee ONyc sent to OnRe."
+              "Audit-trail only — net-of-fee ONyc sent to OnRe."
             ],
             "type": "u64"
           },
@@ -2776,32 +2779,12 @@
     {
       "name": "RelayerConfig",
       "docs": [
-        "The only long-lived state in this program. `authority` is a cold/admin",
-        "key used only for governance; operational instructions are permissionless.",
-        "",
-        "**Layout-change hazard.** `pending_fee` was appended, growing",
-        "`INIT_SPACE`. Any pre-existing `RelayerConfig` PDA from a prior build",
-        "is now under-sized and must be reallocated/zero-filled before any",
-        "instruction can deserialize it. No migration ix ships in this build."
+        "Long-lived program state. `authority` gates governance only; flow",
+        "instructions are permissionless."
       ],
       "type": {
         "kind": "struct",
         "fields": [
-          {
-            "name": "authority",
-            "type": "pubkey"
-          },
-          {
-            "name": "pending_authority",
-            "docs": [
-              "Two-step rotation accommodates multisig→multisig handoffs where the",
-              "two parties cannot atomically co-sign. Promoted to `authority` by",
-              "`accept_authority` from this key."
-            ],
-            "type": {
-              "option": "pubkey"
-            }
-          },
           {
             "name": "usdc_mint",
             "type": "pubkey"
@@ -2811,16 +2794,12 @@
             "type": "pubkey"
           },
           {
-            "name": "fee_vault",
+            "name": "authority",
             "type": "pubkey"
           },
           {
-            "name": "bump",
-            "type": "u8"
-          },
-          {
-            "name": "relayer_authority_bump",
-            "type": "u8"
+            "name": "fee_vault",
+            "type": "pubkey"
           },
           {
             "name": "deposit_fee_bps",
@@ -2831,12 +2810,29 @@
             "type": "u16"
           },
           {
+            "name": "relayer_authority_bump",
+            "type": "u8"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "pending_authority",
+            "docs": [
+              "Two-step rotation lets multisig→multisig handoffs work without",
+              "atomic co-sign. Promoted to `authority` by `accept_authority`."
+            ],
+            "type": {
+              "option": "pubkey"
+            }
+          },
+          {
             "name": "pending_fee",
             "docs": [
-              "Staged fee *increase*, auto-promoted on the next `configure` call",
-              "once `pending_fee.ready_slot` has elapsed. `None` ⟺ no proposal.",
-              "Invariant when `Some`: at least one inner leg is `Some` (collapsed",
-              "to `None` on empty). Decreases never use this field."
+              "Staged fee *increase*, auto-promoted on the next `configure` once",
+              "`ready_slot` elapses. Decreases bypass this. `Some` ⟹ at least one",
+              "inner leg is `Some` (collapsed otherwise)."
             ],
             "type": {
               "option": {

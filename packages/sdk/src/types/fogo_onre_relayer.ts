@@ -2794,8 +2794,36 @@ export type Relayer = {
         "kind": "struct",
         "fields": [
           {
+            "name": "usdcMint",
+            "type": "pubkey"
+          },
+          {
+            "name": "onycMint",
+            "type": "pubkey"
+          },
+          {
             "name": "authority",
             "type": "pubkey"
+          },
+          {
+            "name": "feeVault",
+            "type": "pubkey"
+          },
+          {
+            "name": "depositFeeBps",
+            "type": "u16"
+          },
+          {
+            "name": "withdrawFeeBps",
+            "type": "u16"
+          },
+          {
+            "name": "relayerAuthorityBump",
+            "type": "u8"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
           },
           {
             "name": "pendingAuthority",
@@ -2807,34 +2835,6 @@ export type Relayer = {
             "type": {
               "option": "pubkey"
             }
-          },
-          {
-            "name": "usdcMint",
-            "type": "pubkey"
-          },
-          {
-            "name": "onycMint",
-            "type": "pubkey"
-          },
-          {
-            "name": "feeVault",
-            "type": "pubkey"
-          },
-          {
-            "name": "bump",
-            "type": "u8"
-          },
-          {
-            "name": "relayerAuthorityBump",
-            "type": "u8"
-          },
-          {
-            "name": "depositFeeBps",
-            "type": "u16"
-          },
-          {
-            "name": "withdrawFeeBps",
-            "type": "u16"
           },
           {
             "name": "pendingFee",

@@ -3,38 +3,30 @@ use anchor_lang::prelude::*;
 use crate::constants::{CONFIG_SEED, FEE_TIMELOCK_SLOTS, MAX_FEE_BPS};
 use crate::error::RelayerError;
 
-/// The only long-lived state in this program. `authority` is a cold/admin
-/// key used only for governance; operational instructions are permissionless.
-///
-/// **Layout-change hazard.** `pending_fee` was appended, growing
-/// `INIT_SPACE`. Any pre-existing `RelayerConfig` PDA from a prior build
-/// is now under-sized and must be reallocated/zero-filled before any
-/// instruction can deserialize it. No migration ix ships in this build.
+/// Long-lived program state. `authority` gates governance only; flow
+/// instructions are permissionless.
 #[account]
 #[derive(InitSpace)]
 pub struct RelayerConfig {
-    pub authority: Pubkey,
-
-    /// Two-step rotation accommodates multisig→multisig handoffs where the
-    /// two parties cannot atomically co-sign. Promoted to `authority` by
-    /// `accept_authority` from this key.
-    pub pending_authority: Option<Pubkey>,
-
     pub usdc_mint: Pubkey,
     pub onyc_mint: Pubkey,
 
+    pub authority: Pubkey,
     pub fee_vault: Pubkey,
-
-    pub bump: u8,
-    pub relayer_authority_bump: u8,
 
     pub deposit_fee_bps: u16,
     pub withdraw_fee_bps: u16,
 
-    /// Staged fee *increase*, auto-promoted on the next `configure` call
-    /// once `pending_fee.ready_slot` has elapsed. `None` ⟺ no proposal.
-    /// Invariant when `Some`: at least one inner leg is `Some` (collapsed
-    /// to `None` on empty). Decreases never use this field.
+    pub relayer_authority_bump: u8,
+    pub bump: u8,
+
+    /// Two-step rotation lets multisig→multisig handoffs work without
+    /// atomic co-sign. Promoted to `authority` by `accept_authority`.
+    pub pending_authority: Option<Pubkey>,
+
+    /// Staged fee *increase*, auto-promoted on the next `configure` once
+    /// `ready_slot` elapses. Decreases bypass this. `Some` ⟹ at least one
+    /// inner leg is `Some` (collapsed otherwise).
     pub pending_fee: Option<PendingFee>,
 }
 
@@ -44,14 +36,13 @@ pub struct PendingFee {
 
     pub withdraw_fee_bps: Option<u16>,
 
-    /// `now + FEE_TIMELOCK_SLOTS` at proposal time, MAX-extended by any
-    /// subsequent raise so a follow-up never shortens the window.
+    /// `now + FEE_TIMELOCK_SLOTS` at proposal time, MAX-extended on any
+    /// later raise so a follow-up never shortens the window.
     pub ready_slot: u64,
 }
 
 impl PendingFee {
-    /// Both inner legs cleared. Surrounding `Option` collapses to `None`
-    /// whenever this returns `true`.
+    /// Surrounding `Option` collapses to `None` when this returns true.
     pub fn is_empty(&self) -> bool {
         self.deposit_fee_bps.is_none() && self.withdraw_fee_bps.is_none()
     }
@@ -89,11 +80,9 @@ impl RelayerConfig {
         apply_fee_bps(gross, self.withdraw_fee_bps)
     }
 
-    /// If a staged proposal has reached its `ready_slot`, move each `Some`
-    /// inner leg onto the live field. Run at top of `configure::handler` so
-    /// a follow-up "decrease" in the same call compares against the
-    /// just-promoted value rather than the stale one — otherwise the
-    /// asymmetric branch could silently flip.
+    /// Move ready legs onto live fields. Run at the top of
+    /// `configure::handler` so a same-call decrease compares against the
+    /// just-promoted value rather than the stale one.
     pub fn promote_pending_fee_if_ready(&mut self, now: u64) {
         let Some(p) = self.pending_fee else { return };
         if now < p.ready_slot {
@@ -129,10 +118,10 @@ impl RelayerConfig {
     }
 }
 
-/// Pure asymmetric proposal logic, mutating in place:
-/// - `proposed <= *live`: apply instantly + clear THIS leg in the bundle.
-/// - `proposed >  *live`: bundle gains/updates this leg; `ready_slot`
-///   MAX-extends so a follow-up raise never shortens an in-flight window.
+/// Asymmetric in-place mutation:
+/// - `proposed <= *live`: apply instantly, clear this leg in the bundle.
+/// - `proposed >  *live`: stage in the bundle; `ready_slot` MAX-extends
+///   so a follow-up raise can't shorten an in-flight window.
 fn propose_fee_change(
     proposed: u16,
     live: &mut u16,
@@ -165,12 +154,10 @@ fn propose_fee_change(
     Ok(())
 }
 
-/// Returns `(net, fee)` where `fee = floor(gross * bps / 10_000)`.
-///
-/// `try_from` is defense-in-depth — under the `validate()` invariant
-/// `fee_u128 <= gross`, so the cast can't overflow today, but enforcing
-/// locally turns a future invariant violation into `FeeOverflow` instead of
-/// silent truncation.
+/// Returns `(net, fee)` with `fee = floor(gross * bps / 10_000)`.
+/// `try_from` is defense-in-depth: under `validate()`'s bps≤MAX invariant
+/// the cast can't overflow today, but enforcing locally turns a future
+/// invariant break into `FeeOverflow` instead of silent truncation.
 pub(crate) fn apply_fee_bps(gross: u64, bps: u16) -> Result<(u64, u64)> {
     let fee_u128 = (gross as u128)
         .checked_mul(bps as u128)
@@ -187,18 +174,15 @@ pub(crate) fn apply_fee_bps(gross: u64, bps: u16) -> Result<(u64, u64)> {
 pub enum FlowStatus {
     Claimed,
     Swapped,
-    /// Withdraw chain only: ONyc forwarded to OnRe; awaiting fulfillment.
-    /// **Appended (not inserted)** to preserve tags 0/1 for already-allocated
-    /// `Flow` PDAs from prior deploys.
+    /// Withdraw chain only: ONyc forwarded to OnRe, awaiting fulfillment.
+    /// Appended (not inserted) so existing `Flow` PDAs keep tags 0/1.
     RedemptionPending,
 }
 
-/// One-shot receipt binding an inbound bridge message to a FOGO user wallet.
-/// PDA seeds: `[FLOW_*_SEED, bridge_claim_pda.key()]`. Replay protection is
-/// delegated to the per-VAA claim account created by Wormhole Gateway / NTT.
-///
-/// **Field set is byte-stable** — already-allocated `Flow` PDAs from prior
-/// deploys must continue to load.
+/// One-shot receipt binding an inbound bridge message to a FOGO wallet.
+/// Seeds: `[FLOW_*_SEED, bridge_claim_pda.key()]`. Replay protection
+/// lives in the per-VAA claim account from NTT. Field set is
+/// byte-stable — older PDAs must keep deserializing.
 #[account]
 #[derive(InitSpace)]
 pub struct Flow {
@@ -214,25 +198,24 @@ pub struct Flow {
     pub bump: u8,
 }
 
-/// Singleton sidecar PDA tracking the in-flight withdraw-chain redemption.
-/// PDA seeds: `[REDEMPTION_TRACKER_SEED]`. The PDA's existence is the
-/// in-flight mutex — `init` in `request_redemption_onyc` fails if another
-/// redemption is mid-flight, preventing the USDC-delta race.
+/// Singleton mutex for the in-flight withdraw-chain redemption.
+/// Seeds: `[REDEMPTION_TRACKER_SEED]`. `init` here fails if another
+/// redemption is mid-flight, blocking the USDC-delta race.
 #[account]
 #[derive(InitSpace)]
 pub struct RedemptionTracker {
     /// Outbound `Flow` this tracker is bound to.
     pub flow: Pubkey,
 
-    /// OnRe `RedemptionRequest` PDA we created. Polled for closure as the
-    /// fulfillment signal.
+    /// OnRe `RedemptionRequest` PDA we created. Polled for closure as
+    /// the fulfillment signal.
     pub redemption_request: Pubkey,
 
-    /// Snapshot of relayer's USDC ATA balance *before* `create_redemption_request`.
-    /// `claim_redemption_usdc` computes the post-fulfillment delta against this.
+    /// Relayer USDC ATA balance *before* `create_redemption_request`.
+    /// `claim_redemption_usdc` uses the post-fulfillment delta vs this.
     pub usdc_ata_pre_balance: u64,
 
-    /// Audit-trail field — net-of-fee ONyc sent to OnRe.
+    /// Audit-trail only — net-of-fee ONyc sent to OnRe.
     pub onyc_amount_in: u64,
 
     /// Pays for init, receives rent on close.
@@ -263,15 +246,15 @@ mod tests {
         pending_fee: Option<PendingFee>,
     ) -> RelayerConfig {
         RelayerConfig {
-            authority: Pubkey::default(),
-            pending_authority: None,
             usdc_mint: Pubkey::default(),
             onyc_mint: Pubkey::default(),
+            authority: Pubkey::default(),
             fee_vault: Pubkey::default(),
-            bump: 0,
-            relayer_authority_bump: 0,
             deposit_fee_bps,
             withdraw_fee_bps,
+            relayer_authority_bump: 0,
+            bump: 0,
+            pending_authority: None,
             pending_fee,
         }
     }
