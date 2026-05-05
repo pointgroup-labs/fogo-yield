@@ -90,6 +90,6 @@ export {
   quoteWithdraw,
   type WithdrawQuote,
 } from './pricing'
-export {type Relayer} from './types/fogo_onre_relayer'
+export {type FogoOnreRelayer} from './types/fogo_onre_relayer'
 export {BN} from '@anchor-lang/core'
 export type {Provider} from '@anchor-lang/core'

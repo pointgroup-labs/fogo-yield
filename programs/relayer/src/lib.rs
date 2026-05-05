@@ -26,7 +26,7 @@ declare_id!("onrenRKgX54qtWeK3cuaTBE71xx7dWMXn82ubH61vAp");
 /// key cannot redirect outbound transfers — the inbox-item PDA is
 /// CPI-created by the NTT program and unforgeable.
 #[program]
-pub mod relayer {
+pub mod fogo_onre_relayer {
     use super::*;
 
     /// One-time setup: create config PDA + relayer-authority-owned ATAs.

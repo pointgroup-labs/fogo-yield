@@ -2,12 +2,12 @@
  * Program IDL in camelCase format in order to be used in JS/TS.
  *
  * Note that this is only a type helper and is not the actual IDL. The original
- * IDL can be found at `target/idl/relayer.json`.
+ * IDL can be found at `target/idl/fogo_onre_relayer.json`.
  */
-export type Relayer = {
+export type FogoOnreRelayer = {
   "address": "onrenRKgX54qtWeK3cuaTBE71xx7dWMXn82ubH61vAp",
   "metadata": {
-    "name": "relayer",
+    "name": "fogoOnreRelayer",
     "version": "0.1.0",
     "spec": "0.1.0",
     "description": "Fogo OnRe relayer — stateless PDA-custody relay between Wormhole Gateway, OnRe, and Wormhole NTT on Solana"

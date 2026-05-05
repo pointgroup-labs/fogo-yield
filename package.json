@@ -5,7 +5,7 @@
   "scripts": {
     "sdk": "pnpm --filter @fogo-onre/sdk",
     "webapp": "pnpm --filter @fogo-onre/webapp",
-    "build": "anchor build && pnpm sdk build",
+    "build": "anchor build --ignore-keys && pnpm sdk build",
     "lint": "eslint --cache .",
     "lint:fix": "pnpm lint --fix",
     "pretest": "pnpm build",

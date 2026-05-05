@@ -2,7 +2,7 @@ import type { Provider } from '@anchor-lang/core'
 import type { PublicKey } from '@solana/web3.js'
 import type { NttRedeemContext } from './ntt'
 import type { OnreSwapContext } from './onre'
-import type { Relayer } from './types/fogo_onre_relayer'
+import type { FogoOnreRelayer } from './types/fogo_onre_relayer'
 import { BN, Program } from '@anchor-lang/core'
 
 import {
@@ -44,12 +44,12 @@ function toBigInt(value: BN | bigint): bigint {
 }
 
 export class RelayerClient {
-  readonly program: Program<Relayer>
+  readonly program: Program<FogoOnreRelayer>
   readonly configPda: PublicKey
   readonly authorityPda: PublicKey
 
   constructor(provider: Provider) {
-    this.program = new Program<Relayer>(IDL as unknown as Relayer, provider)
+    this.program = new Program<FogoOnreRelayer>(IDL as unknown as FogoOnreRelayer, provider)
     ;[this.configPda] = findConfigPda(this.program.programId)
     ;[this.authorityPda] = findAuthorityPda(this.program.programId)
   }
