@@ -49,12 +49,9 @@ tsconfig.tsbuildinfo
 .claude
 CLAUDE.md
 
-/tmp
+tmp
 
 /keypair.json
 
 # Next.js build output
 **/.next/
-
-# Local scratch files
-/test.ts
