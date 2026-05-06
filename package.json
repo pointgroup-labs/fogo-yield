@@ -3,9 +3,10 @@
   "private": true,
   "packageManager": "pnpm@10.33.0",
   "scripts": {
-    "cli": "node packages/cli/dist/cli.js",
-    "sdk": "pnpm --filter @fogo-onre/sdk",
-    "webapp": "pnpm --filter @fogo-onre/webapp",
+    "cli": "fogo-onre",
+    "cli:build": "pnpm -F {./packages/cli} build",
+    "sdk": "pnpm -F {./packages/sdk}",
+    "webapp": "pnpm -F {./packages/webapp}",
     "build": "anchor build --ignore-keys && pnpm sdk build",
     "lint": "eslint --cache .",
     "lint:fix": "pnpm lint --fix",
@@ -14,6 +15,7 @@
   },
   "dependencies": {
     "@anchor-lang/core": "^1.0.2",
+    "@fogo-onre/cli": "workspace:*",
     "@fogo-onre/sdk": "workspace:*",
     "@solana/web3.js": "^1.98.4"
   },

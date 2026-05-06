@@ -5,15 +5,15 @@ Admin CLI for the Fogo OnRe relayer program on Solana.
 ## Build
 
 ```bash
-pnpm --filter @fogo-onre/cli build
+pnpm cli:build
 ```
 
 Produces a single CJS bundle at `dist/cli.js` with the SDK and Anchor core
-inlined. The `bin` entry registers it as `fogo-onre`.
+inlined. The `bin` entry registers it as `fogo-onre`, which pnpm symlinks
+into the root `node_modules/.bin/` because the workspace root depends on
+this package.
 
 ## Run
-
-After building, invoke via the root `pnpm cli` script:
 
 ```bash
 pnpm cli relayer show
