@@ -13,7 +13,6 @@
  */
 
 import type { LiteSVM } from 'litesvm'
-import { NTT_PROGRAM_ID } from '@fogo-onre/sdk'
 import { PublicKey } from '@solana/web3.js'
 import { loadFixture } from './fixture-loader'
 
@@ -88,11 +87,11 @@ const SESSION_AUTHORITY_SEED = Buffer.from('session_authority')
 // PDA derivations
 // ---------------------------------------------------------------------------
 
-export function findNttConfigPda(programId: PublicKey = NTT_PROGRAM_ID): [PublicKey, number] {
+export function findNttConfigPda(programId: PublicKey): [PublicKey, number] {
   return PublicKey.findProgramAddressSync([CONFIG_SEED], programId)
 }
 
-export function findNttPeerPda(chainId: number, programId: PublicKey = NTT_PROGRAM_ID): [PublicKey, number] {
+export function findNttPeerPda(chainId: number, programId: PublicKey): [PublicKey, number] {
   const chainBuf = Buffer.alloc(2)
   chainBuf.writeUInt16BE(chainId)
   return PublicKey.findProgramAddressSync([NTT_MANAGER_PEER_SEED, chainBuf], programId)
@@ -100,7 +99,7 @@ export function findNttPeerPda(chainId: number, programId: PublicKey = NTT_PROGR
 
 export function findRegisteredTransceiverPda(
   transceiver: PublicKey,
-  programId: PublicKey = NTT_PROGRAM_ID,
+  programId: PublicKey,
 ): [PublicKey, number] {
   // Per upstream: seeds = [REGISTERED_TRANSCEIVER_SEED, transceiver.key()]
   return PublicKey.findProgramAddressSync(
@@ -109,24 +108,24 @@ export function findRegisteredTransceiverPda(
   )
 }
 
-export function findInboxRateLimitPda(chainId: number, programId: PublicKey = NTT_PROGRAM_ID): [PublicKey, number] {
+export function findInboxRateLimitPda(chainId: number, programId: PublicKey): [PublicKey, number] {
   const chainBuf = Buffer.alloc(2)
   chainBuf.writeUInt16BE(chainId)
   return PublicKey.findProgramAddressSync([INBOX_RATE_LIMIT_SEED, chainBuf], programId)
 }
 
-export function findOutboxRateLimitPda(programId: PublicKey = NTT_PROGRAM_ID): [PublicKey, number] {
+export function findOutboxRateLimitPda(programId: PublicKey): [PublicKey, number] {
   return PublicKey.findProgramAddressSync([OUTBOX_RATE_LIMIT_SEED], programId)
 }
 
-export function findTokenAuthorityPda(programId: PublicKey = NTT_PROGRAM_ID): [PublicKey, number] {
+export function findTokenAuthorityPda(programId: PublicKey): [PublicKey, number] {
   return PublicKey.findProgramAddressSync([TOKEN_AUTHORITY_SEED], programId)
 }
 
 export function findSessionAuthorityPda(
   fromOwner: PublicKey,
   argsHash: Uint8Array,
-  programId: PublicKey = NTT_PROGRAM_ID,
+  programId: PublicKey,
 ): [PublicKey, number] {
   return PublicKey.findProgramAddressSync(
     [SESSION_AUTHORITY_SEED, fromOwner.toBuffer(), Buffer.from(argsHash)],
@@ -136,7 +135,7 @@ export function findSessionAuthorityPda(
 
 export function findInboxItemPda(
   messageHash: Uint8Array,
-  programId: PublicKey = NTT_PROGRAM_ID,
+  programId: PublicKey,
 ): [PublicKey, number] {
   return PublicKey.findProgramAddressSync([INBOX_ITEM_SEED, Buffer.from(messageHash)], programId)
 }
@@ -404,7 +403,7 @@ function setNttAccount(
   svm: LiteSVM,
   address: PublicKey,
   data: Uint8Array,
-  programId: PublicKey = NTT_PROGRAM_ID,
+  programId: PublicKey,
 ): void {
   svm.setAccount(address, {
     executable: false,
@@ -617,7 +616,7 @@ export function computeInboxItemHash(
 export interface ValidatedTransceiverMessageParams {
   fromChain: number
   sourceNttManager: Uint8Array // 32 bytes — peer NTT manager on `fromChain`
-  recipientNttManager: Uint8Array // 32 bytes — NTT_PROGRAM_ID.toBytes() on Solana
+  recipientNttManager: Uint8Array // 32 bytes — NTT manager program id on Solana
   message: NttManagerMessageParams
 }
 
@@ -662,7 +661,7 @@ export function findValidatedTransceiverMessagePda(
  * Inject a `ValidatedTransceiverMessage` at the given address. The NTT redeem
  * CPI requires this account's owner to equal `RegisteredTransceiver.transceiver_address`.
  * For OnRe's deployment, the transceiver is compiled into the NTT manager
- * program itself, so `ownerProgramId` is `NTT_PROGRAM_ID`.
+ * program itself, so `ownerProgramId` is the per-leg NTT manager program id.
  */
 export function setValidatedTransceiverMessage(
   svm: LiteSVM,
@@ -684,7 +683,7 @@ export function setRegisteredTransceiver(
   svm: LiteSVM,
   transceiver: PublicKey,
   id: number,
-  programId: PublicKey = NTT_PROGRAM_ID,
+  programId: PublicKey,
 ): PublicKey {
   const [pda, bump] = findRegisteredTransceiverPda(transceiver, programId)
   svm.setAccount(pda, {
@@ -706,9 +705,45 @@ export function setRegisteredTransceiver(
 // ---------------------------------------------------------------------------
 
 /**
- * Load the real mainnet NTT Config fixture and patch it so the test's
- * dynamically-created `onycMint` and `custodyAta` are cemented into the
- * config (and the mode is forced to Locking — ONyc is canonical on Solana).
+ * Load a mainnet NTT account fixture and relocate it to the PDA derived
+ * under `programId`, patching the bump byte (where applicable) so Anchor's
+ * `seeds` constraint succeeds against the new derivation.
+ *
+ * Mainnet fixtures were captured under the USDC manager (`nttu74…`); when a
+ * test routes CPIs through the ONyc manager (`nttpna…`), every NTT PDA
+ * derives to a different address. This helper bridges that gap without
+ * requiring a separate mainnet capture per program ID.
+ */
+function relocateNttFixture(
+  svm: LiteSVM,
+  fixtureAddr: string,
+  destPda: PublicKey,
+  destBump: number | null,
+  programId: PublicKey,
+  patch?: (data: Uint8Array) => void,
+): void {
+  loadFixture(svm, fixtureAddr)
+  const src = svm.getAccount(new PublicKey(fixtureAddr))
+  if (!src) {
+    throw new Error(`relocateNttFixture: ${fixtureAddr} not loaded into LiteSVM`)
+  }
+  const data = new Uint8Array(src.data)
+  if (destBump !== null) {
+    data[8] = destBump // bump is the first field after the 8-byte Anchor disc
+  }
+  patch?.(data)
+  svm.setAccount(destPda, {
+    executable: false,
+    owner: programId,
+    lamports: src.lamports,
+    data,
+    rentEpoch: 0,
+  })
+}
+
+/**
+ * Load + patch the NTT Config PDA for `programId`, binding it to `mint` /
+ * `custodyAta` in Locking mode.
  *
  * The on-chain layout has TWO custody slots (likely a historical artifact);
  * both are patched to the same ATA so all NTT code paths see the same
@@ -716,34 +751,77 @@ export function setRegisteredTransceiver(
  */
 export function loadAndPatchNttConfig(
   svm: LiteSVM,
-  onycMint: PublicKey,
+  mint: PublicKey,
   custodyAta: PublicKey,
-): void {
-  loadFixture(svm, NTT_CONFIG_FIXTURE)
-  const configPda = new PublicKey(NTT_CONFIG_FIXTURE)
-  const acct = svm.getAccount(configPda)
-  if (!acct) {
-    throw new Error('loadAndPatchNttConfig: NTT config not found after loading fixture')
-  }
-  const data = new Uint8Array(acct.data)
-  data.set(onycMint.toBytes(), CONFIG_MINT_OFFSET)
-  data[CONFIG_MODE_OFFSET] = NttMode.Locking
-  data.set(custodyAta.toBytes(), CONFIG_CUSTODY_OFFSET_1)
-  data.set(custodyAta.toBytes(), CONFIG_CUSTODY_OFFSET_2)
-  svm.setAccount(configPda, { ...acct, data })
+  programId: PublicKey,
+): PublicKey {
+  const [destPda, destBump] = findNttConfigPda(programId)
+  relocateNttFixture(svm, NTT_CONFIG_FIXTURE, destPda, destBump, programId, (data) => {
+    data.set(mint.toBytes(), CONFIG_MINT_OFFSET)
+    data[CONFIG_MODE_OFFSET] = NttMode.Locking
+    data.set(custodyAta.toBytes(), CONFIG_CUSTODY_OFFSET_1)
+    data.set(custodyAta.toBytes(), CONFIG_CUSTODY_OFFSET_2)
+  })
+  return destPda
+}
+
+/** Load the NTT Peer fixture at the PDA derived under `programId` for FOGO. */
+export function loadAndPatchNttPeer(
+  svm: LiteSVM,
+  programId: PublicKey,
+  chainId: number = 51,
+): PublicKey {
+  const [destPda, destBump] = findNttPeerPda(chainId, programId)
+  relocateNttFixture(svm, NTT_PEER_FIXTURE, destPda, destBump, programId)
+  return destPda
 }
 
 /**
- * Read the peer's 32-byte `address` field from the loaded mainnet
- * `NTT_PEER_FIXTURE`, so inbound message synthesis can use the real
- * source-NTT-manager pubkey instead of a placeholder.
+ * Load the NTT InboxRateLimit fixture at the PDA derived under `programId`
+ * for FOGO, with `last_tx_timestamp` zeroed so the `ts <= now` check in NTT
+ * passes regardless of LiteSVM's wall clock.
  */
-export function readPeerAddress(svm: LiteSVM): Uint8Array {
-  const acct = svm.getAccount(new PublicKey(NTT_PEER_FIXTURE))
+export function loadAndPatchNttInboxRateLimit(
+  svm: LiteSVM,
+  programId: PublicKey,
+  chainId: number = 51,
+): PublicKey {
+  const [destPda, destBump] = findInboxRateLimitPda(chainId, programId)
+  relocateNttFixture(svm, NTT_INBOX_RL_FIXTURE, destPda, destBump, programId, (data) => {
+    // InboxRateLimit: disc(8) + bump(1) + limit(8) + capacity(8) + last_tx_timestamp(i64@25)
+    new DataView(data.buffer, data.byteOffset).setBigInt64(25, 0n, true)
+  })
+  return destPda
+}
+
+/**
+ * Load the NTT OutboxRateLimit fixture at the PDA derived under `programId`,
+ * with `last_tx_timestamp` zeroed. OutboxRateLimit has no stored bump field
+ * (Anchor uses canonical-bump semantics), so no bump patch is needed.
+ */
+export function loadAndPatchNttOutboxRateLimit(
+  svm: LiteSVM,
+  programId: PublicKey,
+): PublicKey {
+  const [destPda] = findOutboxRateLimitPda(programId)
+  relocateNttFixture(svm, NTT_OUTBOX_RL_FIXTURE, destPda, null, programId, (data) => {
+    // OutboxRateLimit: disc(8) + limit(8) + capacity(8) + last_tx_timestamp(i64@24)
+    new DataView(data.buffer, data.byteOffset).setBigInt64(24, 0n, true)
+  })
+  return destPda
+}
+
+/**
+ * Read the peer's 32-byte `address` field from a loaded NTT Peer PDA, so
+ * inbound message synthesis can use the real source-NTT-manager pubkey
+ * instead of a placeholder.
+ */
+export function readPeerAddress(svm: LiteSVM, peerPda: PublicKey): Uint8Array {
+  const acct = svm.getAccount(peerPda)
   if (!acct) {
     throw new Error(
-      'readPeerAddress: NTT_PEER_FIXTURE not loaded into LiteSVM '
-      + '(call loadFixture first)',
+      `readPeerAddress: peer PDA ${peerPda.toBase58()} not loaded `
+      + '(call loadAndPatchNttPeer first)',
     )
   }
   return new Uint8Array(acct.data).slice(PEER_ADDRESS_OFFSET, PEER_ADDRESS_OFFSET + 32)

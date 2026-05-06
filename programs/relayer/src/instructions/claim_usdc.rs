@@ -2,8 +2,8 @@ use anchor_lang::prelude::*;
 use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
 
 use crate::constants::{
-    CONFIG_SEED, FLOW_INBOUND_SEED, FOGO_WORMHOLE_CHAIN_ID, NTT_PROGRAM_ID, NTT_REDEEM_IX,
-    NTT_RELEASE_INBOUND_UNLOCK_IX, REDEMPTION_TRACKER_SEED, RELAYER_SEED,
+    CONFIG_SEED, FLOW_INBOUND_SEED, FOGO_WORMHOLE_CHAIN_ID, NTT_REDEEM_IX,
+    NTT_RELEASE_INBOUND_UNLOCK_IX, NTT_USDC_PROGRAM_ID, REDEMPTION_TRACKER_SEED, RELAYER_SEED,
 };
 use crate::cpi::invoke_relayer_signed;
 use crate::error::RelayerError;
@@ -35,7 +35,7 @@ const RELEASE_IDX_RECIPIENT_ATA: usize = 3;
 /// - NTT `redeem` validates guardian sigs via `ValidatedTransceiverMessage`
 ///   (whose owner must equal the registered transceiver).
 /// - `fogo_sender` is `NttManagerMessage.sender` parsed from on-chain
-///   transceiver-message data; Anchor `owner = NTT_PROGRAM_ID` plus the
+///   transceiver-message data; Anchor `owner = NTT_USDC_PROGRAM_ID` plus the
 ///   discriminator check reject impostors.
 /// - `release_inbound_unlock` writes USDC directly to the relayer-authority
 ///   ATA — no intermediate redeemer-owned ATA / sweep dance.
@@ -87,8 +87,8 @@ pub fn handler<'info>(
     // Pin the inbound origin to FOGO. Without this, a future non-FOGO peer
     // registration on the NTT manager would let foreign-chain VAAs create
     // Flow PDAs that the outbound legs blindly bridge back to FOGO.
-    let (expected_peer, _) = derive_ntt_peer(FOGO_WORMHOLE_CHAIN_ID);
-    let (expected_inbox_rl, _) = derive_ntt_inbox_rate_limit(FOGO_WORMHOLE_CHAIN_ID);
+    let (expected_peer, _) = derive_ntt_peer(&NTT_USDC_PROGRAM_ID, FOGO_WORMHOLE_CHAIN_ID);
+    let (expected_inbox_rl, _) = derive_ntt_inbox_rate_limit(&NTT_USDC_PROGRAM_ID, FOGO_WORMHOLE_CHAIN_ID);
     require_keys_eq!(
         redeem_accs[REDEEM_IDX_PEER].key(),
         expected_peer,
@@ -114,7 +114,7 @@ pub fn handler<'info>(
     let pre_balance = ctx.accounts.usdc_ata.amount;
 
     invoke_relayer_signed(
-        NTT_PROGRAM_ID,
+        NTT_USDC_PROGRAM_ID,
         &NTT_REDEEM_IX,
         &NttRedeemArgs {},
         redeem_accs,
@@ -123,7 +123,7 @@ pub fn handler<'info>(
     )?;
 
     invoke_relayer_signed(
-        NTT_PROGRAM_ID,
+        NTT_USDC_PROGRAM_ID,
         &NTT_RELEASE_INBOUND_UNLOCK_IX,
         &NttReleaseInboundArgs {
             revert_on_delay: false,
@@ -191,10 +191,10 @@ pub struct ClaimUsdc<'info> {
     /// CHECK: validated by the NTT CPI.
     pub ntt_inbox_item: UncheckedAccount<'info>,
 
-    /// `owner = NTT_PROGRAM_ID` pins the writer; nothing outside NTT can
+    /// `owner = NTT_USDC_PROGRAM_ID` pins the writer; nothing outside NTT can
     /// have crafted this data.
     /// CHECK: owner + discriminator + offset checks in the handler.
-    #[account(owner = NTT_PROGRAM_ID)]
+    #[account(owner = NTT_USDC_PROGRAM_ID)]
     pub ntt_transceiver_message: UncheckedAccount<'info>,
 
     /// `init` blocks double-claims against the same NTT inbox item.

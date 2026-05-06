@@ -14,6 +14,7 @@ import {
   findSessionAuthorityPda,
   findTokenAuthorityPda,
   FOGO_WORMHOLE_CHAIN_ID,
+  NTT_ONYC_PROGRAM_ID,
   nttTransferArgsHash,
   RelayerClient,
 } from '@fogo-onre/sdk'
@@ -27,11 +28,9 @@ import {
   createSvm,
   FlowStatus,
   loadAndPatchNttConfig,
-  loadFixture,
-  NTT_INBOX_RL_FIXTURE,
-  NTT_OUTBOX_RL_FIXTURE,
-  NTT_PEER_FIXTURE,
-  pinBinaryFixtures,
+  loadAndPatchNttInboxRateLimit,
+  loadAndPatchNttOutboxRateLimit,
+  loadAndPatchNttPeer,
   setFlowAccount,
 } from './utils'
 
@@ -46,7 +45,6 @@ describe('lock_onyc e2e (NTT transfer_lock)', () => {
 
   const fogoSender = new Uint8Array(32).fill(0xAB)
 
-  beforeEach(() => pinBinaryFixtures())
   beforeEach(async () => {
     svm = createSvm()
     authority = Keypair.generate()
@@ -54,7 +52,7 @@ describe('lock_onyc e2e (NTT transfer_lock)', () => {
     client = new RelayerClient(provider as any)
 
     ;[relayerAuthorityPda] = findAuthorityPda(client.program.programId)
-    ;[nttTokenAuthorityPda] = findTokenAuthorityPda()
+    ;[nttTokenAuthorityPda] = findTokenAuthorityPda(NTT_ONYC_PROGRAM_ID)
 
     // Create USDC mint (normal)
     usdcMint = createMint(svm, authority, 6)
@@ -117,27 +115,12 @@ describe('lock_onyc e2e (NTT transfer_lock)', () => {
     // Fund the relayer authority PDA with SOL
     svm.airdrop(relayerAuthorityPda, BigInt(5e9))
 
-    // Load real mainnet NTT account fixtures and patch config
-    loadAndPatchNttConfig(svm, onycMint.publicKey, custodyAta)
-    loadFixture(svm, NTT_PEER_FIXTURE)
-    loadFixture(svm, NTT_INBOX_RL_FIXTURE)
-    loadFixture(svm, NTT_OUTBOX_RL_FIXTURE)
-
-    // Patch rate limit timestamps to 0 so they don't fail the
-    // `last_tx_timestamp <= now` assertion (mainnet fixtures have future timestamps)
-    const outboxRlPda = new PublicKey(NTT_OUTBOX_RL_FIXTURE)
-    const outboxRlAcct = svm.getAccount(outboxRlPda)!
-    const outboxRlData = new Uint8Array(outboxRlAcct.data)
-    // OutboxRateLimit: disc(8) + limit(8) + capacity(8) + last_tx_timestamp(i64@24)
-    new DataView(outboxRlData.buffer, outboxRlData.byteOffset).setBigInt64(24, 0n, true)
-    svm.setAccount(outboxRlPda, { ...outboxRlAcct, data: outboxRlData })
-
-    const inboxRlPda = new PublicKey(NTT_INBOX_RL_FIXTURE)
-    const inboxRlAcct = svm.getAccount(inboxRlPda)!
-    const inboxRlData = new Uint8Array(inboxRlAcct.data)
-    // InboxRateLimit: disc(8) + bump(1) + limit(8) + capacity(8) + last_tx_timestamp(i64@25)
-    new DataView(inboxRlData.buffer, inboxRlData.byteOffset).setBigInt64(25, 0n, true)
-    svm.setAccount(inboxRlPda, { ...inboxRlAcct, data: inboxRlData })
+    // Load real mainnet NTT account fixtures, relocated to PDAs derived
+    // under the ONyc NTT manager program (with bump bytes patched).
+    loadAndPatchNttConfig(svm, onycMint.publicKey, custodyAta, NTT_ONYC_PROGRAM_ID)
+    loadAndPatchNttPeer(svm, NTT_ONYC_PROGRAM_ID)
+    loadAndPatchNttInboxRateLimit(svm, NTT_ONYC_PROGRAM_ID)
+    loadAndPatchNttOutboxRateLimit(svm, NTT_ONYC_PROGRAM_ID)
 
     // Ensure token_authority PDA exists (NTT reads it as AccountInfo)
     svm.airdrop(nttTokenAuthorityPda, BigInt(1e9))
@@ -166,7 +149,7 @@ describe('lock_onyc e2e (NTT transfer_lock)', () => {
       recipientAddress: fogoSender,
       shouldQueue: false,
     })
-    const [sessionAuthorityPda] = findSessionAuthorityPda(relayerAuthorityPda, argsHash)
+    const [sessionAuthorityPda] = findSessionAuthorityPda(relayerAuthorityPda, argsHash, NTT_ONYC_PROGRAM_ID)
 
     // Ensure session_authority exists as an account
     svm.airdrop(sessionAuthorityPda, BigInt(1e9))

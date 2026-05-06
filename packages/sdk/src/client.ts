@@ -13,7 +13,7 @@ import {
 import {
   SystemProgram,
 } from '@solana/web3.js'
-import { FOGO_WORMHOLE_CHAIN_ID, NTT_PROGRAM_ID } from './constants'
+import { FOGO_WORMHOLE_CHAIN_ID, NTT_ONYC_PROGRAM_ID, NTT_USDC_PROGRAM_ID } from './constants'
 import IDL from './idl/fogo_onre_relayer.json' with { type: 'json' }
 import {
   buildNttTransferLockAccountList,
@@ -164,6 +164,7 @@ export class RelayerClient {
           nttInboxItem: params.nttInboxItem,
           nttTransceiverMessage: params.nttTransceiverMessage,
           ntt: params.ntt,
+          programId: NTT_USDC_PROGRAM_ID,
         })
       : null
 
@@ -265,7 +266,7 @@ export class RelayerClient {
 
     return builder.remainingAccounts(
       buildNttTransferLockAccountList({
-        nttProgramId: NTT_PROGRAM_ID,
+        nttProgramId: NTT_ONYC_PROGRAM_ID,
         fromOwner: this.authorityPda,
         fromOwnerIsSigner: false,
         fromTokenAccount: this.ata(params.onycMint),
@@ -297,6 +298,7 @@ export class RelayerClient {
           nttInboxItem: params.nttInboxItem,
           nttTransceiverMessage: params.nttTransceiverMessage,
           ntt: params.ntt,
+          programId: NTT_ONYC_PROGRAM_ID,
         })
       : null
 
@@ -356,7 +358,7 @@ export class RelayerClient {
 
     return builder.remainingAccounts(
       buildNttTransferLockAccountList({
-        nttProgramId: NTT_PROGRAM_ID,
+        nttProgramId: NTT_USDC_PROGRAM_ID,
         fromOwner: this.authorityPda,
         fromOwnerIsSigner: false,
         fromTokenAccount: this.ata(params.usdcMint),
@@ -370,7 +372,7 @@ export class RelayerClient {
   }
 
   /**
-   * Build the concatenated `redeem ‖ release ‖ NTT_PROGRAM_ID` account list
+   * Build the concatenated `redeem ‖ release ‖ NTT program` account list
    * for `claim_usdc` / `unlock_onyc`. Mint-agnostic — caller supplies the
    * NTT-managed mint (USDC.s on the deposit leg, ONyc on the withdraw leg).
    *
@@ -386,16 +388,20 @@ export class RelayerClient {
     nttInboxItem: PublicKey
     nttTransceiverMessage: PublicKey
     ntt: NttRedeemContext
+    programId: PublicKey
   }) {
     const fromChain = FOGO_WORMHOLE_CHAIN_ID
     const mintAta = this.ata(params.mint)
-    const [configPda] = findNttConfigPda()
-    const [peerPda] = findNttPeerPda(fromChain)
-    const [registeredTransceiverPda] = findRegisteredTransceiverPda(params.ntt.transceiverAddress)
-    const [inboxRateLimitPda] = findInboxRateLimitPda(fromChain)
-    const [outboxRateLimitPda] = findOutboxRateLimitPda()
-    const [tokenAuthorityPda] = findTokenAuthorityPda()
-    const custody = findNttCustodyAta(params.mint)
+    const [configPda] = findNttConfigPda(params.programId)
+    const [peerPda] = findNttPeerPda(fromChain, params.programId)
+    const [registeredTransceiverPda] = findRegisteredTransceiverPda(
+      params.ntt.transceiverAddress,
+      params.programId,
+    )
+    const [inboxRateLimitPda] = findInboxRateLimitPda(fromChain, params.programId)
+    const [outboxRateLimitPda] = findOutboxRateLimitPda(params.programId)
+    const [tokenAuthorityPda] = findTokenAuthorityPda(params.programId)
+    const custody = findNttCustodyAta(params.mint, params.programId)
 
     const redeem = [
       { pubkey: this.authorityPda, isSigner: false, isWritable: true },
@@ -421,7 +427,7 @@ export class RelayerClient {
       { pubkey: custody, isSigner: false, isWritable: true },
     ]
 
-    const nttProgramMeta = { pubkey: NTT_PROGRAM_ID, isSigner: false, isWritable: false }
+    const nttProgramMeta = { pubkey: params.programId, isSigner: false, isWritable: false }
     return {
       remainingAccounts: [
         ...redeem,

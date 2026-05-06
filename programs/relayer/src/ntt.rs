@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 
-use crate::constants::{NTT_PROGRAM_ID, NTT_SESSION_AUTHORITY_SEED};
+use crate::constants::NTT_SESSION_AUTHORITY_SEED;
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy)]
 pub struct NttTransferArgs {
@@ -27,11 +27,15 @@ impl NttTransferArgs {
     }
 }
 
-pub fn derive_session_authority(sender: &Pubkey, args: &NttTransferArgs) -> (Pubkey, u8) {
+pub fn derive_session_authority(
+    program_id: &Pubkey,
+    sender: &Pubkey,
+    args: &NttTransferArgs,
+) -> (Pubkey, u8) {
     let hash = args.args_hash();
     Pubkey::find_program_address(
         &[NTT_SESSION_AUTHORITY_SEED, sender.as_ref(), hash.as_ref()],
-        &NTT_PROGRAM_ID,
+        program_id,
     )
 }
 
@@ -59,18 +63,18 @@ const NTT_INBOX_RATE_LIMIT_SEED: &[u8] = b"inbox_rate_limit";
 /// check, a future non-FOGO peer registration on the NTT manager would
 /// let foreign-chain VAAs create Flow PDAs that the relayer would then
 /// blindly bridge back to FOGO.
-pub fn derive_ntt_peer(chain_id: u16) -> (Pubkey, u8) {
+pub fn derive_ntt_peer(program_id: &Pubkey, chain_id: u16) -> (Pubkey, u8) {
     Pubkey::find_program_address(
         &[NTT_MANAGER_PEER_SEED, &chain_id.to_be_bytes()],
-        &NTT_PROGRAM_ID,
+        program_id,
     )
 }
 
 /// Derive the NTT manager's per-chain `inbox_rate_limit` PDA. Same
 /// chain-pinning rationale as `derive_ntt_peer`.
-pub fn derive_ntt_inbox_rate_limit(chain_id: u16) -> (Pubkey, u8) {
+pub fn derive_ntt_inbox_rate_limit(program_id: &Pubkey, chain_id: u16) -> (Pubkey, u8) {
     Pubkey::find_program_address(
         &[NTT_INBOX_RATE_LIMIT_SEED, &chain_id.to_be_bytes()],
-        &NTT_PROGRAM_ID,
+        program_id,
     )
 }

@@ -23,7 +23,7 @@ import {
   findInflightFlowPda,
   findTokenAuthorityPda,
   FOGO_WORMHOLE_CHAIN_ID,
-  NTT_PROGRAM_ID,
+  NTT_USDC_PROGRAM_ID,
   RelayerClient,
 } from '@fogo-onre/sdk'
 import { keccak_256 } from '@noble/hashes/sha3.js'
@@ -43,17 +43,16 @@ import {
   findOnreVaultAuthorityPda,
   findValidatedTransceiverMessagePda,
   loadAndPatchNttConfig,
+  loadAndPatchNttInboxRateLimit,
+  loadAndPatchNttOutboxRateLimit,
+  loadAndPatchNttPeer,
   loadAndPatchOnreOffer,
   loadFixture,
-  NTT_INBOX_RL_FIXTURE,
-  NTT_OUTBOX_RL_FIXTURE,
-  NTT_PEER_FIXTURE,
   ONRE_BOSS_PUBKEY,
   ONRE_MINT_AUTHORITY_FIXTURE,
   ONRE_PERM_AUTHORITY_FIXTURE,
   ONRE_STATE_FIXTURE,
   ONRE_VAULT_AUTHORITY_FIXTURE,
-  pinBinaryFixtures,
   readPeerAddress,
   setRegisteredTransceiver,
   setValidatedTransceiverMessage,
@@ -67,6 +66,7 @@ describe('deposit flow e2e (claim_usdc → swap_usdc_to_onyc)', () => {
   let onycMint: Keypair
   let relayerAuthorityPda: PublicKey
   let nttTokenAuthorityPda: PublicKey
+  let peerPda: PublicKey
 
   let onreVaultAuthorityPda: PublicKey
   let onrePermAuthorityPda: PublicKey
@@ -77,7 +77,6 @@ describe('deposit flow e2e (claim_usdc → swap_usdc_to_onyc)', () => {
   // ONyc the OnRe vault holds (must be enough for the swap's output)
   const VAULT_ONYC_BALANCE = 10_000_000n
 
-  beforeEach(() => pinBinaryFixtures())
   beforeEach(async () => {
     svm = createSvm()
     // Set clock to 1 hour into the OnRe pricing vector's active period.
@@ -88,7 +87,7 @@ describe('deposit flow e2e (claim_usdc → swap_usdc_to_onyc)', () => {
     client = new RelayerClient(provider as any)
 
     ;[relayerAuthorityPda] = findAuthorityPda(client.program.programId)
-    ;[nttTokenAuthorityPda] = findTokenAuthorityPda()
+    ;[nttTokenAuthorityPda] = findTokenAuthorityPda(NTT_USDC_PROGRAM_ID)
     ;[onreVaultAuthorityPda] = findOnreVaultAuthorityPda()
     ;[onrePermAuthorityPda] = findOnrePermissionlessAuthorityPda()
     ;[onreMintAuthorityPda] = findOnreMintAuthorityPda()
@@ -172,27 +171,12 @@ describe('deposit flow e2e (claim_usdc → swap_usdc_to_onyc)', () => {
       svm.setAccount(usdcMint.publicKey, { ...acct, data })
     }
 
-    loadAndPatchNttConfig(svm, usdcMint.publicKey, custodyAta)
-    loadFixture(svm, NTT_PEER_FIXTURE)
-    loadFixture(svm, NTT_INBOX_RL_FIXTURE)
-    loadFixture(svm, NTT_OUTBOX_RL_FIXTURE)
+    loadAndPatchNttConfig(svm, usdcMint.publicKey, custodyAta, NTT_USDC_PROGRAM_ID)
+    peerPda = loadAndPatchNttPeer(svm, NTT_USDC_PROGRAM_ID)
+    loadAndPatchNttInboxRateLimit(svm, NTT_USDC_PROGRAM_ID)
+    loadAndPatchNttOutboxRateLimit(svm, NTT_USDC_PROGRAM_ID)
 
-    {
-      const pda = new PublicKey(NTT_OUTBOX_RL_FIXTURE)
-      const acct = svm.getAccount(pda)!
-      const data = new Uint8Array(acct.data)
-      new DataView(data.buffer).setBigInt64(24, 0n, true)
-      svm.setAccount(pda, { ...acct, data })
-    }
-    {
-      const pda = new PublicKey(NTT_INBOX_RL_FIXTURE)
-      const acct = svm.getAccount(pda)!
-      const data = new Uint8Array(acct.data)
-      new DataView(data.buffer).setBigInt64(25, 0n, true)
-      svm.setAccount(pda, { ...acct, data })
-    }
-
-    setRegisteredTransceiver(svm, NTT_PROGRAM_ID, 0)
+    setRegisteredTransceiver(svm, NTT_USDC_PROGRAM_ID, 0, NTT_USDC_PROGRAM_ID)
     svm.airdrop(nttTokenAuthorityPda, BigInt(1e9))
   })
 
@@ -201,7 +185,7 @@ describe('deposit flow e2e (claim_usdc → swap_usdc_to_onyc)', () => {
 
     // Build the inbound NTT message — recipient = relayerAuthorityPda so
     // released USDC lands in the relayer ATA.
-    const peerAddress = readPeerAddress(svm)
+    const peerAddress = readPeerAddress(svm, peerPda)
     const messageId = new Uint8Array(32)
     crypto.getRandomValues(messageId)
     const sourceToken = new Uint8Array(32).fill(0x33)
@@ -217,17 +201,17 @@ describe('deposit flow e2e (claim_usdc → swap_usdc_to_onyc)', () => {
     }
 
     const [validatedMsgPda] = findValidatedTransceiverMessagePda(
-      FOGO_WORMHOLE_CHAIN_ID, messageId, NTT_PROGRAM_ID,
+      FOGO_WORMHOLE_CHAIN_ID, messageId, NTT_USDC_PROGRAM_ID,
     )
-    setValidatedTransceiverMessage(svm, validatedMsgPda, NTT_PROGRAM_ID, {
+    setValidatedTransceiverMessage(svm, validatedMsgPda, NTT_USDC_PROGRAM_ID, {
       fromChain: FOGO_WORMHOLE_CHAIN_ID,
       sourceNttManager: peerAddress,
-      recipientNttManager: NTT_PROGRAM_ID.toBytes(),
+      recipientNttManager: NTT_USDC_PROGRAM_ID.toBytes(),
       message,
     })
 
     const msgHash = computeInboxItemHash(FOGO_WORMHOLE_CHAIN_ID, message, keccak_256)
-    const [inboxItemPda] = findInboxItemPda(msgHash)
+    const [inboxItemPda] = findInboxItemPda(msgHash, NTT_USDC_PROGRAM_ID)
 
     try {
       await client
@@ -237,7 +221,7 @@ describe('deposit flow e2e (claim_usdc → swap_usdc_to_onyc)', () => {
           nttInboxItem: inboxItemPda,
           nttTransceiverMessage: validatedMsgPda,
           ntt: {
-            transceiverAddress: NTT_PROGRAM_ID,
+            transceiverAddress: NTT_USDC_PROGRAM_ID,
           },
         })
         .rpc()

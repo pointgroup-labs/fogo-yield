@@ -3,7 +3,12 @@ import IDL from './idl/fogo_onre_relayer.json' with { type: 'json' }
 
 export const RELAYER_PROGRAM_ID = new PublicKey(IDL.address)
 export const ONRE_PROGRAM_ID = new PublicKey('onreuGhHHgVzMWSkj2oQDLDtvvGvoepBPkqyaubFcwe')
-export const NTT_PROGRAM_ID = new PublicKey('nttu74CdAmsErx5daJVCQNoDZujswFrskMzonoZSdGk')
+
+/** NTT manager program for USDC.s on Solana mainnet. */
+export const NTT_USDC_PROGRAM_ID = new PublicKey('nttu74CdAmsErx5daJVCQNoDZujswFrskMzonoZSdGk')
+
+/** NTT manager program for ONyc on Solana mainnet. */
+export const NTT_ONYC_PROGRAM_ID = new PublicKey('nttpna5vXW7BN2Aa4AfTbkCncJWTEoBsnWvjS87Xgsd')
 
 /** OnRe's ONyc SPL mint on Solana mainnet. */
 export const ONYC_MINT = new PublicKey('5Y8NV33Vv7WbnLfq3zBcKSdYPrk7g2KoiQoe7M2tcxp5')

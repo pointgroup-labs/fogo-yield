@@ -11,7 +11,7 @@
  * is what `receive_message` would write). NTT's `redeem` reads it via
  * `try_deserialize` and enforces the owner matches the registered
  * transceiver — for the OnRe deployment, the transceiver IS the NTT
- * program itself, so we set the owner to `NTT_PROGRAM_ID`.
+ * program itself, so we set the owner to `NTT_ONYC_PROGRAM_ID`.
  */
 
 import type { LiteSVM } from 'litesvm'
@@ -21,7 +21,7 @@ import {
   findOutflightFlowPda,
   findTokenAuthorityPda,
   FOGO_WORMHOLE_CHAIN_ID,
-  NTT_PROGRAM_ID,
+  NTT_ONYC_PROGRAM_ID,
   RelayerClient,
 } from '@fogo-onre/sdk'
 import { keccak_256 } from '@noble/hashes/sha3.js'
@@ -36,11 +36,9 @@ import {
   createSvm,
   findValidatedTransceiverMessagePda,
   loadAndPatchNttConfig,
-  loadFixture,
-  NTT_INBOX_RL_FIXTURE,
-  NTT_OUTBOX_RL_FIXTURE,
-  NTT_PEER_FIXTURE,
-  pinBinaryFixtures,
+  loadAndPatchNttInboxRateLimit,
+  loadAndPatchNttOutboxRateLimit,
+  loadAndPatchNttPeer,
   readPeerAddress,
   setRegisteredTransceiver,
   setValidatedTransceiverMessage,
@@ -56,10 +54,10 @@ describe('unlock_onyc e2e (NTT redeem + release_inbound_unlock, Locking mode)', 
   let nttTokenAuthorityPda: PublicKey
   let custodyAta: PublicKey
   let onycAta: PublicKey
+  let peerPda: PublicKey
 
   const CUSTODY_BALANCE = 10_000_000n // 10 ONyc in custody
 
-  beforeEach(() => pinBinaryFixtures())
   beforeEach(async () => {
     svm = createSvm()
     authority = Keypair.generate()
@@ -67,7 +65,7 @@ describe('unlock_onyc e2e (NTT redeem + release_inbound_unlock, Locking mode)', 
     client = new RelayerClient(provider as any)
 
     ;[relayerAuthorityPda] = findAuthorityPda(client.program.programId)
-    ;[nttTokenAuthorityPda] = findTokenAuthorityPda()
+    ;[nttTokenAuthorityPda] = findTokenAuthorityPda(NTT_ONYC_PROGRAM_ID)
 
     usdcMint = createMint(svm, authority, 6)
     onycMint = createMintWithAuthority(svm, authority, nttTokenAuthorityPda, 6)
@@ -110,28 +108,16 @@ describe('unlock_onyc e2e (NTT redeem + release_inbound_unlock, Locking mode)', 
     new DataView(mintData.buffer).setBigUint64(36, CUSTODY_BALANCE, true)
     svm.setAccount(onycMint.publicKey, { ...mintAcct, data: mintData })
 
-    // Load + patch NTT state fixtures
-    loadAndPatchNttConfig(svm, onycMint.publicKey, custodyAta)
-    loadFixture(svm, NTT_PEER_FIXTURE)
-    loadFixture(svm, NTT_INBOX_RL_FIXTURE)
-    loadFixture(svm, NTT_OUTBOX_RL_FIXTURE)
-
-    // Zero rate-limit timestamps (fixtures have future ts that break `ts <= now`)
-    const outboxRlPda = new PublicKey(NTT_OUTBOX_RL_FIXTURE)
-    const outboxRlAcct = svm.getAccount(outboxRlPda)!
-    const outboxRlData = new Uint8Array(outboxRlAcct.data)
-    new DataView(outboxRlData.buffer).setBigInt64(24, 0n, true)
-    svm.setAccount(outboxRlPda, { ...outboxRlAcct, data: outboxRlData })
-
-    const inboxRlPda = new PublicKey(NTT_INBOX_RL_FIXTURE)
-    const inboxRlAcct = svm.getAccount(inboxRlPda)!
-    const inboxRlData = new Uint8Array(inboxRlAcct.data)
-    new DataView(inboxRlData.buffer).setBigInt64(25, 0n, true)
-    svm.setAccount(inboxRlPda, { ...inboxRlAcct, data: inboxRlData })
+    // Load real mainnet NTT account fixtures, relocated to PDAs derived
+    // under the ONyc NTT manager program (with bump bytes patched).
+    loadAndPatchNttConfig(svm, onycMint.publicKey, custodyAta, NTT_ONYC_PROGRAM_ID)
+    peerPda = loadAndPatchNttPeer(svm, NTT_ONYC_PROGRAM_ID)
+    loadAndPatchNttInboxRateLimit(svm, NTT_ONYC_PROGRAM_ID)
+    loadAndPatchNttOutboxRateLimit(svm, NTT_ONYC_PROGRAM_ID)
 
     // Register the transceiver (NTT program itself is the transceiver in
     // the OnRe deployment — verified against mainnet on 2026-04-21).
-    setRegisteredTransceiver(svm, NTT_PROGRAM_ID, 0)
+    setRegisteredTransceiver(svm, NTT_ONYC_PROGRAM_ID, 0, NTT_ONYC_PROGRAM_ID)
 
     svm.airdrop(relayerAuthorityPda, BigInt(5e9))
     svm.airdrop(nttTokenAuthorityPda, BigInt(1e9))
@@ -143,13 +129,13 @@ describe('unlock_onyc e2e (NTT redeem + release_inbound_unlock, Locking mode)', 
 
     // Build the NTT message. Critical constraints enforced by `redeem`:
     //   - source_ntt_manager == peer.address (read from the fixture)
-    //   - recipient_ntt_manager == NTT_PROGRAM_ID
+    //   - recipient_ntt_manager == NTT_ONYC_PROGRAM_ID
     //   - to_chain == config.chain_id (Solana = 1)
     //   - owner of ValidatedTransceiverMessage == transceiver.transceiver_address
     //
     // We also set `to = relayerAuthorityPda` so the released ONyc lands in
     // the relayer's ATA (recipient ATA authority == inbox_item.recipient_address).
-    const peerAddress = readPeerAddress(svm)
+    const peerAddress = readPeerAddress(svm, peerPda)
     const messageId = new Uint8Array(32)
     crypto.getRandomValues(messageId)
     const sourceToken = new Uint8Array(32).fill(0x22)
@@ -170,22 +156,22 @@ describe('unlock_onyc e2e (NTT redeem + release_inbound_unlock, Locking mode)', 
     const [validatedMsgPda] = findValidatedTransceiverMessagePda(
       FOGO_WORMHOLE_CHAIN_ID,
       messageId,
-      NTT_PROGRAM_ID,
+      NTT_ONYC_PROGRAM_ID,
     )
 
-    setValidatedTransceiverMessage(svm, validatedMsgPda, NTT_PROGRAM_ID, {
+    setValidatedTransceiverMessage(svm, validatedMsgPda, NTT_ONYC_PROGRAM_ID, {
       fromChain: FOGO_WORMHOLE_CHAIN_ID,
       sourceNttManager: peerAddress,
-      recipientNttManager: NTT_PROGRAM_ID.toBytes(),
+      recipientNttManager: NTT_ONYC_PROGRAM_ID.toBytes(),
       message,
     })
 
     // Content-addressed inbox_item PDA
     const msgHash = computeInboxItemHash(FOGO_WORMHOLE_CHAIN_ID, message, keccak_256)
-    const [inboxItemPda] = findInboxItemPda(msgHash)
+    const [inboxItemPda] = findInboxItemPda(msgHash, NTT_ONYC_PROGRAM_ID)
 
     // Ensure the registered_transceiver PDA exists for the redeem CPI
-    setRegisteredTransceiver(svm, NTT_PROGRAM_ID, 0)
+    setRegisteredTransceiver(svm, NTT_ONYC_PROGRAM_ID, 0, NTT_ONYC_PROGRAM_ID)
 
     try {
       await client
@@ -195,7 +181,7 @@ describe('unlock_onyc e2e (NTT redeem + release_inbound_unlock, Locking mode)', 
           nttInboxItem: inboxItemPda,
           nttTransceiverMessage: validatedMsgPda,
           ntt: {
-            transceiverAddress: NTT_PROGRAM_ID,
+            transceiverAddress: NTT_ONYC_PROGRAM_ID,
           },
         })
         .rpc()

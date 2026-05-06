@@ -15,16 +15,11 @@ use instructions::*;
 
 declare_id!("onrenRKgX54qtWeK3cuaTBE71xx7dWMXn82ubH61vAp");
 
-/// Stateless cross-chain relayer between FOGO and Solana.
+/// On-chain relayer for OnRe's cross-chain yield product.
 ///
-/// All operational instructions are permissionless. Safety comes from the
-/// Flow PDA design: each inbound NTT message carries the originating FOGO
-/// user's wallet as `NttManagerMessage.sender`. `claim_usdc` /
-/// `unlock_onyc` persist that wallet in a one-shot `Flow` PDA keyed by
-/// the per-VAA NTT `inbox_item` PDA; `lock_onyc` / `send_usdc_to_user`
-/// consume the PDA to choose the outbound recipient. A stolen operator
-/// key cannot redirect outbound transfers — the inbox-item PDA is
-/// CPI-created by the NTT program and unforgeable.
+/// OnRe issues ONyc, a tokenized reinsurance position on Solana. This
+/// program lets FOGO users hold that yield exposure without leaving
+/// FOGO: USDC.s on FOGO ↔ ONyc on Solana, both legs over Wormhole NTT.
 #[program]
 pub mod fogo_onre_relayer {
     use super::*;

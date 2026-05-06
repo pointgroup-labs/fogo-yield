@@ -18,6 +18,7 @@ import {
   findSessionAuthorityPda,
   findTokenAuthorityPda,
   FOGO_WORMHOLE_CHAIN_ID,
+  NTT_USDC_PROGRAM_ID,
   nttTransferArgsHash,
   RelayerClient,
 } from '@fogo-onre/sdk'
@@ -32,11 +33,9 @@ import {
   createSvm,
   FlowStatus,
   loadAndPatchNttConfig,
-  loadFixture,
-  NTT_INBOX_RL_FIXTURE,
-  NTT_OUTBOX_RL_FIXTURE,
-  NTT_PEER_FIXTURE,
-  pinBinaryFixtures,
+  loadAndPatchNttInboxRateLimit,
+  loadAndPatchNttOutboxRateLimit,
+  loadAndPatchNttPeer,
   setFlowAccount,
 } from './utils'
 
@@ -57,7 +56,6 @@ describe('send_usdc_to_user e2e (NTT transfer_lock outbound on USDC.s, Locking m
   const sendAmount = 200_000n // 0.2 USDC.s
   const ATA_PRE_BALANCE = sendAmount // exactly the amount being transferred out
 
-  beforeEach(() => pinBinaryFixtures())
   beforeEach(async () => {
     svm = createSvm()
     authority = Keypair.generate()
@@ -65,7 +63,7 @@ describe('send_usdc_to_user e2e (NTT transfer_lock outbound on USDC.s, Locking m
     client = new RelayerClient(provider as any)
 
     ;[relayerAuthorityPda] = findAuthorityPda(client.program.programId)
-    ;[nttTokenAuthorityPda] = findTokenAuthorityPda()
+    ;[nttTokenAuthorityPda] = findTokenAuthorityPda(NTT_USDC_PROGRAM_ID)
 
     // USDC.s is the NTT-managed mint here — `token_authority` PDA must hold
     // mint authority so `transfer_lock` can move USDC.s into custody.
@@ -117,26 +115,10 @@ describe('send_usdc_to_user e2e (NTT transfer_lock outbound on USDC.s, Locking m
     }
 
     // Load + patch NTT state fixtures (singleton Config bound to USDC.s).
-    loadAndPatchNttConfig(svm, usdcMint.publicKey, custodyAta)
-    loadFixture(svm, NTT_PEER_FIXTURE)
-    loadFixture(svm, NTT_INBOX_RL_FIXTURE)
-    loadFixture(svm, NTT_OUTBOX_RL_FIXTURE)
-
-    // Zero rate-limit timestamps so `last_tx_timestamp <= now` holds.
-    {
-      const pda = new PublicKey(NTT_OUTBOX_RL_FIXTURE)
-      const acct = svm.getAccount(pda)!
-      const data = new Uint8Array(acct.data)
-      new DataView(data.buffer).setBigInt64(24, 0n, true)
-      svm.setAccount(pda, { ...acct, data })
-    }
-    {
-      const pda = new PublicKey(NTT_INBOX_RL_FIXTURE)
-      const acct = svm.getAccount(pda)!
-      const data = new Uint8Array(acct.data)
-      new DataView(data.buffer).setBigInt64(25, 0n, true)
-      svm.setAccount(pda, { ...acct, data })
-    }
+    loadAndPatchNttConfig(svm, usdcMint.publicKey, custodyAta, NTT_USDC_PROGRAM_ID)
+    loadAndPatchNttPeer(svm, NTT_USDC_PROGRAM_ID)
+    loadAndPatchNttInboxRateLimit(svm, NTT_USDC_PROGRAM_ID)
+    loadAndPatchNttOutboxRateLimit(svm, NTT_USDC_PROGRAM_ID)
 
     svm.airdrop(relayerAuthorityPda, BigInt(5e9))
     svm.airdrop(nttTokenAuthorityPda, BigInt(1e9))
@@ -169,7 +151,7 @@ describe('send_usdc_to_user e2e (NTT transfer_lock outbound on USDC.s, Locking m
       recipientAddress: fogoSender,
       shouldQueue: false,
     })
-    const [sessionAuthorityPda] = findSessionAuthorityPda(relayerAuthorityPda, argsHash)
+    const [sessionAuthorityPda] = findSessionAuthorityPda(relayerAuthorityPda, argsHash, NTT_USDC_PROGRAM_ID)
     svm.airdrop(sessionAuthorityPda, BigInt(1e9))
 
     const outboxItem = Keypair.generate()

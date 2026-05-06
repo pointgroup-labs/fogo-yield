@@ -7,7 +7,8 @@ import {
   findNttPeerPda,
   findOutflightFlowPda,
   FOGO_WORMHOLE_CHAIN_ID,
-  NTT_PROGRAM_ID,
+  NTT_ONYC_PROGRAM_ID,
+  NTT_USDC_PROGRAM_ID,
   ONRE_PROGRAM_ID,
   RelayerClient,
 } from '@fogo-onre/sdk'
@@ -501,7 +502,7 @@ describe('relayer', () => {
       return {
         fromChain: FOGO_WORMHOLE_CHAIN_ID,
         sourceNttManager: new Uint8Array(32).fill(0x22),
-        recipientNttManager: NTT_PROGRAM_ID.toBytes(),
+        recipientNttManager: NTT_USDC_PROGRAM_ID.toBytes(),
         message: {
           id: messageId,
           sender: senderBytes,
@@ -533,12 +534,12 @@ describe('relayer', () => {
       const [validatedMsgPda] = findValidatedTransceiverMessagePda(
         FOGO_WORMHOLE_CHAIN_ID,
         messageId,
-        NTT_PROGRAM_ID,
+        NTT_USDC_PROGRAM_ID,
       )
       setValidatedTransceiverMessage(
         svm,
         validatedMsgPda,
-        NTT_PROGRAM_ID,
+        NTT_USDC_PROGRAM_ID,
         makeTransceiverMessage(fogoSender, messageId),
       )
 
@@ -556,7 +557,7 @@ describe('relayer', () => {
               redeemAccountsLen: 1,
             })
             .remainingAccounts([
-              { pubkey: NTT_PROGRAM_ID, isSigner: false, isWritable: false },
+              { pubkey: NTT_USDC_PROGRAM_ID, isSigner: false, isWritable: false },
               { pubkey: client.authorityPda, isSigner: false, isWritable: false },
             ])
             .rpc(),
@@ -656,7 +657,7 @@ describe('relayer', () => {
               rentDestination: authority.publicKey,
             })
             .remainingAccounts([
-              { pubkey: NTT_PROGRAM_ID, isSigner: false, isWritable: false },
+              { pubkey: NTT_ONYC_PROGRAM_ID, isSigner: false, isWritable: false },
               { pubkey: client.authorityPda, isSigner: false, isWritable: false },
             ])
             .rpc(),
@@ -692,7 +693,7 @@ describe('relayer', () => {
               rentDestination: rando.publicKey,
             })
             .remainingAccounts([
-              { pubkey: NTT_PROGRAM_ID, isSigner: false, isWritable: false },
+              { pubkey: NTT_ONYC_PROGRAM_ID, isSigner: false, isWritable: false },
               { pubkey: client.authorityPda, isSigner: false, isWritable: false },
             ])
             .rpc(),
@@ -730,7 +731,7 @@ describe('relayer', () => {
               rentDestination: authority.publicKey,
             })
             .remainingAccounts([
-              { pubkey: NTT_PROGRAM_ID, isSigner: false, isWritable: false },
+              { pubkey: NTT_ONYC_PROGRAM_ID, isSigner: false, isWritable: false },
               { pubkey: client.authorityPda, isSigner: false, isWritable: false },
             ])
             .rpc(),
@@ -765,7 +766,7 @@ describe('relayer', () => {
       return {
         fromChain: FOGO_WORMHOLE_CHAIN_ID,
         sourceNttManager: new Uint8Array(32).fill(0x22),
-        recipientNttManager: NTT_PROGRAM_ID.toBytes(),
+        recipientNttManager: NTT_ONYC_PROGRAM_ID.toBytes(),
         message: {
           id: messageId,
           sender: senderBytes,
@@ -785,12 +786,12 @@ describe('relayer', () => {
       const [validatedMsgPda] = findValidatedTransceiverMessagePda(
         FOGO_WORMHOLE_CHAIN_ID,
         messageId,
-        NTT_PROGRAM_ID,
+        NTT_ONYC_PROGRAM_ID,
       )
       setValidatedTransceiverMessage(
         svm,
         validatedMsgPda,
-        NTT_PROGRAM_ID,
+        NTT_ONYC_PROGRAM_ID,
         makeTransceiverMessage(new Uint8Array(32), messageId),
       )
 
@@ -809,7 +810,7 @@ describe('relayer', () => {
               redeemAccountsLen: 1,
             })
             .remainingAccounts([
-              { pubkey: NTT_PROGRAM_ID, isSigner: false, isWritable: false },
+              { pubkey: NTT_ONYC_PROGRAM_ID, isSigner: false, isWritable: false },
               { pubkey: client.authorityPda, isSigner: false, isWritable: false },
             ])
             .rpc(),
@@ -824,12 +825,12 @@ describe('relayer', () => {
       const [validatedMsgPda] = findValidatedTransceiverMessagePda(
         FOGO_WORMHOLE_CHAIN_ID,
         messageId,
-        NTT_PROGRAM_ID,
+        NTT_ONYC_PROGRAM_ID,
       )
       setValidatedTransceiverMessage(
         svm,
         validatedMsgPda,
-        NTT_PROGRAM_ID,
+        NTT_ONYC_PROGRAM_ID,
         makeTransceiverMessage(fogoSender, messageId),
       )
 
@@ -847,7 +848,7 @@ describe('relayer', () => {
               redeemAccountsLen: 0,
             })
             .remainingAccounts([
-              { pubkey: NTT_PROGRAM_ID, isSigner: false, isWritable: false },
+              { pubkey: NTT_ONYC_PROGRAM_ID, isSigner: false, isWritable: false },
               { pubkey: client.authorityPda, isSigner: false, isWritable: false },
             ])
             .rpc(),
@@ -873,12 +874,12 @@ describe('relayer', () => {
       const [validatedMsgPda] = findValidatedTransceiverMessagePda(
         FOGO_WORMHOLE_CHAIN_ID,
         messageId,
-        NTT_PROGRAM_ID,
+        NTT_ONYC_PROGRAM_ID,
       )
       setValidatedTransceiverMessage(
         svm,
         validatedMsgPda,
-        NTT_PROGRAM_ID,
+        NTT_ONYC_PROGRAM_ID,
         makeTransceiverMessage(fogoSender, messageId),
       )
 
@@ -896,7 +897,7 @@ describe('relayer', () => {
               redeemAccountsLen: 1,
             })
             .remainingAccounts([
-              { pubkey: NTT_PROGRAM_ID, isSigner: false, isWritable: false },
+              { pubkey: NTT_ONYC_PROGRAM_ID, isSigner: false, isWritable: false },
               { pubkey: client.authorityPda, isSigner: false, isWritable: false },
             ])
             .rpc(),
@@ -923,8 +924,8 @@ describe('relayer', () => {
       // Pin slots 2 (peer) and 7 (inbox rate-limit) to the FOGO-derived PDAs
       // so the WrongOriginChain checks pass and execution reaches the
       // mismatch the individual test wants to fire.
-      const [peerPda] = findNttPeerPda(FOGO_WORMHOLE_CHAIN_ID)
-      const [inboxRlPda] = findInboxRateLimitPda(FOGO_WORMHOLE_CHAIN_ID)
+      const [peerPda] = findNttPeerPda(FOGO_WORMHOLE_CHAIN_ID, NTT_ONYC_PROGRAM_ID)
+      const [inboxRlPda] = findInboxRateLimitPda(FOGO_WORMHOLE_CHAIN_ID, NTT_ONYC_PROGRAM_ID)
       ra[2] = { pubkey: peerPda, isSigner: false, isWritable: false }
       ra[7] = { pubkey: inboxRlPda, isSigner: false, isWritable: false }
       ra[3] = { pubkey: slots.redeem3, isSigner: false, isWritable: false }
@@ -941,12 +942,12 @@ describe('relayer', () => {
       const [validatedMsgPda] = findValidatedTransceiverMessagePda(
         FOGO_WORMHOLE_CHAIN_ID,
         messageId,
-        NTT_PROGRAM_ID,
+        NTT_ONYC_PROGRAM_ID,
       )
       setValidatedTransceiverMessage(
         svm,
         validatedMsgPda,
-        NTT_PROGRAM_ID,
+        NTT_ONYC_PROGRAM_ID,
         makeTransceiverMessage(fogoSender, messageId),
       )
 
@@ -982,12 +983,12 @@ describe('relayer', () => {
       const [validatedMsgPda] = findValidatedTransceiverMessagePda(
         FOGO_WORMHOLE_CHAIN_ID,
         messageId,
-        NTT_PROGRAM_ID,
+        NTT_ONYC_PROGRAM_ID,
       )
       setValidatedTransceiverMessage(
         svm,
         validatedMsgPda,
-        NTT_PROGRAM_ID,
+        NTT_ONYC_PROGRAM_ID,
         makeTransceiverMessage(fogoSender, messageId),
       )
 
@@ -1023,12 +1024,12 @@ describe('relayer', () => {
       const [validatedMsgPda] = findValidatedTransceiverMessagePda(
         FOGO_WORMHOLE_CHAIN_ID,
         messageId,
-        NTT_PROGRAM_ID,
+        NTT_ONYC_PROGRAM_ID,
       )
       setValidatedTransceiverMessage(
         svm,
         validatedMsgPda,
-        NTT_PROGRAM_ID,
+        NTT_ONYC_PROGRAM_ID,
         makeTransceiverMessage(fogoSender, messageId),
       )
 
@@ -1082,7 +1083,7 @@ describe('relayer', () => {
               rentDestination: authority.publicKey,
             })
             .remainingAccounts([
-              { pubkey: NTT_PROGRAM_ID, isSigner: false, isWritable: false },
+              { pubkey: NTT_USDC_PROGRAM_ID, isSigner: false, isWritable: false },
               { pubkey: client.authorityPda, isSigner: false, isWritable: false },
             ])
             .rpc(),
@@ -1118,7 +1119,7 @@ describe('relayer', () => {
               rentDestination: rando.publicKey,
             })
             .remainingAccounts([
-              { pubkey: NTT_PROGRAM_ID, isSigner: false, isWritable: false },
+              { pubkey: NTT_USDC_PROGRAM_ID, isSigner: false, isWritable: false },
               { pubkey: client.authorityPda, isSigner: false, isWritable: false },
             ])
             .rpc(),
@@ -1158,7 +1159,7 @@ describe('relayer', () => {
               rentDestination: authority.publicKey,
             })
             .remainingAccounts([
-              { pubkey: NTT_PROGRAM_ID, isSigner: false, isWritable: false },
+              { pubkey: NTT_USDC_PROGRAM_ID, isSigner: false, isWritable: false },
               { pubkey: client.authorityPda, isSigner: false, isWritable: false },
             ])
             .rpc(),

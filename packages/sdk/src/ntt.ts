@@ -2,7 +2,6 @@ import type { AccountMeta } from '@solana/web3.js'
 import { keccak_256 } from '@noble/hashes/sha3.js'
 import { getAssociatedTokenAddressSync, TOKEN_PROGRAM_ID } from '@solana/spl-token'
 import { PublicKey, SystemProgram } from '@solana/web3.js'
-import { NTT_PROGRAM_ID } from './constants'
 
 const CONFIG_SEED = Buffer.from('config')
 const NTT_MANAGER_PEER_SEED = Buffer.from('peer')
@@ -19,13 +18,13 @@ function chainIdBeBuf(chainId: number): Buffer {
   return buf
 }
 
-export function findNttConfigPda(programId: PublicKey = NTT_PROGRAM_ID): [PublicKey, number] {
+export function findNttConfigPda(programId: PublicKey): [PublicKey, number] {
   return PublicKey.findProgramAddressSync([CONFIG_SEED], programId)
 }
 
 export function findNttPeerPda(
   chainId: number,
-  programId: PublicKey = NTT_PROGRAM_ID,
+  programId: PublicKey,
 ): [PublicKey, number] {
   return PublicKey.findProgramAddressSync(
     [NTT_MANAGER_PEER_SEED, chainIdBeBuf(chainId)],
@@ -35,7 +34,7 @@ export function findNttPeerPda(
 
 export function findRegisteredTransceiverPda(
   transceiver: PublicKey,
-  programId: PublicKey = NTT_PROGRAM_ID,
+  programId: PublicKey,
 ): [PublicKey, number] {
   return PublicKey.findProgramAddressSync(
     [REGISTERED_TRANSCEIVER_SEED, transceiver.toBuffer()],
@@ -45,7 +44,7 @@ export function findRegisteredTransceiverPda(
 
 export function findInboxRateLimitPda(
   chainId: number,
-  programId: PublicKey = NTT_PROGRAM_ID,
+  programId: PublicKey,
 ): [PublicKey, number] {
   return PublicKey.findProgramAddressSync(
     [INBOX_RATE_LIMIT_SEED, chainIdBeBuf(chainId)],
@@ -54,20 +53,20 @@ export function findInboxRateLimitPda(
 }
 
 export function findOutboxRateLimitPda(
-  programId: PublicKey = NTT_PROGRAM_ID,
+  programId: PublicKey,
 ): [PublicKey, number] {
   return PublicKey.findProgramAddressSync([OUTBOX_RATE_LIMIT_SEED], programId)
 }
 
 export function findTokenAuthorityPda(
-  programId: PublicKey = NTT_PROGRAM_ID,
+  programId: PublicKey,
 ): [PublicKey, number] {
   return PublicKey.findProgramAddressSync([TOKEN_AUTHORITY_SEED], programId)
 }
 
 export function findInboxItemPda(
   messageHash: Uint8Array,
-  programId: PublicKey = NTT_PROGRAM_ID,
+  programId: PublicKey,
 ): [PublicKey, number] {
   return PublicKey.findProgramAddressSync(
     [INBOX_ITEM_SEED, Buffer.from(messageHash)],
@@ -87,7 +86,7 @@ export function findInboxItemPda(
  */
 export function findNttCustodyAta(
   mint: PublicKey,
-  programId: PublicKey = NTT_PROGRAM_ID,
+  programId: PublicKey,
 ): PublicKey {
   const [tokenAuthorityPda] = findTokenAuthorityPda(programId)
   return getAssociatedTokenAddressSync(mint, tokenAuthorityPda, true)
@@ -102,7 +101,7 @@ export function findNttCustodyAta(
 export function findSessionAuthorityPda(
   fromOwner: PublicKey,
   argsHash: Uint8Array,
-  programId: PublicKey = NTT_PROGRAM_ID,
+  programId: PublicKey,
 ): [PublicKey, number] {
   return PublicKey.findProgramAddressSync(
     [SESSION_AUTHORITY_SEED, fromOwner.toBuffer(), Buffer.from(argsHash)],
@@ -173,7 +172,7 @@ export interface NttRedeemContext {
  * Build the 14-entry account list expected by NTT v1's outbound
  * `transfer_lock` instruction. Mode-, mint-, and program-id-agnostic — the
  * relayer's Solana-side `lock_onyc` / `send_usdc_to_user` use it under the
- * canonical `NTT_PROGRAM_ID` with the relayer authority PDA as the
+ * canonical per-leg NTT program ID (USDC.s or ONyc) with the relayer authority PDA as the
  * non-signer source owner; FOGO-side user-signed flows use it with the
  * FOGO NTT manager program ID and the user's wallet as a signer source.
  *

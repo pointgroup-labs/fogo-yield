@@ -38,16 +38,21 @@ Source: `Anchor.toml` `[programs.mainnet]` and
 
 | Program                | Address                                       |
 | ---------------------- | --------------------------------------------- |
-| Wormhole NTT Manager   | `nttu74CdAmsErx5daJVCQNoDZujswFrskMzonoZSdGk` |
+| Wormhole NTT Manager (USDC.s) | `nttu74CdAmsErx5daJVCQNoDZujswFrskMzonoZSdGk` |
+| Wormhole NTT Manager (ONyc)   | _TBD — separate program; not yet deployed_   |
 | OnRe                   | `onreuGhHHgVzMWSkj2oQDLDtvvGvoepBPkqyaubFcwe` |
 | FOGO Wormhole chain ID | `51`                                          |
 
 The relayer does **not** CPI Wormhole Core or the legacy Token Bridge /
-Gateway. Both bridge legs (USDC.s ↔ USDC and ONyc ↔ bONyc) go through
-the single NTT manager program ID above; verifying NTT setup (§7.1) is
-therefore on the deploy critical path. Re-verify each ID against
-mainnet (`solana program show <id>`) before deploying — see
-deploy-checklist.md §4.
+Gateway. The two bridge legs use **distinct NTT manager programs**:
+USDC.s ↔ USDC routes through `nttu74…` (above), and ONyc ↔ bONyc will
+route through its own NTT manager once deployed. The relayer pins each
+leg to the correct program at compile time via `NTT_USDC_PROGRAM_ID` /
+`NTT_ONYC_PROGRAM_ID` in `programs/relayer/src/constants.rs`; until the
+ONyc manager is live, that constant is aliased to the USDC.s manager
+and a follow-up PR will swap it on deploy. Verifying NTT setup (§7.1)
+is on the deploy critical path. Re-verify each ID against mainnet
+(`solana program show <id>`) before deploying — see deploy-checklist.md §4.
 
 ---
 

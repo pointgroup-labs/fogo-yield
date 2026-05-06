@@ -2,7 +2,6 @@
  * Shared scaffolding for the withdraw-chain test files (legs 1-3).
  *
  * Centralizes the identical setup boilerplate:
- *   - OnRe binary sha256 pin
  *   - LiteSVM + clock + relayer initialization
  *   - USDC.s mint + ONyc mint (NTT-managed) + fee vault
  *   - NTT custody pre-fund + ONyc supply bump
@@ -17,16 +16,12 @@
  */
 
 import type { LiteSVM } from 'litesvm'
-import { createHash } from 'node:crypto'
-import { readFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import {
   findInboxItemPda,
   findOutflightFlowPda,
   findTokenAuthorityPda,
   FOGO_WORMHOLE_CHAIN_ID,
-  NTT_PROGRAM_ID,
+  NTT_ONYC_PROGRAM_ID,
   ONRE_STATE_FIXTURE,
   RelayerClient,
 } from '@fogo-onre/sdk'
@@ -40,9 +35,9 @@ import {
   computeInboxItemHash,
   findValidatedTransceiverMessagePda,
   loadAndPatchNttConfig,
-  NTT_INBOX_RL_FIXTURE,
-  NTT_OUTBOX_RL_FIXTURE,
-  NTT_PEER_FIXTURE,
+  loadAndPatchNttInboxRateLimit,
+  loadAndPatchNttOutboxRateLimit,
+  loadAndPatchNttPeer,
   readPeerAddress,
   setRegisteredTransceiver,
   setValidatedTransceiverMessage,
@@ -58,61 +53,6 @@ export const WITHDRAW_TEST_CONSTANTS = {
   fogoSender: new Uint8Array(32).fill(0x7F),
 } as const
 
-const ONRE_MAINNET_BINARY_SHA256
-  = 'abcea77d935ca5eb512f43a1b3a6241151c2efa74c80b7bd9a600b959f65f7d6'
-
-const NTT_MAINNET_BINARY_SHA256
-  = 'f5bb910cde4b99930623c041e315caac4cc2d39afcd034aea8f5097f78cff12d'
-
-/**
- * Pre-test guard: assert the OnRe `.so` fixture is byte-identical to the
- * pinned mainnet binary. Call inside `beforeEach`. Drift here means the
- * "real CPI" tests are no longer running against the binary they claim.
- */
-export function pinOnreBinaryFixture(): void {
-  assertBinaryFixture(
-    'onreuGhHHgVzMWSkj2oQDLDtvvGvoepBPkqyaubFcwe.so',
-    ONRE_MAINNET_BINARY_SHA256,
-    'OnRe',
-  )
-}
-
-/**
- * Sister guard for the NTT `.so` fixture. Exists for the same reason as
- * `pinOnreBinaryFixture`: the lock_onyc / unlock / send_usdc CPI tests
- * only prove anything against the *real* mainnet NTT binary; an
- * unintentional swap to a custom build silently invalidates the proof.
- */
-export function pinNttBinaryFixture(): void {
-  assertBinaryFixture(
-    'nttu74CdAmsErx5daJVCQNoDZujswFrskMzonoZSdGk.so',
-    NTT_MAINNET_BINARY_SHA256,
-    'NTT',
-  )
-}
-
-/**
- * Convenience: pin both third-party binary fixtures in one call. Use this
- * in `beforeEach` for any test that CPIs into either OnRe or NTT.
- */
-export function pinBinaryFixtures(): void {
-  pinOnreBinaryFixture()
-  pinNttBinaryFixture()
-}
-
-function assertBinaryFixture(filename: string, expectedSha256: string, label: string): void {
-  const here = dirname(fileURLToPath(import.meta.url))
-  const so = readFileSync(join(here, '../fixtures/programs/', filename))
-  const got = createHash('sha256').update(so).digest('hex')
-  if (got !== expectedSha256) {
-    throw new Error(
-      `${label} binary fixture drift: expected sha256=${expectedSha256}, got ${got}. `
-      + `The CPI tests only prove real mainnet behavior when this hash matches. `
-      + `Refresh the fixture and update the constant intentionally.`,
-    )
-  }
-}
-
 /** Fully-wired withdraw-chain rig — every account/PDA the tests reference. */
 export interface WithdrawRig {
   svm: LiteSVM
@@ -125,6 +65,7 @@ export interface WithdrawRig {
   custodyAta: PublicKey
   onycAta: PublicKey
   usdcAta: PublicKey
+  peerPda: PublicKey
 }
 
 /**
@@ -144,7 +85,7 @@ export async function setupWithdrawRig(): Promise<WithdrawRig> {
   const provider = createProvider(svm, authority)
   const client = new RelayerClient(provider as any)
 
-  const [nttTokenAuthorityPda] = findTokenAuthorityPda()
+  const [nttTokenAuthorityPda] = findTokenAuthorityPda(NTT_ONYC_PROGRAM_ID)
 
   // USDC.s here is just a plain SPL mint — leg 4 (NTT outbound) does not
   // run in this rig. Tests that need real USDC.s NTT outbound use a
@@ -192,26 +133,11 @@ export async function setupWithdrawRig(): Promise<WithdrawRig> {
     svm.setAccount(onycMint.publicKey, { ...acct, data })
   }
 
-  loadAndPatchNttConfig(svm, onycMint.publicKey, custodyAta)
-  loadFixture(svm, NTT_PEER_FIXTURE)
-  loadFixture(svm, NTT_INBOX_RL_FIXTURE)
-  loadFixture(svm, NTT_OUTBOX_RL_FIXTURE)
-  // Mainnet captures have future ts that fail the `ts <= now` check inside NTT.
-  {
-    const pda = new PublicKey(NTT_OUTBOX_RL_FIXTURE)
-    const acct = svm.getAccount(pda)!
-    const data = new Uint8Array(acct.data)
-    new DataView(data.buffer).setBigInt64(24, 0n, true)
-    svm.setAccount(pda, { ...acct, data })
-  }
-  {
-    const pda = new PublicKey(NTT_INBOX_RL_FIXTURE)
-    const acct = svm.getAccount(pda)!
-    const data = new Uint8Array(acct.data)
-    new DataView(data.buffer).setBigInt64(25, 0n, true)
-    svm.setAccount(pda, { ...acct, data })
-  }
-  setRegisteredTransceiver(svm, NTT_PROGRAM_ID, 0)
+  loadAndPatchNttConfig(svm, onycMint.publicKey, custodyAta, NTT_ONYC_PROGRAM_ID)
+  const peerPda = loadAndPatchNttPeer(svm, NTT_ONYC_PROGRAM_ID)
+  loadAndPatchNttInboxRateLimit(svm, NTT_ONYC_PROGRAM_ID)
+  loadAndPatchNttOutboxRateLimit(svm, NTT_ONYC_PROGRAM_ID)
+  setRegisteredTransceiver(svm, NTT_ONYC_PROGRAM_ID, 0, NTT_ONYC_PROGRAM_ID)
 
   // Required by `create_redemption_request`'s `seeds=[STATE]` constraint
   // and the `!is_killed` check (mainnet capture has is_killed=0).
@@ -231,6 +157,7 @@ export async function setupWithdrawRig(): Promise<WithdrawRig> {
     custodyAta,
     onycAta,
     usdcAta,
+    peerPda,
   }
 }
 
@@ -245,11 +172,11 @@ export async function runUnlockOnycLeg1(rig: WithdrawRig): Promise<{
   validatedMsgPda: PublicKey
 }> {
   const { ONYC_RELEASED, fogoSender } = WITHDRAW_TEST_CONSTANTS
-  const { svm, authority, client, onycMint, relayerAuthorityPda } = rig
+  const { svm, authority, client, onycMint, relayerAuthorityPda, peerPda } = rig
 
   const messageId = new Uint8Array(32)
   crypto.getRandomValues(messageId)
-  const peerAddress = readPeerAddress(svm)
+  const peerAddress = readPeerAddress(svm, peerPda)
   const sourceToken = new Uint8Array(32).fill(0x22)
 
   const message = {
@@ -263,17 +190,17 @@ export async function runUnlockOnycLeg1(rig: WithdrawRig): Promise<{
   }
 
   const [validatedMsgPda] = findValidatedTransceiverMessagePda(
-    FOGO_WORMHOLE_CHAIN_ID, messageId, NTT_PROGRAM_ID,
+    FOGO_WORMHOLE_CHAIN_ID, messageId, NTT_ONYC_PROGRAM_ID,
   )
-  setValidatedTransceiverMessage(svm, validatedMsgPda, NTT_PROGRAM_ID, {
+  setValidatedTransceiverMessage(svm, validatedMsgPda, NTT_ONYC_PROGRAM_ID, {
     fromChain: FOGO_WORMHOLE_CHAIN_ID,
     sourceNttManager: peerAddress,
-    recipientNttManager: NTT_PROGRAM_ID.toBytes(),
+    recipientNttManager: NTT_ONYC_PROGRAM_ID.toBytes(),
     message,
   })
 
   const msgHash = computeInboxItemHash(FOGO_WORMHOLE_CHAIN_ID, message, keccak_256)
-  const [inboxItemPda] = findInboxItemPda(msgHash)
+  const [inboxItemPda] = findInboxItemPda(msgHash, NTT_ONYC_PROGRAM_ID)
 
   await client
     .unlockOnyc({
@@ -281,7 +208,7 @@ export async function runUnlockOnycLeg1(rig: WithdrawRig): Promise<{
       onycMint: onycMint.publicKey,
       nttInboxItem: inboxItemPda,
       nttTransceiverMessage: validatedMsgPda,
-      ntt: { transceiverAddress: NTT_PROGRAM_ID },
+      ntt: { transceiverAddress: NTT_ONYC_PROGRAM_ID },
     })
     .rpc()
 

@@ -3,8 +3,8 @@ use anchor_lang::solana_program::program::invoke_signed;
 use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
 
 use crate::constants::{
-    CONFIG_SEED, FLOW_INBOUND_SEED, FOGO_WORMHOLE_CHAIN_ID, NTT_PROGRAM_ID, NTT_TRANSFER_LOCK_IX,
-    RELAYER_SEED, SPL_TOKEN_APPROVE_IX_TAG,
+    CONFIG_SEED, FLOW_INBOUND_SEED, FOGO_WORMHOLE_CHAIN_ID, NTT_ONYC_PROGRAM_ID,
+    NTT_TRANSFER_LOCK_IX, RELAYER_SEED, SPL_TOKEN_APPROVE_IX_TAG,
 };
 use crate::cpi::invoke_relayer_signed;
 use crate::error::RelayerError;
@@ -35,8 +35,11 @@ pub fn handler<'info>(ctx: Context<'info, LockOnyc<'info>>) -> Result<()> {
     };
 
     // NTT binds session-authority to a hash of the transfer args.
-    let (session_authority, _) =
-        derive_session_authority(&ctx.accounts.relayer_authority.key(), &transfer_args);
+    let (session_authority, _) = derive_session_authority(
+        &NTT_ONYC_PROGRAM_ID,
+        &ctx.accounts.relayer_authority.key(),
+        &transfer_args,
+    );
 
     let bump = [ctx.accounts.relayer_config.relayer_authority_bump];
     let signer_seeds: &[&[u8]] = &[RELAYER_SEED, &bump];
@@ -74,7 +77,7 @@ pub fn handler<'info>(ctx: Context<'info, LockOnyc<'info>>) -> Result<()> {
     )?;
 
     invoke_relayer_signed(
-        NTT_PROGRAM_ID,
+        NTT_ONYC_PROGRAM_ID,
         &NTT_TRANSFER_LOCK_IX,
         &transfer_args,
         ctx.remaining_accounts,
