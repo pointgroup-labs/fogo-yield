@@ -83,11 +83,15 @@ export function relayerCommands(): Command {
       }
 
       // Pre-flight 3: mints exist with expected decimals.
-      const usdc = await getMint(connection, usdcMint)
+      const usdc = await getMint(connection, usdcMint).catch(() => {
+        throw new Error(`USDC mint ${usdcMint.toBase58()} not found on ${connection.rpcEndpoint}`)
+      })
       if (usdc.decimals !== USDC_DECIMALS) {
         throw new Error(`USDC mint decimals = ${usdc.decimals}, expected ${USDC_DECIMALS}`)
       }
-      const onyc = await getMint(connection, onycMint)
+      const onyc = await getMint(connection, onycMint).catch(() => {
+        throw new Error(`ONyc mint ${onycMint.toBase58()} not found on ${connection.rpcEndpoint}`)
+      })
       if (onyc.decimals !== ONYC_DECIMALS) {
         throw new Error(`ONyc mint decimals = ${onyc.decimals}, expected ${ONYC_DECIMALS}`)
       }

@@ -37,7 +37,9 @@ cli.addCommand(relayerCommands())
 cli.parseAsync()
   .then(() => process.exit(0))
   .catch((e: unknown) => {
-    const msg = e instanceof Error ? e.message : String(e)
-    console.error(chalk.red(msg))
+    // String(err) → "ErrorName: message", or just "ErrorName" if message
+    // is empty (e.g. spl-token's TokenAccountNotFoundError). Plain
+    // err.message would render invisibly for those cases.
+    console.error(chalk.red(String(e)))
     process.exit(1)
   })
