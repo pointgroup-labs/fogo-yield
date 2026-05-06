@@ -3,6 +3,7 @@
   "private": true,
   "packageManager": "pnpm@10.33.0",
   "scripts": {
+    "cli": "node packages/cli/dist/cli.js",
     "sdk": "pnpm --filter @fogo-onre/sdk",
     "webapp": "pnpm --filter @fogo-onre/webapp",
     "build": "anchor build --ignore-keys && pnpm sdk build",
