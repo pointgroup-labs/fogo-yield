@@ -11,7 +11,10 @@ export const NTT_USDC_PROGRAM_ID = new PublicKey('nttu74CdAmsErx5daJVCQNoDZujswF
 export const NTT_ONYC_PROGRAM_ID = new PublicKey('nttpna5vXW7BN2Aa4AfTbkCncJWTEoBsnWvjS87Xgsd')
 
 /** OnRe's ONyc SPL mint on Solana mainnet. */
-export const ONYC_MINT = new PublicKey('5Y8NV33Vv7WbnLfq3zBcKSdYPrk7g2KoiQoe7M2tcxp5')
+export const ONYC_MINT = new PublicKey('oNyCm1QsAatj3ckaEwZjtAPWvstPn3Zm5MAYPtkjEfa')
+
+/** Canonical USDC on Solana mainnet — the Solana-side counterpart of FOGO USDC.s. */
+export const USDC_MINT = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v')
 
 export const FOGO_WORMHOLE_CHAIN_ID = 51
 export const SOLANA_WORMHOLE_CHAIN_ID = 1

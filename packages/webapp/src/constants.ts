@@ -36,9 +36,7 @@ export const USDC_S_MINT = new PublicKey('uSd2czE61Evaf76RNbq4KPpXnkiL3irdzgLFUM
 export const SOLANA_USDC_MINT = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v')
 
 // NTT-bridged ONyc on FOGO. The user receives this on deposit, burns it on withdraw.
-// TODO: replace placeholder with the bONyc mint produced by the NTT setup
-// (see docs/deploy-mainnet.md §7.1).
-export const BONYC_MINT = new PublicKey('11111111111111111111111111111111')
+export const BONYC_MINT = new PublicKey('oNyCm1QsAatj3ckaEwZjtAPWvstPn3Zm5MAYPtkjEfa')
 
 // FOGO-side NTT manager program IDs. Burning-mode managers, one per
 // bridged mint. The user-signed `transfer_burn` instruction is dispatched
@@ -49,9 +47,8 @@ export const BONYC_MINT = new PublicKey('11111111111111111111111111111111')
 // chain=Fogo). Identical address to the Solana-side USDC NTT manager —
 // same program deployed at the same key on both chains.
 export const FOGO_USDC_S_NTT_MANAGER_ID = new PublicKey('nttu74CdAmsErx5daJVCQNoDZujswFrskMzonoZSdGk')
-// bONyc: TODO once Wormhole publishes the FOGO ↔ Solana ONyc deployment
-// (see docs/deploy-mainnet.md §7.1).
-export const FOGO_BONYC_NTT_MANAGER_ID = new PublicKey('11111111111111111111111111111111')
+// bONyc: same program ID deployed on both Solana (locking) and FOGO (burning).
+export const FOGO_BONYC_NTT_MANAGER_ID = new PublicKey('nttpna5vXW7BN2Aa4AfTbkCncJWTEoBsnWvjS87Xgsd')
 
 // Token decimals are protocol invariants and live in the SDK.
 export { BONYC_DECIMALS, USDC_DECIMALS }

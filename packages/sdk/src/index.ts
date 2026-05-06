@@ -19,6 +19,7 @@ export {
   SECONDS_PER_YEAR,
   SOLANA_WORMHOLE_CHAIN_ID,
   USDC_DECIMALS,
+  USDC_MINT,
 } from './constants'
 export {
   buildFogoNttDepositIx,
