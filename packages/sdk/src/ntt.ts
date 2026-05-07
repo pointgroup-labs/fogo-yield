@@ -7,6 +7,8 @@ import {
   SYSVAR_CLOCK_PUBKEY,
   SYSVAR_RENT_PUBKEY,
 } from '@solana/web3.js'
+import { FOGO_WORMHOLE_CHAIN_ID } from './constants'
+import { readonly, writable } from './utils/accountMeta'
 
 const CONFIG_SEED = Buffer.from('config')
 const NTT_MANAGER_PEER_SEED = Buffer.from('peer')
@@ -380,4 +382,81 @@ export function buildNttReleaseWormholeOutboundAccountList(
     { pubkey: params.nttProgramId, isSigner: false, isWritable: false }, // 13  manager (v3)
     { pubkey: params.outboxItemSigner, isSigner: false, isWritable: false }, // 14  outbox_item_signer (v3)
   ]
+}
+
+/**
+ * Inputs for `buildNttRedeemReleaseAccounts`. Caller resolves the
+ * authority/recipient ATA so this function stays free of `RelayerClient`
+ * coupling — it lives next to the other NTT account-meta builders.
+ */
+export interface BuildNttRedeemReleaseAccountsParams {
+  mint: PublicKey
+  nttInboxItem: PublicKey
+  nttTransceiverMessage: PublicKey
+  ntt: NttRedeemContext
+  programId: PublicKey
+  /** PDA that signs the redeem+release CPIs (relayer authority on this stack). */
+  authority: PublicKey
+  /** Destination ATA for the release leg. Caller picks per-instruction:
+   *  `claim_usdc` routes to the per-user inbox ATA, `unlock_onyc` routes
+   *  to the long-lived relayer custody ATA. */
+  recipientAta: PublicKey
+}
+
+/**
+ * Build the concatenated `redeem ‖ release ‖ NTT program` account list
+ * for `claim_usdc` / `unlock_onyc`. Mint-agnostic — caller supplies the
+ * NTT-managed mint (USDC.s on the deposit leg, ONyc on the withdraw leg).
+ *
+ *   Redeem (10):  payer, config, peer, validatedMsg, registeredTransceiver,
+ *                 mint, inboxItem(mut), inboxRateLimit(mut),
+ *                 outboxRateLimit(mut), systemProgram
+ *   Release (8):  payer, config, inboxItem(mut), recipientAta(mut),
+ *                 tokenAuthority, mint(mut), tokenProgram, custody(mut)
+ *   + NTT program appended after each slice (for invoke_signed resolution)
+ */
+export function buildNttRedeemReleaseAccounts(
+  params: BuildNttRedeemReleaseAccountsParams,
+): { remainingAccounts: AccountMeta[], redeemAccountsLen: number } {
+  const fromChain = FOGO_WORMHOLE_CHAIN_ID
+  const [configPda] = findNttConfigPda(params.programId)
+  const [peerPda] = findNttPeerPda(fromChain, params.programId)
+  const [registeredTransceiverPda] = findRegisteredTransceiverPda(
+    params.ntt.transceiverAddress,
+    params.programId,
+  )
+  const [inboxRateLimitPda] = findInboxRateLimitPda(fromChain, params.programId)
+  const [outboxRateLimitPda] = findOutboxRateLimitPda(params.programId)
+  const [tokenAuthorityPda] = findTokenAuthorityPda(params.programId)
+  const custody = findNttCustodyAta(params.mint, params.programId)
+
+  const redeem: AccountMeta[] = [
+    writable(params.authority),
+    readonly(configPda),
+    readonly(peerPda),
+    readonly(params.nttTransceiverMessage),
+    readonly(registeredTransceiverPda),
+    readonly(params.mint),
+    writable(params.nttInboxItem),
+    writable(inboxRateLimitPda),
+    writable(outboxRateLimitPda),
+    readonly(SystemProgram.programId),
+  ]
+
+  const release: AccountMeta[] = [
+    writable(params.authority),
+    readonly(configPda),
+    writable(params.nttInboxItem),
+    writable(params.recipientAta),
+    readonly(tokenAuthorityPda),
+    writable(params.mint),
+    readonly(TOKEN_PROGRAM_ID),
+    writable(custody),
+  ]
+
+  const nttProgramMeta = readonly(params.programId)
+  return {
+    remainingAccounts: [...redeem, nttProgramMeta, ...release, nttProgramMeta],
+    redeemAccountsLen: redeem.length + 1,
+  }
 }

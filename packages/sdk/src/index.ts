@@ -55,6 +55,7 @@ export {
   findRegisteredTransceiverPda,
   findSessionAuthorityPda,
   findTokenAuthorityPda,
+  NTT_TRANSFER_LOCK_ACCOUNT_COUNT,
   type NttRedeemContext,
   type NttTransferArgs,
   nttTransferArgsHash,

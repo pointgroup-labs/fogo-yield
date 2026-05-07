@@ -10,6 +10,7 @@ import {
   SYSVAR_INSTRUCTIONS_PUBKEY,
 } from '@solana/web3.js'
 import { ONRE_PROGRAM_ID } from './constants'
+import { readonly, writable } from './utils/accountMeta'
 
 export function findOnreStatePda(
   programId: PublicKey = ONRE_PROGRAM_ID,
@@ -300,29 +301,30 @@ export function buildOnreSwapRemainingAccounts(params: {
     ?? getAssociatedTokenAddressSync(params.tokenInMint, boss, true, tokenInProgram)
 
   return [
-    { pubkey: offerPda, isSigner: false, isWritable: true },
-    { pubkey: statePda, isSigner: false, isWritable: false },
-    { pubkey: boss, isSigner: false, isWritable: false },
-    { pubkey: vaultAuthority, isSigner: false, isWritable: false },
-    { pubkey: vaultTokenIn, isSigner: false, isWritable: true },
-    { pubkey: vaultTokenOut, isSigner: false, isWritable: true },
-    { pubkey: permAuthority, isSigner: false, isWritable: false },
-    { pubkey: permTokenIn, isSigner: false, isWritable: true },
-    { pubkey: permTokenOut, isSigner: false, isWritable: true },
-    { pubkey: params.tokenInMint, isSigner: false, isWritable: true },
-    { pubkey: tokenInProgram, isSigner: false, isWritable: false },
-    { pubkey: params.tokenOutMint, isSigner: false, isWritable: true },
-    { pubkey: tokenOutProgram, isSigner: false, isWritable: false },
-    { pubkey: params.userTokenInAccount, isSigner: false, isWritable: true },
-    { pubkey: params.userTokenOutAccount, isSigner: false, isWritable: true },
-    { pubkey: bossTokenIn, isSigner: false, isWritable: true },
-    { pubkey: mintAuthority, isSigner: false, isWritable: false },
-    { pubkey: SYSVAR_INSTRUCTIONS_PUBKEY, isSigner: false, isWritable: false },
-    { pubkey: params.user, isSigner: false, isWritable: true },
-    { pubkey: ASSOCIATED_TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
-    { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-    //     validators (Agave). LiteSVM is permissive without it; mainnet is not.
-    { pubkey: programId, isSigner: false, isWritable: false },
+    writable(offerPda),
+    readonly(statePda),
+    readonly(boss),
+    readonly(vaultAuthority),
+    writable(vaultTokenIn),
+    writable(vaultTokenOut),
+    readonly(permAuthority),
+    writable(permTokenIn),
+    writable(permTokenOut),
+    writable(params.tokenInMint),
+    readonly(tokenInProgram),
+    writable(params.tokenOutMint),
+    readonly(tokenOutProgram),
+    writable(params.userTokenInAccount),
+    writable(params.userTokenOutAccount),
+    writable(bossTokenIn),
+    readonly(mintAuthority),
+    readonly(SYSVAR_INSTRUCTIONS_PUBKEY),
+    writable(params.user),
+    readonly(ASSOCIATED_TOKEN_PROGRAM_ID),
+    readonly(SystemProgram.programId),
+    // Final entry: OnRe program ID. Required in account_infos for the CPI on
+    // strict validators (Agave). LiteSVM is permissive without it; mainnet is not.
+    readonly(programId),
   ]
 }
 
@@ -408,21 +410,22 @@ export function buildOnreCreateRedemptionRequestRemainingAccounts(
     = resolveRedemptionVaultAccounts(params)
 
   return [
-    { pubkey: state, isSigner: false, isWritable: false },
-    { pubkey: redemptionOffer, isSigner: false, isWritable: true },
-    { pubkey: params.redemptionRequest, isSigner: false, isWritable: true },
-    { pubkey: params.redeemer, isSigner: false, isWritable: true },
-    { pubkey: vaultAuthority, isSigner: false, isWritable: false },
-    { pubkey: params.tokenInMint, isSigner: false, isWritable: false },
-    { pubkey: params.redeemerTokenAccount, isSigner: false, isWritable: true },
-    { pubkey: vaultTokenAccount, isSigner: false, isWritable: true },
-    { pubkey: tokenProgram, isSigner: false, isWritable: false },
-    { pubkey: ASSOCIATED_TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
-    { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-    //     validators (Agave + LiteSVM). The relayer's `invoke_signed` only
-    //     includes accounts it sees in `remaining_accounts`, so without
-    //     this entry the runtime reports "Unknown program" / MissingAccount.
-    { pubkey: programId, isSigner: false, isWritable: false },
+    readonly(state),
+    writable(redemptionOffer),
+    writable(params.redemptionRequest),
+    writable(params.redeemer),
+    readonly(vaultAuthority),
+    readonly(params.tokenInMint),
+    writable(params.redeemerTokenAccount),
+    writable(vaultTokenAccount),
+    readonly(tokenProgram),
+    readonly(ASSOCIATED_TOKEN_PROGRAM_ID),
+    readonly(SystemProgram.programId),
+    // Final entry: OnRe program — required in account_infos for the CPI on
+    // strict validators (Agave + LiteSVM). The relayer's `invoke_signed` only
+    // includes accounts it sees in `remaining_accounts`, so without this
+    // entry the runtime reports "Unknown program" / MissingAccount.
+    readonly(programId),
   ]
 }
 
@@ -471,19 +474,19 @@ export function buildOnreCancelRedemptionRequestRemainingAccounts(
     = resolveRedemptionVaultAccounts(params)
 
   return [
-    { pubkey: state, isSigner: false, isWritable: false },
-    { pubkey: redemptionOffer, isSigner: false, isWritable: true },
-    { pubkey: params.redemptionRequest, isSigner: false, isWritable: true },
-    { pubkey: params.signer, isSigner: false, isWritable: true },
-    { pubkey: params.redeemer, isSigner: false, isWritable: false },
-    { pubkey: params.redemptionAdmin, isSigner: false, isWritable: true },
-    { pubkey: vaultAuthority, isSigner: false, isWritable: false },
-    { pubkey: params.tokenInMint, isSigner: false, isWritable: false },
-    { pubkey: vaultTokenAccount, isSigner: false, isWritable: true },
-    { pubkey: params.redeemerTokenAccount, isSigner: false, isWritable: true },
-    { pubkey: tokenProgram, isSigner: false, isWritable: false },
-    { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-    { pubkey: ASSOCIATED_TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
-    { pubkey: programId, isSigner: false, isWritable: false },
+    readonly(state),
+    writable(redemptionOffer),
+    writable(params.redemptionRequest),
+    writable(params.signer),
+    readonly(params.redeemer),
+    writable(params.redemptionAdmin),
+    readonly(vaultAuthority),
+    readonly(params.tokenInMint),
+    writable(vaultTokenAccount),
+    writable(params.redeemerTokenAccount),
+    readonly(tokenProgram),
+    readonly(SystemProgram.programId),
+    readonly(ASSOCIATED_TOKEN_PROGRAM_ID),
+    readonly(programId),
   ]
 }

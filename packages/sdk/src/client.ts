@@ -16,15 +16,9 @@ import {
 import { FOGO_WORMHOLE_CHAIN_ID, NTT_ONYC_PROGRAM_ID, NTT_USDC_PROGRAM_ID } from './constants'
 import IDL from './idl/fogo_onre_relayer.json' with { type: 'json' }
 import {
+  buildNttRedeemReleaseAccounts,
   buildNttReleaseWormholeOutboundAccountList,
   buildNttTransferLockAccountList,
-  findInboxRateLimitPda,
-  findNttConfigPda,
-  findNttCustodyAta,
-  findNttPeerPda,
-  findOutboxRateLimitPda,
-  findRegisteredTransceiverPda,
-  findTokenAuthorityPda,
   NTT_TRANSFER_LOCK_ACCOUNT_COUNT,
 } from './ntt'
 import {
@@ -172,16 +166,17 @@ export class RelayerClient {
       params.usdcMint,
     )
     const built = params.ntt
-      ? this.buildNttRedeemReleaseAccounts({
+      ? buildNttRedeemReleaseAccounts({
           mint: params.usdcMint,
           nttInboxItem: params.nttInboxItem,
           nttTransceiverMessage: params.nttTransceiverMessage,
           ntt: params.ntt,
           programId: NTT_USDC_PROGRAM_ID,
+          authority: this.authorityPda,
           // The release destination is the per-user inbox ATA, not the
           // long-lived relayer-authority ATA. The handler sweeps the
           // delta into custody after release.
-          recipientAtaOverride: userInboxAta,
+          recipientAta: userInboxAta,
         })
       : null
 
@@ -366,12 +361,16 @@ export class RelayerClient {
   }) {
     const { outflightFlow } = this.flowPdas(params.nttInboxItem)
     const built = params.ntt
-      ? this.buildNttRedeemReleaseAccounts({
+      ? buildNttRedeemReleaseAccounts({
           mint: params.onycMint,
           nttInboxItem: params.nttInboxItem,
           nttTransceiverMessage: params.nttTransceiverMessage,
           ntt: params.ntt,
           programId: NTT_ONYC_PROGRAM_ID,
+          authority: this.authorityPda,
+          // ONyc release: route to the long-lived relayer custody ATA
+          // (the standard `unlock_onyc` path).
+          recipientAta: this.ata(params.onycMint),
         })
       : null
 
@@ -437,81 +436,6 @@ export class RelayerClient {
         amount: toBigInt(params.flowAmount),
       }),
     )
-  }
-
-  /**
-   * Build the concatenated `redeem ‖ release ‖ NTT program` account list
-   * for `claim_usdc` / `unlock_onyc`. Mint-agnostic — caller supplies the
-   * NTT-managed mint (USDC.s on the deposit leg, ONyc on the withdraw leg).
-   *
-   *   Redeem (10):  payer, config, peer, validatedMsg, registeredTransceiver,
-   *                 mint, inboxItem(mut), inboxRateLimit(mut),
-   *                 outboxRateLimit(mut), systemProgram
-   *   Release (8):  payer, config, inboxItem(mut), recipientAta(mut),
-   *                 tokenAuthority, mint(mut), tokenProgram, custody(mut)
-   *   + NTT program appended after each slice (for invoke_signed resolution)
-   */
-  private buildNttRedeemReleaseAccounts(params: {
-    mint: PublicKey
-    nttInboxItem: PublicKey
-    nttTransceiverMessage: PublicKey
-    ntt: NttRedeemContext
-    programId: PublicKey
-    /**
-     * Override the destination ATA on the release leg. Used by `claim_usdc`
-     * to route NTT release into the per-user inbox ATA (not the long-lived
-     * relayer custody ATA — the handler sweeps after release). Defaults to
-     * `this.ata(mint)` when omitted (`unlock_onyc`'s ONyc release).
-     */
-    recipientAtaOverride?: PublicKey
-  }) {
-    const fromChain = FOGO_WORMHOLE_CHAIN_ID
-    const recipientAta = params.recipientAtaOverride ?? this.ata(params.mint)
-    const [configPda] = findNttConfigPda(params.programId)
-    const [peerPda] = findNttPeerPda(fromChain, params.programId)
-    const [registeredTransceiverPda] = findRegisteredTransceiverPda(
-      params.ntt.transceiverAddress,
-      params.programId,
-    )
-    const [inboxRateLimitPda] = findInboxRateLimitPda(fromChain, params.programId)
-    const [outboxRateLimitPda] = findOutboxRateLimitPda(params.programId)
-    const [tokenAuthorityPda] = findTokenAuthorityPda(params.programId)
-    const custody = findNttCustodyAta(params.mint, params.programId)
-
-    const redeem = [
-      { pubkey: this.authorityPda, isSigner: false, isWritable: true },
-      { pubkey: configPda, isSigner: false, isWritable: false },
-      { pubkey: peerPda, isSigner: false, isWritable: false },
-      { pubkey: params.nttTransceiverMessage, isSigner: false, isWritable: false },
-      { pubkey: registeredTransceiverPda, isSigner: false, isWritable: false },
-      { pubkey: params.mint, isSigner: false, isWritable: false },
-      { pubkey: params.nttInboxItem, isSigner: false, isWritable: true },
-      { pubkey: inboxRateLimitPda, isSigner: false, isWritable: true },
-      { pubkey: outboxRateLimitPda, isSigner: false, isWritable: true },
-      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-    ]
-
-    const release = [
-      { pubkey: this.authorityPda, isSigner: false, isWritable: true },
-      { pubkey: configPda, isSigner: false, isWritable: false },
-      { pubkey: params.nttInboxItem, isSigner: false, isWritable: true },
-      { pubkey: recipientAta, isSigner: false, isWritable: true },
-      { pubkey: tokenAuthorityPda, isSigner: false, isWritable: false },
-      { pubkey: params.mint, isSigner: false, isWritable: true },
-      { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
-      { pubkey: custody, isSigner: false, isWritable: true },
-    ]
-
-    const nttProgramMeta = { pubkey: params.programId, isSigner: false, isWritable: false }
-    return {
-      remainingAccounts: [
-        ...redeem,
-        nttProgramMeta,
-        ...release,
-        nttProgramMeta,
-      ],
-      redeemAccountsLen: redeem.length + 1,
-    }
   }
 
   requestRedemptionOnyc(params: {
