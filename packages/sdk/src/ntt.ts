@@ -128,17 +128,28 @@ export interface NttTransferArgs {
   shouldQueue: boolean
 }
 
-export function nttTransferArgsHash(args: NttTransferArgs): Uint8Array {
+/**
+ * Shared 43-byte buffer-builder for `TransferArgs`. The on-chain
+ * `keccak256()` hash uses big-endian; the Borsh-encoded instruction
+ * data uses little-endian. Same field layout otherwise — extracting
+ * here removes the duplicated body and the duplicated 32-byte
+ * recipient-address validation.
+ */
+function serializeTransferArgs(args: NttTransferArgs, littleEndian: boolean): Uint8Array {
   if (args.recipientAddress.length !== 32) {
-    throw new Error('nttTransferArgsHash: recipientAddress must be 32 bytes')
+    throw new Error('NttTransferArgs: recipientAddress must be 32 bytes')
   }
   const buf = new Uint8Array(8 + 2 + 32 + 1)
   const view = new DataView(buf.buffer)
-  view.setBigUint64(0, args.amount, false) // BE
-  view.setUint16(8, args.recipientChain, false) // BE
+  view.setBigUint64(0, args.amount, littleEndian)
+  view.setUint16(8, args.recipientChain, littleEndian)
   buf.set(args.recipientAddress, 10)
   buf[42] = args.shouldQueue ? 1 : 0
-  return keccak_256(buf)
+  return buf
+}
+
+export function nttTransferArgsHash(args: NttTransferArgs): Uint8Array {
+  return keccak_256(serializeTransferArgs(args, false))
 }
 
 /**
@@ -147,16 +158,7 @@ export function nttTransferArgsHash(args: NttTransferArgs): Uint8Array {
  * a single u16 field, and the encoder produces 43 bytes (no discriminator).
  */
 export function encodeNttTransferArgsBorsh(args: NttTransferArgs): Uint8Array {
-  if (args.recipientAddress.length !== 32) {
-    throw new Error('encodeNttTransferArgsBorsh: recipientAddress must be 32 bytes')
-  }
-  const buf = new Uint8Array(8 + 2 + 32 + 1)
-  const view = new DataView(buf.buffer)
-  view.setBigUint64(0, args.amount, true) // LE
-  view.setUint16(8, args.recipientChain, true) // LE
-  buf.set(args.recipientAddress, 10)
-  buf[42] = args.shouldQueue ? 1 : 0
-  return buf
+  return serializeTransferArgs(args, true)
 }
 
 /**
