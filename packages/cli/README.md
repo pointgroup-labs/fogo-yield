@@ -24,10 +24,10 @@ Rebuild whenever you edit CLI or SDK sources.
 
 ## Global options
 
-| Flag | Default | Notes |
-|---|---|---|
-| `-u, --url <url>` | `mainnet-beta` (or `$SOLANA_RPC_URL`) | Cluster name (`mainnet-beta`/`testnet`/`devnet`) or any HTTP(S) RPC URL |
-| `-k, --keypair <path>` | `$SOLANA_KEYPAIR` → `~/.config/solana/id.json` | Signer keypair (not needed for `show`) |
+| Flag                   | Default                                        | Notes                                                                   |
+| ---------------------- | ---------------------------------------------- | ----------------------------------------------------------------------- |
+| `-u, --url <url>`      | `mainnet-beta` (or `$SOLANA_RPC_URL`)          | Cluster name (`mainnet-beta`/`testnet`/`devnet`) or any HTTP(S) RPC URL |
+| `-k, --keypair <path>` | `$SOLANA_KEYPAIR` → `~/.config/solana/id.json` | Signer keypair (not needed for `show`)                                  |
 
 ## Commands
 

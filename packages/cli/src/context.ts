@@ -52,8 +52,7 @@ export function initContext(opts: {
 export async function runTx(send: () => Promise<string>): Promise<string> {
   try {
     return await send()
-  }
-  catch (err) {
+  } catch (err) {
     throw formatTxError(err)
   }
 }
@@ -84,11 +83,21 @@ function resolveKeypair(path?: string): Keypair {
 
 function formatTxError(err: unknown): Error {
   if (err instanceof SendTransactionError) {
+    // `SendTransactionError` carries `.logs` (program log lines from
+    // the failing simulation), but the default `.message` strips them.
+    // For NTT/OnRe CPI failures the log line is the only thing that
+    // distinguishes "rate limit hit" from "wrong mint" from "missing
+    // account" — so always surface them when present.
+    const logs = (err as SendTransactionError & { logs?: string[] | null }).logs
     const match = err.message.match(PROGRAM_ERROR_RE)
-    if (match) {
-      const code = Number.parseInt(match[1], 16)
-      return new Error(`Transaction failed: program error 0x${match[1]} (${code})`)
+    const codeLine = match
+      ? `Transaction failed: program error 0x${match[1]} (${Number.parseInt(match[1], 16)})`
+      : `Transaction failed: ${err.message}`
+    if (logs && logs.length > 0) {
+      const tail = logs.slice(-25).map(l => `  ${l}`).join('\n')
+      return new Error(`${codeLine}\nProgram logs (last 25):\n${tail}`)
     }
+    return new Error(codeLine)
   }
   return err instanceof Error ? err : new Error(String(err))
 }

@@ -1,9 +1,13 @@
 import chalk from 'chalk'
 import { program as cli } from 'commander'
+import { crankerCommands } from './commands/cranker'
 import { relayerCommands } from './commands/relayer'
 import { initContext } from './context'
 
-const READ_ONLY_COMMANDS = new Set(['show'])
+// `status` is read-only (Wormholescan + on-chain reads, no signing).
+// Other cranker subcommands DO sign — they fall through to the keypair
+// path. The set is keyed on the leaf subcommand name, not the group.
+const READ_ONLY_COMMANDS = new Set(['show', 'status'])
 
 cli
   .name('fogo-onre')
@@ -22,8 +26,7 @@ cli
 
     if (isReadOnly) {
       console.log(chalk.dim(`rpc: ${connection.rpcEndpoint}`))
-    }
-    else {
+    } else {
       console.log(chalk.dim(JSON.stringify({
         rpc: connection.rpcEndpoint,
         signer: keypair.publicKey.toBase58(),
@@ -33,6 +36,7 @@ cli
   })
 
 cli.addCommand(relayerCommands())
+cli.addCommand(crankerCommands())
 
 cli.parseAsync()
   .then(() => process.exit(0))

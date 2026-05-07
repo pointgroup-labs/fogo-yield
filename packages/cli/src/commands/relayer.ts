@@ -227,8 +227,7 @@ export function relayerCommands(): Command {
       }
       if (newAuthority === null) {
         console.log(chalk.dim(`  pendingAuthority: <cleared>`))
-      }
-      else if (newAuthority) {
+      } else if (newAuthority) {
         console.log(chalk.dim(`  pendingAuthority: ${newAuthority.toBase58()}  (must call accept-authority from this key)`))
       }
 
