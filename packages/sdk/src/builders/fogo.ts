@@ -3,7 +3,7 @@ import type { NttTransferArgs } from './ntt'
 import { sha256 } from '@noble/hashes/sha2.js'
 import { getAssociatedTokenAddressSync, TOKEN_PROGRAM_ID } from '@solana/spl-token'
 import { SystemProgram, TransactionInstruction } from '@solana/web3.js'
-import { SOLANA_WORMHOLE_CHAIN_ID } from './constants'
+import { SOLANA_WORMHOLE_CHAIN_ID } from '../constants'
 import {
   encodeNttTransferArgsBorsh,
   findInboxRateLimitPda,

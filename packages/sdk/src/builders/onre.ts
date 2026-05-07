@@ -9,8 +9,8 @@ import {
   SystemProgram,
   SYSVAR_INSTRUCTIONS_PUBKEY,
 } from '@solana/web3.js'
-import { ONRE_PROGRAM_ID } from './constants'
-import { readonly, writable } from './utils/accountMeta'
+import { ONRE_PROGRAM_ID } from '../constants'
+import { readonly, writable } from '../utils/accountMeta'
 
 export function findOnreStatePda(
   programId: PublicKey = ONRE_PROGRAM_ID,

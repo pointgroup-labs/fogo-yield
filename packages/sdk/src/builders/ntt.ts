@@ -7,8 +7,8 @@ import {
   SYSVAR_CLOCK_PUBKEY,
   SYSVAR_RENT_PUBKEY,
 } from '@solana/web3.js'
-import { FOGO_WORMHOLE_CHAIN_ID } from './constants'
-import { readonly, writable } from './utils/accountMeta'
+import { FOGO_WORMHOLE_CHAIN_ID } from '../constants'
+import { readonly, writable } from '../utils/accountMeta'
 
 const CONFIG_SEED = Buffer.from('config')
 const NTT_MANAGER_PEER_SEED = Buffer.from('peer')

@@ -29,7 +29,7 @@ export {
   buildFogoNttDepositIx,
   type BuildFogoNttTransferParams,
   buildFogoNttWithdrawIx,
-} from './fogo'
+} from './builders/fogo'
 export {
   type BuildBridgeNttIxParams,
   buildBridgeNttTokensIx,
@@ -37,7 +37,7 @@ export {
   type BuildBridgeOutIntentMessageParams,
   buildIntentVerifierIx,
   type NttBridgeSubAccounts,
-} from './intent-transfer'
+} from './builders/intent-transfer'
 export {
   buildNttReleaseWormholeOutboundAccountList,
   type BuildNttReleaseWormholeOutboundAccountListParams,
@@ -59,7 +59,7 @@ export {
   type NttRedeemContext,
   type NttTransferArgs,
   nttTransferArgsHash,
-} from './ntt'
+} from './builders/ntt'
 export {
   buildOnreCancelRedemptionRequestRemainingAccounts,
   buildOnreCreateRedemptionRequestRemainingAccounts,
@@ -91,7 +91,7 @@ export {
   REDEMPTION_OFFER_SIZE,
   REDEMPTION_OFFER_TOKEN_IN_MINT_OFFSET,
   REDEMPTION_OFFER_TOKEN_OUT_MINT_OFFSET,
-} from './onre'
+} from './builders/onre'
 export {
   findAuthorityPda,
   findConfigPda,
