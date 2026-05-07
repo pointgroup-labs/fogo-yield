@@ -300,49 +300,27 @@ export function buildOnreSwapRemainingAccounts(params: {
     ?? getAssociatedTokenAddressSync(params.tokenInMint, boss, true, tokenInProgram)
 
   return [
-    // 1.  offer (mut)
     { pubkey: offerPda, isSigner: false, isWritable: true },
-    // 2.  state
     { pubkey: statePda, isSigner: false, isWritable: false },
-    // 3.  boss
     { pubkey: boss, isSigner: false, isWritable: false },
-    // 4.  vault_authority
     { pubkey: vaultAuthority, isSigner: false, isWritable: false },
-    // 5.  vault_token_in_account (mut)
     { pubkey: vaultTokenIn, isSigner: false, isWritable: true },
-    // 6.  vault_token_out_account (mut)
     { pubkey: vaultTokenOut, isSigner: false, isWritable: true },
-    // 7.  permissionless_authority
     { pubkey: permAuthority, isSigner: false, isWritable: false },
-    // 8.  permissionless_token_in_account (mut)
     { pubkey: permTokenIn, isSigner: false, isWritable: true },
-    // 9.  permissionless_token_out_account (mut)
     { pubkey: permTokenOut, isSigner: false, isWritable: true },
-    // 10. token_in_mint (mut)
     { pubkey: params.tokenInMint, isSigner: false, isWritable: true },
-    // 11. token_in_program
     { pubkey: tokenInProgram, isSigner: false, isWritable: false },
-    // 12. token_out_mint (mut)
     { pubkey: params.tokenOutMint, isSigner: false, isWritable: true },
-    // 13. token_out_program
     { pubkey: tokenOutProgram, isSigner: false, isWritable: false },
-    // 14. user_token_in_account (mut)
     { pubkey: params.userTokenInAccount, isSigner: false, isWritable: true },
-    // 15. user_token_out_account (init_if_needed, mut)
     { pubkey: params.userTokenOutAccount, isSigner: false, isWritable: true },
-    // 16. boss_token_in_account (mut)
     { pubkey: bossTokenIn, isSigner: false, isWritable: true },
-    // 17. mint_authority
     { pubkey: mintAuthority, isSigner: false, isWritable: false },
-    // 18. instructions_sysvar
     { pubkey: SYSVAR_INSTRUCTIONS_PUBKEY, isSigner: false, isWritable: false },
-    // 19. user (signer, mut) — relayer_authority PDA, signed via RELAYER_SEED
     { pubkey: params.user, isSigner: false, isWritable: true },
-    // 20. associated_token_program
     { pubkey: ASSOCIATED_TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
-    // 21. system_program
     { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-    // 22. OnRe program — required in account_infos for the CPI on strict
     //     validators (Agave). LiteSVM is permissive without it; mainnet is not.
     { pubkey: programId, isSigner: false, isWritable: false },
   ]
@@ -390,7 +368,13 @@ export function buildOnreSwapRemainingAccounts(params: {
  * pins entry 3's role for the post-CPI binding read; entry 12 has no such
  * pin because its presence (not its identity) is what matters.
  */
-export function buildOnreCreateRedemptionRequestRemainingAccounts(params: {
+/**
+ * Shared parameter shape for the two OnRe redemption builders
+ * (`create_redemption_request` and `cancel_redemption_request`). Both
+ * builders need the same vault-derivation inputs and the same closing
+ * `redemptionRequest` PDA; the per-instruction extras compose on top.
+ */
+export interface OnreRedemptionVaultParams {
   /** Input mint (ONyc on the withdraw side). */
   tokenInMint: PublicKey
   /**
@@ -398,15 +382,12 @@ export function buildOnreCreateRedemptionRequestRemainingAccounts(params: {
    * `RedemptionOffer` PDA.
    */
   tokenOutMint: PublicKey
-  /** Redeemer = relayer_authority PDA. Forced to sign in the CPI helper. */
-  redeemer: PublicKey
   /** Redeemer's `tokenIn` ATA (the relayer's `onyc_ata`). */
   redeemerTokenAccount: PublicKey
   /**
-   * `RedemptionRequest` PDA derived as `findOnreRedemptionRequestPda(
-   *   redemptionOffer, requestCounterBeforeCpi)`. Caller MUST read the
-   * counter off the live `RedemptionOffer` account before the CPI fires —
-   * OnRe increments it inside the handler.
+   * `RedemptionRequest` PDA. On `create` derive as
+   * `findOnreRedemptionRequestPda(redemptionOffer, requestCounterBeforeCpi)`;
+   * on `cancel` pass the same PDA recorded on `tracker.redemption_request`.
    */
   redemptionRequest: PublicKey
   /** Token program for the input mint. Defaults to SPL Token. */
@@ -415,34 +396,29 @@ export function buildOnreCreateRedemptionRequestRemainingAccounts(params: {
   programId?: PublicKey
   /** Optional precomputed State PDA; defaults to `findOnreStatePda(programId)`. */
   state?: PublicKey
-}): AccountMeta[] {
+}
+
+export function buildOnreCreateRedemptionRequestRemainingAccounts(
+  params: OnreRedemptionVaultParams & {
+    /** Redeemer = relayer_authority PDA. Forced to sign in the CPI helper. */
+    redeemer: PublicKey
+  },
+): AccountMeta[] {
   const { programId, tokenProgram, state, redemptionOffer, vaultAuthority, vaultTokenAccount }
     = resolveRedemptionVaultAccounts(params)
 
   return [
-    // 1.  state
     { pubkey: state, isSigner: false, isWritable: false },
-    // 2.  redemption_offer (mut)
     { pubkey: redemptionOffer, isSigner: false, isWritable: true },
-    // 3.  redemption_request (init, mut) — INDEX = 2 (the relayer pin)
     { pubkey: params.redemptionRequest, isSigner: false, isWritable: true },
-    // 4.  redeemer (signer, mut) — relayer_authority PDA, signed via RELAYER_SEED
     { pubkey: params.redeemer, isSigner: false, isWritable: true },
-    // 5.  redemption_vault_authority (PDA)
     { pubkey: vaultAuthority, isSigner: false, isWritable: false },
-    // 6.  token_in_mint (ONyc)
     { pubkey: params.tokenInMint, isSigner: false, isWritable: false },
-    // 7.  redeemer_token_account (mut, ATA of token_in/redeemer)
     { pubkey: params.redeemerTokenAccount, isSigner: false, isWritable: true },
-    // 8.  vault_token_account (mut, ATA of token_in/vault_authority)
     { pubkey: vaultTokenAccount, isSigner: false, isWritable: true },
-    // 9.  token_program
     { pubkey: tokenProgram, isSigner: false, isWritable: false },
-    // 10. associated_token_program
     { pubkey: ASSOCIATED_TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
-    // 11. system_program
     { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-    // 12. OnRe program — required in account_infos for the CPI on strict
     //     validators (Agave + LiteSVM). The relayer's `invoke_signed` only
     //     includes accounts it sees in `remaining_accounts`, so without
     //     this entry the runtime reports "Unknown program" / MissingAccount.
@@ -478,62 +454,36 @@ export function buildOnreCreateRedemptionRequestRemainingAccounts(params: {
  *   13. associated_token_program
  *   14. ONRE program ID (NOT consumed by OnRe's Accounts struct)
  */
-export function buildOnreCancelRedemptionRequestRemainingAccounts(params: {
-  /** Input mint (ONyc on the withdraw side). */
-  tokenInMint: PublicKey
-  /** Output mint (USDC on the withdraw side). Used to derive the `RedemptionOffer` PDA. */
-  tokenOutMint: PublicKey
-  /** Signer = relayer_authority PDA. Forced to sign in the CPI helper. */
-  signer: PublicKey
-  /**
-   * Redeemer recorded on the `RedemptionRequest`. For the relayer flow this
-   * is the same as `signer` (the relayer_authority PDA).
-   */
-  redeemer: PublicKey
-  /** Redeemer's `tokenIn` ATA (the relayer's `onyc_ata`). */
-  redeemerTokenAccount: PublicKey
-  /** OnRe `state.redemption_admin` — receives the closed-account rent. */
-  redemptionAdmin: PublicKey
-  /** Same `RedemptionRequest` PDA recorded on `tracker.redemption_request`. */
-  redemptionRequest: PublicKey
-  /** Token program for the input mint. Defaults to SPL Token. */
-  tokenProgram?: PublicKey
-  /** Optional OnRe program override. Defaults to mainnet. */
-  programId?: PublicKey
-  /** Optional precomputed State PDA; defaults to `findOnreStatePda(programId)`. */
-  state?: PublicKey
-}): AccountMeta[] {
+export function buildOnreCancelRedemptionRequestRemainingAccounts(
+  params: OnreRedemptionVaultParams & {
+    /** Signer = relayer_authority PDA. Forced to sign in the CPI helper. */
+    signer: PublicKey
+    /**
+     * Redeemer recorded on the `RedemptionRequest`. For the relayer flow this
+     * is the same as `signer` (the relayer_authority PDA).
+     */
+    redeemer: PublicKey
+    /** OnRe `state.redemption_admin` — receives the closed-account rent. */
+    redemptionAdmin: PublicKey
+  },
+): AccountMeta[] {
   const { programId, tokenProgram, state, redemptionOffer, vaultAuthority, vaultTokenAccount }
     = resolveRedemptionVaultAccounts(params)
 
   return [
-    // 1.  state
     { pubkey: state, isSigner: false, isWritable: false },
-    // 2.  redemption_offer (mut)
     { pubkey: redemptionOffer, isSigner: false, isWritable: true },
-    // 3.  redemption_request (mut, close) — INDEX = 2 (the relayer pin)
     { pubkey: params.redemptionRequest, isSigner: false, isWritable: true },
-    // 4.  signer (signer, mut) — relayer_authority PDA, signed via RELAYER_SEED
     { pubkey: params.signer, isSigner: false, isWritable: true },
-    // 5.  redeemer (CHECK) — must match redemption_request.redeemer
     { pubkey: params.redeemer, isSigner: false, isWritable: false },
-    // 6.  redemption_admin (mut) — rent destination; must match state.redemption_admin
     { pubkey: params.redemptionAdmin, isSigner: false, isWritable: true },
-    // 7.  redemption_vault_authority (PDA)
     { pubkey: vaultAuthority, isSigner: false, isWritable: false },
-    // 8.  token_in_mint (ONyc)
     { pubkey: params.tokenInMint, isSigner: false, isWritable: false },
-    // 9.  vault_token_account (mut, ATA of token_in/vault_authority)
     { pubkey: vaultTokenAccount, isSigner: false, isWritable: true },
-    // 10. redeemer_token_account (init_if_needed, mut, ATA of token_in/redeemer)
     { pubkey: params.redeemerTokenAccount, isSigner: false, isWritable: true },
-    // 11. token_program
     { pubkey: tokenProgram, isSigner: false, isWritable: false },
-    // 12. system_program
     { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-    // 13. associated_token_program
     { pubkey: ASSOCIATED_TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
-    // 14. OnRe program — see builder docstring above for why it's appended.
     { pubkey: programId, isSigner: false, isWritable: false },
   ]
 }

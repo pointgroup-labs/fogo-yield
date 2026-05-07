@@ -3,9 +3,12 @@ export {
   BONYC_DECIMALS,
   CONFIG_SEED,
   FEE_DENOMINATOR_BPS,
+  FEE_TIMELOCK_SLOTS,
   FLOW_INBOUND_SEED,
   FLOW_OUTBOUND_SEED,
   FOGO_WORMHOLE_CHAIN_ID,
+  INTENT_TRANSFER_PROGRAM_ID,
+  INTENT_TRANSFER_SETTER_SEED,
   MAX_FEE_BPS,
   NTT_ONYC_PROGRAM_ID,
   NTT_SESSION_AUTHORITY_SEED,
@@ -20,6 +23,7 @@ export {
   SOLANA_WORMHOLE_CHAIN_ID,
   USDC_DECIMALS,
   USDC_MINT,
+  USER_INBOX_SEED,
 } from './constants'
 export {
   buildFogoNttDepositIx,
@@ -27,6 +31,16 @@ export {
   buildFogoNttWithdrawIx,
 } from './fogo'
 export {
+  type BuildBridgeNttIxParams,
+  buildBridgeNttTokensIx,
+  buildBridgeOutIntentMessage,
+  type BuildBridgeOutIntentMessageParams,
+  buildIntentVerifierIx,
+  type NttBridgeSubAccounts,
+} from './intent-transfer'
+export {
+  buildNttReleaseWormholeOutboundAccountList,
+  type BuildNttReleaseWormholeOutboundAccountListParams,
   buildNttTransferLockAccountList,
   type BuildNttTransferLockAccountListParams,
   encodeNttTransferArgsBorsh,
@@ -34,7 +48,9 @@ export {
   findInboxRateLimitPda,
   findNttConfigPda,
   findNttCustodyAta,
+  findNttEmitterPda,
   findNttPeerPda,
+  findNttWormholeMessagePda,
   findOutboxRateLimitPda,
   findRegisteredTransceiverPda,
   findSessionAuthorityPda,
@@ -65,6 +81,7 @@ export {
   ONRE_STATE_FIXTURE,
   ONRE_VAULT_AUTHORITY_FIXTURE,
   type OnreDeployment,
+  type OnreRedemptionVaultParams,
   type OnreSwapContext,
   REDEMPTION_OFFER_BUMP_OFFSET,
   REDEMPTION_OFFER_DISCRIMINATOR,
@@ -78,8 +95,10 @@ export {
   findAuthorityPda,
   findConfigPda,
   findInflightFlowPda,
+  findIntentTransferSetterPda,
   findOutflightFlowPda,
   findRedemptionTrackerPda,
+  findUserInboxAuthorityPda,
 } from './pda'
 export {
   applyFeeBps,
