@@ -21,7 +21,9 @@ import {
   findAuthorityPda,
   findInboxItemPda,
   findInflightFlowPda,
+  findIntentTransferSetterPda,
   findTokenAuthorityPda,
+  findUserInboxAuthorityPda,
   FOGO_WORMHOLE_CHAIN_ID,
   NTT_USDC_PROGRAM_ID,
   RelayerClient,
@@ -67,12 +69,17 @@ describe('deposit flow e2e (claim_usdc → swap_usdc_to_onyc)', () => {
   let relayerAuthorityPda: PublicKey
   let nttTokenAuthorityPda: PublicKey
   let peerPda: PublicKey
+  let feeVault: PublicKey
 
   let onreVaultAuthorityPda: PublicKey
   let onrePermAuthorityPda: PublicKey
   let onreMintAuthorityPda: PublicKey
 
-  const fogoSender = new Uint8Array(32).fill(0xAB)
+  // The relayer pins NTT VAA `sender` to the intent_transfer setter PDA
+  // (defense-in-depth: only intent-driven bridges may deposit). Tests
+  // therefore set `sender` to that PDA's bytes, not an arbitrary
+  // attribution value — `flow.fogo_sender` comes from `userWallet`.
+  const fogoSender = findIntentTransferSetterPda()[0].toBytes()
   const depositAmount = 500_000n // 0.5 USDC gross
   // ONyc the OnRe vault holds (must be enough for the swap's output)
   const VAULT_ONYC_BALANCE = 10_000_000n
@@ -100,7 +107,7 @@ describe('deposit flow e2e (claim_usdc → swap_usdc_to_onyc)', () => {
     // ONyc mint authority = OnRe mint_authority PDA (the swap mints ONyc to
     // the relayer ATA from the OnRe vault).
     onycMint = createMintWithAuthority(svm, authority, onreMintAuthorityPda, 6)
-    const feeVault = createAta(svm, authority, onycMint.publicKey, authority.publicKey)
+    feeVault = createAta(svm, authority, onycMint.publicKey, authority.publicKey)
 
     await client
       .initialize({
@@ -183,8 +190,20 @@ describe('deposit flow e2e (claim_usdc → swap_usdc_to_onyc)', () => {
   it('claim_usdc (NTT inbound) → swap_usdc_to_onyc succeeds', async () => {
     const usdcAta = getAssociatedTokenAddressSync(usdcMint.publicKey, relayerAuthorityPda, true)
 
-    // Build the inbound NTT message — recipient = relayerAuthorityPda so
-    // released USDC lands in the relayer ATA.
+    // Per-user inbox plumbing: the FOGO bridge intent's `recipient_address`
+    // is `pda([USER_INBOX_SEED, userWallet], relayer)`. The VAA carries
+    // that PDA as the recipient and NTT release_inbound deposits USDC
+    // into the inbox ATA. The relayer's `claim_usdc` then PDA-signs a
+    // sweep into the relayer custody ATA.
+    const userWallet = Keypair.generate()
+    const [userInboxAuthority] = findUserInboxAuthorityPda(userWallet.publicKey, client.program.programId)
+    createAta(svm, authority, usdcMint.publicKey, userInboxAuthority)
+    // Sweep destination must exist so claim_usdc can deserialize it.
+    createAta(svm, authority, usdcMint.publicKey, relayerAuthorityPda)
+
+    // Build the inbound NTT message — recipient = userInboxAuthority so
+    // released USDC lands in the per-user inbox ATA. The relayer sweeps
+    // the per-VAA delta into `usdcAta` after release.
     const peerAddress = readPeerAddress(svm, peerPda)
     const messageId = new Uint8Array(32)
     crypto.getRandomValues(messageId)
@@ -197,7 +216,7 @@ describe('deposit flow e2e (claim_usdc → swap_usdc_to_onyc)', () => {
       trimmedDecimals: 6,
       sourceToken,
       toChain: 1,
-      to: relayerAuthorityPda.toBytes(),
+      to: userInboxAuthority.toBytes(),
     }
 
     const [validatedMsgPda] = findValidatedTransceiverMessagePda(
@@ -217,6 +236,7 @@ describe('deposit flow e2e (claim_usdc → swap_usdc_to_onyc)', () => {
       await client
         .claimUsdc({
           payer: authority.publicKey,
+          userWallet: userWallet.publicKey,
           usdcMint: usdcMint.publicKey,
           nttInboxItem: inboxItemPda,
           nttTransceiverMessage: validatedMsgPda,
@@ -250,6 +270,7 @@ describe('deposit flow e2e (claim_usdc → swap_usdc_to_onyc)', () => {
         .swapUsdcToOnyc({
           usdcMint: usdcMint.publicKey,
           onycMint: onycMint.publicKey,
+          feeVault,
           nttInboxItem: inboxItemPda,
           onre: {},
         })

@@ -47,9 +47,17 @@ pub mod fogo_onre_relayer {
         swap_usdc_to_onyc::handler(ctx)
     }
 
-    /// Lock ONyc via NTT, sending bONyc to `flow.fogo_sender`. Closes the PDA.
-    pub fn lock_onyc<'info>(ctx: Context<'info, LockOnyc<'info>>) -> Result<()> {
-        lock_onyc::handler(ctx)
+    /// Lock ONyc via NTT and atomically publish the outbound Wormhole VAA,
+    /// sending bONyc to `flow.fogo_sender`. Closes the PDA.
+    ///
+    /// `transfer_lock_account_count` is the boundary index in
+    /// `remaining_accounts` between the `transfer_lock` (14 entries) and
+    /// `release_wormhole_outbound` (15 entries) account lists.
+    pub fn lock_onyc<'info>(
+        ctx: Context<'info, LockOnyc<'info>>,
+        transfer_lock_account_count: u8,
+    ) -> Result<()> {
+        lock_onyc::handler(ctx, transfer_lock_account_count)
     }
 
     /// Release ONyc from NTT custody and record a `Flow` receipt for the

@@ -3,9 +3,12 @@ import {
   CONFIG_SEED,
   FLOW_INBOUND_SEED,
   FLOW_OUTBOUND_SEED,
+  INTENT_TRANSFER_PROGRAM_ID,
+  INTENT_TRANSFER_SETTER_SEED,
   REDEMPTION_TRACKER_SEED,
   RELAYER_PROGRAM_ID,
   RELAYER_SEED,
+  USER_INBOX_SEED,
 } from './constants'
 
 export function findConfigPda(programId: PublicKey = RELAYER_PROGRAM_ID) {
@@ -49,4 +52,33 @@ export function findOutflightFlowPda(
  */
 export function findRedemptionTrackerPda(programId: PublicKey = RELAYER_PROGRAM_ID) {
   return PublicKey.findProgramAddressSync([REDEMPTION_TRACKER_SEED], programId)
+}
+
+/**
+ * Per-user inbox authority PDA — `[USER_INBOX_SEED, wallet]` under the
+ * relayer program. Used as `recipient_address` in the user-signed FOGO
+ * intent so NTT `release_inbound` deposits USDC into the ATA owned by
+ * this PDA. `claim_usdc` re-derives + PDA-signs a sweep into the
+ * relayer custody ATA.
+ */
+export function findUserInboxAuthorityPda(
+  wallet: PublicKey,
+  programId: PublicKey = RELAYER_PROGRAM_ID,
+) {
+  return PublicKey.findProgramAddressSync(
+    [USER_INBOX_SEED, wallet.toBuffer()],
+    programId,
+  )
+}
+
+/**
+ * `intent_transfer`'s singleton setter PDA. Deterministic — pinned by
+ * the relayer as the only valid `NttManagerMessage.sender` for inbound
+ * deposits.
+ */
+export function findIntentTransferSetterPda() {
+  return PublicKey.findProgramAddressSync(
+    [INTENT_TRANSFER_SETTER_SEED],
+    INTENT_TRANSFER_PROGRAM_ID,
+  )
 }

@@ -15,6 +15,23 @@ pub const NTT_TRANSFER_LOCK_IX: [u8; 8] = [179, 158, 146, 148, 151, 46, 176, 200
 pub const NTT_REDEEM_IX: [u8; 8] = [184, 12, 86, 149, 70, 196, 97, 225];
 pub const NTT_RELEASE_INBOUND_UNLOCK_IX: [u8; 8] = [182, 162, 62, 206, 197, 137, 83, 98];
 
+/// Wormhole Core Bridge program id (mainnet). Pinned for documentation /
+/// future use by handlers that need to assert the wormhole-program account
+/// the release CPI receives. The release CPI itself is dispatched via
+/// `remaining_accounts`, so this constant isn't directly read by `lock_onyc`
+/// — it exists so off-chain tooling and any future on-chain assertion share
+/// one source of truth.
+#[constant]
+pub const WORMHOLE_CORE_PROGRAM_ID: Pubkey =
+    pubkey!("worm2ZoG2kUd4vFXhvjh93UUH596ayRfgQ2MgjNMTth");
+
+/// Discriminator for `release_wormhole_outbound` in the OnRe ONyc NTT
+/// manager (v3.0.0 IDL — transceiver compiled into manager binary).
+/// Equivalent to sha256("global:release_wormhole_outbound")[..8].
+/// Sanity check: node_modules/.../sdk-solana-ntt/.../3_0_0/json/ntt_transceiver.json
+pub const NTT_RELEASE_WORMHOLE_OUTBOUND_IX: [u8; 8] =
+    [0xCA, 0x57, 0x33, 0xAD, 0x8E, 0xA0, 0xBC, 0xCC];
+
 pub const ONRE_TAKE_OFFER_IX: [u8; 8] = [37, 190, 224, 77, 197, 39, 203, 230];
 
 /// OnRe `create_redemption_request` sighash. Used by the asymmetric
@@ -73,3 +90,65 @@ pub const FLOW_OUTBOUND_SEED: &[u8] = b"outflight";
 
 /// Approved as SPL `Approve` delegate before NTT `transfer_lock`.
 pub const NTT_SESSION_AUTHORITY_SEED: &[u8] = b"session_authority";
+
+/// Per-user inbox authority PDA. Seeds = `[USER_INBOX_SEED, user_wallet]`
+/// under the relayer program ID. The webapp signs an intent whose
+/// `recipient_address` is this PDA, so the FOGO `intent_transfer.bridge_ntt_tokens`
+/// emits a VAA addressed to it; NTT `release_inbound` then deposits USDC
+/// into `getAssociatedTokenAddress(USDC_MINT, user_inbox_authority)`.
+/// `claim_usdc` PDA-signs a sweep from that ATA into the relayer-authority
+/// USDC ATA, recording `user_wallet` as `flow.fogo_sender` so the
+/// downstream return leg (`lock_onyc` / `send_usdc_to_user`) bridges back
+/// to the originating wallet on FOGO.
+pub const USER_INBOX_SEED: &[u8] = b"user_inbox";
+
+// CROSS-PROGRAM VERSION DEPENDENCY — FOGO `intent_transfer`
+//
+// SECURITY-CRITICAL: the two constants below are part of the trust
+// chain that pins inbound USDC.s VAAs to the FOGO `intent_transfer`
+// program. They are the *security keystone* of the deposit flow:
+//
+//   1. The webapp signs an intent whose `recipient_address` is the
+//      per-user inbox PDA on Solana.
+//   2. FOGO's `intent_transfer.bridge_ntt_tokens` consumes the intent
+//      and bridges via NTT — the from-ATA owner inside that bridge is
+//      the singleton PDA `[INTENT_TRANSFER_SETTER_SEED]` under
+//      `INTENT_TRANSFER_PROGRAM_ID`.
+//   3. That PDA surfaces as `NttManagerMessage.sender` on the VAA.
+//   4. `claim_usdc` requires `sender == intent_transfer setter PDA`,
+//      rejecting any direct (non-intent) NTT bridge to the same
+//      recipient PDA.
+//
+// **Operational coupling:** if upstream `intent_transfer` ever rotates
+// its setter PDA seed OR is redeployed at a different program ID,
+// this relayer must be redeployed in lockstep. Until that redeploy
+// lands, every inbound USDC.s deposit fails with `UnexpectedFogoSender`.
+//
+// Currently acceptable because: the relayer is upgradeable
+// (BPFLoaderUpgradeable), and `intent_transfer` is governed by the
+// same trust sphere — a coordinated upgrade is feasible.
+//
+// **DO NOT** make these runtime-rotatable via `RelayerConfig` without
+// reviewing the threat model: a stolen authority key could then
+// redirect the entire deposit flow to an attacker-controlled program.
+// The compile-time constant is the trust-minimization boundary.
+//
+// See `docs/architecture.md` "Cross-program version dependencies".
+
+/// FOGO `intent_transfer` program ID. Pinned so `claim_usdc` can require
+/// that any incoming VAA was originated by intent_transfer (its singleton
+/// `intent_transfer_setter` PDA is the NTT message sender for every
+/// intent-driven bridge). Without this pin, a direct NTT bridge that
+/// happens to target a user's inbox PDA would also satisfy the deposit
+/// flow — annoying rather than dangerous, but the pin enforces the
+/// intended deposit path.
+#[constant]
+pub const INTENT_TRANSFER_PROGRAM_ID: Pubkey =
+    pubkey!("Xfry4dW9m42ncAqm8LyEnyS5V6xu5DSJTMRQLiGkARD");
+
+/// Singleton-PDA seed inside `intent_transfer`. The PDA `[INTENT_TRANSFER_SETTER_SEED]`
+/// under `INTENT_TRANSFER_PROGRAM_ID` is the `from.owner` of the
+/// intermediate token account intent_transfer uses for `transfer_burn`,
+/// so it surfaces as `NttManagerMessage.sender` on every intent-driven
+/// VAA we receive.
+pub const INTENT_TRANSFER_SETTER_SEED: &[u8] = b"intent_transfer";

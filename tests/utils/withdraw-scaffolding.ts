@@ -152,6 +152,7 @@ export async function setupWithdrawRig(): Promise<WithdrawRig> {
     client,
     usdcMint,
     onycMint,
+    feeVault,
     relayerAuthorityPda,
     nttTokenAuthorityPda,
     custodyAta,

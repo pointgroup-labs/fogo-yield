@@ -58,6 +58,7 @@ describe('withdraw failure paths', () => {
         payer: rig.authority.publicKey,
         usdcMint: rig.usdcMint.publicKey,
         onycMint: rig.onycMint.publicKey,
+        feeVault: rig.feeVault,
         nttInboxItem: inboxItemPda,
         onre: { redemptionRequest },
       })

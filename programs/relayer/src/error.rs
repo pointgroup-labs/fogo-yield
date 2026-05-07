@@ -70,4 +70,19 @@ pub enum RelayerError {
 
     #[msg("Post-CPI ONyc balance dropped — OnRe consumed ONyc unexpectedly")]
     UnexpectedOnycConsumed,
+
+    #[msg("user_inbox_ata's authority does not match the [user_inbox, user_wallet] PDA")]
+    UserInboxAuthorityMismatch,
+
+    #[msg("NTT VAA's NttManagerMessage.sender is not the intent_transfer setter PDA — deposit must originate via intent_transfer")]
+    UnexpectedFogoSender,
+
+    #[msg("ntt_inbox_item account is missing, too short, or has the wrong discriminator")]
+    InvalidInboxItem,
+
+    #[msg("user_inbox_ata balance is below the NTT-recorded inbox_item.amount — inbox was not credited as expected")]
+    InsufficientInboxBalance,
+
+    #[msg("Proposed pending_authority equals the current authority — self-rotate is rejected")]
+    PendingAuthorityIsCurrent,
 }

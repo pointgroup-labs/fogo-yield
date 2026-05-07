@@ -4,8 +4,10 @@ import {
   findConfigPda,
   findInboxRateLimitPda,
   findInflightFlowPda,
+  findIntentTransferSetterPda,
   findNttPeerPda,
   findOutflightFlowPda,
+  findUserInboxAuthorityPda,
   FOGO_WORMHOLE_CHAIN_ID,
   NTT_ONYC_PROGRAM_ID,
   NTT_USDC_PROGRAM_ID,
@@ -481,7 +483,12 @@ describe('relayer', () => {
   // ---------------------------------------------------------------------------
 
   describe('deposit flow', () => {
-    const fogoSender = new Uint8Array(32).fill(0xAB)
+    // Pinned by the relayer's claim_usdc — the VAA's NTT sender must be
+    // intent_transfer's singleton setter PDA. Other deposit-flow tests
+    // here exercise paths AFTER claim_usdc (swap/lock); they only need
+    // a valid `fogo_sender` field on the injected Flow account, not on
+    // the VAA itself.
+    const fogoSender = findIntentTransferSetterPda()[0].toBytes()
 
     beforeEach(async () => {
       await client
@@ -517,6 +524,7 @@ describe('relayer', () => {
 
     it('claim_usdc rejects replay when inflight Flow PDA already exists', async () => {
       const nttInboxItem = Keypair.generate()
+      const userWallet = Keypair.generate()
 
       // Inject a Flow PDA at the expected inflight address to simulate a
       // prior claim_usdc having already created it.
@@ -528,6 +536,14 @@ describe('relayer', () => {
         payer: authority.publicKey,
         bump,
       }, client.program.programId)
+
+      // Pre-create the per-user inbox ATA so Anchor's account
+      // deserialization passes; the `inflight_flow` init constraint must
+      // be the first thing to fail.
+      const [userInboxAuthority] = findUserInboxAuthorityPda(userWallet.publicKey, client.program.programId)
+      createAta(svm, authority, usdcMint.publicKey, userInboxAuthority)
+      // Sweep destination must also exist for the same reason.
+      createAta(svm, authority, usdcMint.publicKey, client.authorityPda)
 
       const messageId = new Uint8Array(32)
       crypto.getRandomValues(messageId)
@@ -551,6 +567,7 @@ describe('relayer', () => {
           client
             .claimUsdc({
               payer: authority.publicKey,
+              userWallet: userWallet.publicKey,
               usdcMint: usdcMint.publicKey,
               nttInboxItem: nttInboxItem.publicKey,
               nttTransceiverMessage: validatedMsgPda,
@@ -563,6 +580,179 @@ describe('relayer', () => {
             .rpc(),
         logMatches(/already in use/i),
         'inflight Flow init constraint should fire (account already exists)',
+      )
+    })
+
+    it('claim_usdc rejects forged system-owned inbox_item on the released-skip path', async () => {
+      // Forgery attack vector: a malicious cranker bypasses the FOGO
+      // intent_transfer fee path by self-funding their own inbox ATA
+      // and crafting a 75-byte system-program-owned account with the
+      // real InboxItem discriminator + Released release_status.
+      // Without the conditional owner check in claim_usdc's skip
+      // branch, the relayer would sweep that USDC into custody and
+      // mint phantom-attributed credit. With the check, this MUST
+      // fail with InvalidInboxItem before any balance moves.
+      const attackerWallet = Keypair.generate()
+      const fakeInboxItem = Keypair.generate()
+      const [attackerInbox] = findUserInboxAuthorityPda(
+        attackerWallet.publicKey,
+        client.program.programId,
+      )
+      const attackerInboxAta = createAta(svm, authority, usdcMint.publicKey, attackerInbox)
+      // Self-funded "deposit" — without the owner guard, this would be
+      // swept into relayer custody as phantom intent-bypass credit.
+      mintTo(svm, authority, usdcMint.publicKey, attackerInboxAta, 1_000_000)
+      createAta(svm, authority, usdcMint.publicKey, client.authorityPda)
+
+      // Hand-roll a 75-byte InboxItem-shaped payload owned by the
+      // system program (the attacker's only writeable target). disc +
+      // init + bump + amount(u64 LE @10) + recipient(@18) +
+      // bitmap(@50) + release_status_tag(@66 = 2 = Released).
+      const INBOX_ITEM_DISC = Buffer.from([0xED, 0x8D, 0xCC, 0x67, 0xBB, 0x7A, 0x39, 0x5C])
+      const payload = Buffer.alloc(75)
+      INBOX_ITEM_DISC.copy(payload, 0)
+      payload[8] = 1 // init
+      payload[9] = 255 // bump (arbitrary)
+      payload.writeBigUInt64LE(1_000_000n, 10) // amount
+      attackerInbox.toBuffer().copy(payload, 18) // recipient_address
+      // bitmap at 50..66 left as zeros
+      payload[66] = 2 // release_status = Released
+      // bytes 67..75 (ReleaseAfterDelay payload slot) left as zeros
+      svm.setAccount(fakeInboxItem.publicKey, {
+        executable: false,
+        owner: PublicKey.default, // system program
+        lamports: 1_500_000,
+        data: payload,
+        rentEpoch: 0,
+      })
+
+      const messageId = new Uint8Array(32)
+      crypto.getRandomValues(messageId)
+      const [validatedMsgPda] = findValidatedTransceiverMessagePda(
+        FOGO_WORMHOLE_CHAIN_ID,
+        messageId,
+        NTT_USDC_PROGRAM_ID,
+      )
+      setValidatedTransceiverMessage(
+        svm,
+        validatedMsgPda,
+        NTT_USDC_PROGRAM_ID,
+        makeTransceiverMessage(fogoSender, messageId),
+      )
+
+      await expectError(
+        () =>
+          client
+            .claimUsdc({
+              payer: authority.publicKey,
+              userWallet: attackerWallet.publicKey,
+              usdcMint: usdcMint.publicKey,
+              nttInboxItem: fakeInboxItem.publicKey,
+              nttTransceiverMessage: validatedMsgPda,
+              redeemAccountsLen: 1,
+            })
+            .remainingAccounts([
+              { pubkey: NTT_USDC_PROGRAM_ID, isSigner: false, isWritable: false },
+              { pubkey: client.authorityPda, isSigner: false, isWritable: false },
+            ])
+            .rpc(),
+        'InvalidInboxItem',
+      )
+    })
+
+    it('claim_usdc rejects released-skip with valid setter VTM but unrelated InboxItem', async () => {
+      // Bypass attack vector caught in the deploy-readiness review:
+      //
+      //   1. Attacker bridges USDC.s from FOGO via NTT *directly*
+      //      (not through intent_transfer), targeting their own per-user
+      //      inbox PDA on Solana. Funds land in attacker_inbox_ata.
+      //      This skips intent_transfer's fee path.
+      //   2. Attacker borrows ANY real intent_transfer-originated VTM
+      //      (e.g. someone else's prior legitimate deposit) — its
+      //      `sender == intent_transfer_setter` check passes.
+      //   3. Attacker calls claim_usdc with their attacker-controlled
+      //      InboxItem + the borrowed VTM.
+      //
+      // The cryptographic link between VTM and InboxItem (NTT's own
+      // `inbox_item` PDA seed = keccak256(from_chain_BE || msg_wire))
+      // is bypassed on the released-skip path because the redeem CPI
+      // is skipped. Without an explicit re-derivation in the handler,
+      // the sender check passes (borrowed real VTM), the recipient
+      // check passes (attacker InboxItem really does target their PDA),
+      // and the sweep happens — minting bONyc on FOGO without paying
+      // intent_transfer fees.
+      //
+      // The fix re-derives the InboxItem PDA from the supplied VTM and
+      // requires equality with the supplied InboxItem account. This
+      // test injects a valid Released NTT-owned InboxItem at an
+      // *unrelated* keypair address and a valid setter VTM, then
+      // expects InboxItemMismatch.
+      const attackerWallet = Keypair.generate()
+      const unrelatedInboxItem = Keypair.generate()
+      const [attackerInbox] = findUserInboxAuthorityPda(
+        attackerWallet.publicKey,
+        client.program.programId,
+      )
+      const attackerInboxAta = createAta(svm, authority, usdcMint.publicKey, attackerInbox)
+      mintTo(svm, authority, usdcMint.publicKey, attackerInboxAta, 1_000_000)
+      createAta(svm, authority, usdcMint.publicKey, client.authorityPda)
+
+      // NTT-owned (passes the skip-path owner guard) Released InboxItem,
+      // recipient = attacker's per-user inbox PDA. Same 75-byte layout
+      // the prior forgery test uses — the only difference here is the
+      // owner is the real NTT manager program, so the owner check on
+      // its own can't catch this.
+      const INBOX_ITEM_DISC = Buffer.from([0xED, 0x8D, 0xCC, 0x67, 0xBB, 0x7A, 0x39, 0x5C])
+      const payload = Buffer.alloc(75)
+      INBOX_ITEM_DISC.copy(payload, 0)
+      payload[8] = 1
+      payload[9] = 255
+      payload.writeBigUInt64LE(1_000_000n, 10)
+      attackerInbox.toBuffer().copy(payload, 18)
+      payload[66] = 2 // Released
+      svm.setAccount(unrelatedInboxItem.publicKey, {
+        executable: false,
+        owner: NTT_USDC_PROGRAM_ID,
+        lamports: 1_500_000,
+        data: payload,
+        rentEpoch: 0,
+      })
+
+      // Borrowed real intent_transfer-originated VTM. `sender` =
+      // intent_transfer_setter PDA, so the existing UnexpectedFogoSender
+      // check passes. The VTM's contents hash to *some* InboxItem PDA,
+      // but NOT to `unrelatedInboxItem.publicKey` (a fresh keypair).
+      const messageId = new Uint8Array(32)
+      crypto.getRandomValues(messageId)
+      const [validatedMsgPda] = findValidatedTransceiverMessagePda(
+        FOGO_WORMHOLE_CHAIN_ID,
+        messageId,
+        NTT_USDC_PROGRAM_ID,
+      )
+      setValidatedTransceiverMessage(
+        svm,
+        validatedMsgPda,
+        NTT_USDC_PROGRAM_ID,
+        makeTransceiverMessage(fogoSender, messageId),
+      )
+
+      await expectError(
+        () =>
+          client
+            .claimUsdc({
+              payer: authority.publicKey,
+              userWallet: attackerWallet.publicKey,
+              usdcMint: usdcMint.publicKey,
+              nttInboxItem: unrelatedInboxItem.publicKey,
+              nttTransceiverMessage: validatedMsgPda,
+              redeemAccountsLen: 1,
+            })
+            .remainingAccounts([
+              { pubkey: NTT_USDC_PROGRAM_ID, isSigner: false, isWritable: false },
+              { pubkey: client.authorityPda, isSigner: false, isWritable: false },
+            ])
+            .rpc(),
+        'InboxItemMismatch',
       )
     })
 
@@ -585,6 +775,7 @@ describe('relayer', () => {
             .swapUsdcToOnyc({
               usdcMint: usdcMint.publicKey,
               onycMint: onycMint.publicKey,
+              feeVault,
               nttInboxItem: nttInboxItem.publicKey,
             })
             .remainingAccounts([
@@ -622,6 +813,7 @@ describe('relayer', () => {
             .swapUsdcToOnyc({
               usdcMint: usdcMint.publicKey,
               onycMint: onycMint.publicKey,
+              feeVault,
               nttInboxItem: nttInboxItem.publicKey,
             })
             .remainingAccounts([

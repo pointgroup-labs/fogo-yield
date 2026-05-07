@@ -38,6 +38,11 @@ pub fn handler(
         config.pending_authority = if proposed == Pubkey::default() {
             None
         } else {
+            require_keys_neq!(
+                proposed,
+                config.authority,
+                RelayerError::PendingAuthorityIsCurrent
+            );
             Some(proposed)
         };
     }

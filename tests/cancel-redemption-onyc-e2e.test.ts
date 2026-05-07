@@ -44,7 +44,7 @@ describe('cancel_redemption_onyc e2e', () => {
   })
 
   it('aborts a pending OnRe redemption and rolls flow back to Claimed', async () => {
-    const { svm, authority, client, usdcMint, onycMint, onycAta, usdcAta } = rig
+    const { svm, authority, client, usdcMint, onycMint, feeVault, onycAta, usdcAta } = rig
 
     const { inboxItemPda, outflightPda } = await runUnlockOnycLeg1(rig)
 
@@ -73,6 +73,7 @@ describe('cancel_redemption_onyc e2e', () => {
         payer: authority.publicKey,
         usdcMint: usdcMint.publicKey,
         onycMint: onycMint.publicKey,
+        feeVault,
         nttInboxItem: inboxItemPda,
         onre: { redemptionRequest: redemptionRequestPda },
       })

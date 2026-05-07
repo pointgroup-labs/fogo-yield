@@ -525,6 +525,20 @@ mod tests {
         assert_eq!(Flow::INIT_SPACE, 74, "Flow layout must not shift");
     }
 
+    /// `RelayerConfig` byte-stability guard. Same rationale as the
+    /// `Flow` pin: a shift here means the singleton config PDA layout
+    /// has changed and any non-rebuilt relayer would deserialize garbage
+    /// out of `relayer_config`. Forces a deliberate migration plan
+    /// before the layout drifts.
+    #[test]
+    fn relayer_config_init_space_is_unchanged_by_redesign() {
+        assert_eq!(
+            RelayerConfig::INIT_SPACE,
+            182,
+            "RelayerConfig layout must not shift"
+        );
+    }
+
     /// Re-derives every claimed sighash from `sha256("global:" + name)[..8]`.
     /// Fires before any CPI ships if OnRe renames an instruction or a
     /// constant gets fat-fingered.

@@ -2,7 +2,7 @@
   "address": "onrenRKgX54qtWeK3cuaTBE71xx7dWMXn82ubH61vAp",
   "metadata": {
     "name": "fogo_onre_relayer",
-    "version": "0.1.0",
+    "version": "0.1.2",
     "spec": "0.1.0",
     "description": "Fogo OnRe relayer — stateless PDA-custody bridge between OnRe and Wormhole NTT on Solana",
     "repository": "https://github.com/pointgroup-labs/fogo-onre"
@@ -564,6 +564,9 @@
         },
         {
           "name": "usdc_ata",
+          "docs": [
+            "Sweep destination — long-lived relayer-authority USDC ATA."
+          ],
           "writable": true,
           "pda": {
             "seeds": [
@@ -620,9 +623,117 @@
           }
         },
         {
+          "name": "user_wallet",
+          "docs": [
+            "Originating FOGO wallet (same pubkey on Solana — keys are chain-agnostic).",
+            "Cranker-supplied; pinned by the `user_inbox_authority` PDA derivation",
+            "below + the NTT release ATA-authority check chain. See handler doc."
+          ]
+        },
+        {
+          "name": "user_inbox_authority",
+          "docs": [
+            "Per-user inbox PDA. Owns `user_inbox_ata`; signs the sweep."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  117,
+                  115,
+                  101,
+                  114,
+                  95,
+                  105,
+                  110,
+                  98,
+                  111,
+                  120
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "user_wallet"
+              }
+            ]
+          }
+        },
+        {
+          "name": "user_inbox_ata",
+          "docs": [
+            "Per-user inbox USDC ATA. NTT release_inbound deposits here; the",
+            "sweep transfers exactly `flow.amount` out into `usdc_ata`.",
+            "`init_if_needed` is NOT used here — the FOGO `bridge_ntt_tokens`",
+            "arg `pay_destination_ata_rent: true` causes the Wormhole",
+            "executor to create the ATA on first delivery."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "user_inbox_authority"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "usdc_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
           "name": "ntt_inbox_item",
           "docs": [
-            "Per-VAA NTT inbox-item PDA — its pubkey seeds the flow PDA."
+            "Per-VAA NTT inbox-item PDA — its pubkey seeds the flow PDA.",
+            "We deliberately do NOT put `#[account(owner = NTT_USDC_PROGRAM_ID)]`",
+            "here: on a fresh claim the account doesn't exist yet (the NTT",
+            "redeem CPI inside the handler creates it), so Anchor's",
+            "pre-handler owner constraint would fail every first-time claim.",
+            "The owner check is enforced inside the handler's",
+            "`inbox_already_released` skip branch — the *only* path where",
+            "no NTT CPI runs and forgery is therefore possible."
           ]
         },
         {
@@ -1100,7 +1211,12 @@
     {
       "name": "lock_onyc",
       "docs": [
-        "Lock ONyc via NTT, sending bONyc to `flow.fogo_sender`. Closes the PDA."
+        "Lock ONyc via NTT and atomically publish the outbound Wormhole VAA,",
+        "sending bONyc to `flow.fogo_sender`. Closes the PDA.",
+        "",
+        "`transfer_lock_account_count` is the boundary index in",
+        "`remaining_accounts` between the `transfer_lock` (14 entries) and",
+        "`release_wormhole_outbound` (15 entries) account lists."
       ],
       "discriminator": [
         4,
@@ -1262,7 +1378,12 @@
           "name": "token_program"
         }
       ],
-      "args": []
+      "args": [
+        {
+          "name": "transfer_lock_account_count",
+          "type": "u8"
+        }
+      ]
     },
     {
       "name": "request_redemption_onyc",
@@ -2460,6 +2581,31 @@
       "code": 6022,
       "name": "UnexpectedOnycConsumed",
       "msg": "Post-CPI ONyc balance dropped — OnRe consumed ONyc unexpectedly"
+    },
+    {
+      "code": 6023,
+      "name": "UserInboxAuthorityMismatch",
+      "msg": "user_inbox_ata's authority does not match the [user_inbox, user_wallet] PDA"
+    },
+    {
+      "code": 6024,
+      "name": "UnexpectedFogoSender",
+      "msg": "NTT VAA's NttManagerMessage.sender is not the intent_transfer setter PDA — deposit must originate via intent_transfer"
+    },
+    {
+      "code": 6025,
+      "name": "InvalidInboxItem",
+      "msg": "ntt_inbox_item account is missing, too short, or has the wrong discriminator"
+    },
+    {
+      "code": 6026,
+      "name": "InsufficientInboxBalance",
+      "msg": "user_inbox_ata balance is below the NTT-recorded inbox_item.amount — inbox was not credited as expected"
+    },
+    {
+      "code": 6027,
+      "name": "PendingAuthorityIsCurrent",
+      "msg": "Proposed pending_authority equals the current authority — self-rotate is rejected"
     }
   ],
   "types": [
@@ -2901,6 +3047,20 @@
   ],
   "constants": [
     {
+      "name": "INTENT_TRANSFER_PROGRAM_ID",
+      "docs": [
+        "FOGO `intent_transfer` program ID. Pinned so `claim_usdc` can require",
+        "that any incoming VAA was originated by intent_transfer (its singleton",
+        "`intent_transfer_setter` PDA is the NTT message sender for every",
+        "intent-driven bridge). Without this pin, a direct NTT bridge that",
+        "happens to target a user's inbox PDA would also satisfy the deposit",
+        "flow — annoying rather than dangerous, but the pin enforces the",
+        "intended deposit path."
+      ],
+      "type": "pubkey",
+      "value": "Xfry4dW9m42ncAqm8LyEnyS5V6xu5DSJTMRQLiGkARD"
+    },
+    {
       "name": "NTT_ONYC_PROGRAM_ID",
       "type": "pubkey",
       "value": "nttpna5vXW7BN2Aa4AfTbkCncJWTEoBsnWvjS87Xgsd"
@@ -2914,6 +3074,19 @@
       "name": "ONRE_PROGRAM_ID",
       "type": "pubkey",
       "value": "onreuGhHHgVzMWSkj2oQDLDtvvGvoepBPkqyaubFcwe"
+    },
+    {
+      "name": "WORMHOLE_CORE_PROGRAM_ID",
+      "docs": [
+        "Wormhole Core Bridge program id (mainnet). Pinned for documentation /",
+        "future use by handlers that need to assert the wormhole-program account",
+        "the release CPI receives. The release CPI itself is dispatched via",
+        "`remaining_accounts`, so this constant isn't directly read by `lock_onyc`",
+        "— it exists so off-chain tooling and any future on-chain assertion share",
+        "one source of truth."
+      ],
+      "type": "pubkey",
+      "value": "worm2ZoG2kUd4vFXhvjh93UUH596ayRfgQ2MgjNMTth"
     }
   ]
 }

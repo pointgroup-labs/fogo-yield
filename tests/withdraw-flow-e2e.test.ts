@@ -77,6 +77,7 @@ describe('withdraw flow e2e (unlock_onyc → request_redemption_onyc → claim_r
       client,
       usdcMint,
       onycMint,
+      feeVault,
       relayerAuthorityPda,
       onycAta,
       usdcAta,
@@ -132,6 +133,7 @@ describe('withdraw flow e2e (unlock_onyc → request_redemption_onyc → claim_r
           payer: authority.publicKey,
           usdcMint: usdcMint.publicKey,
           onycMint: onycMint.publicKey,
+          feeVault,
           nttInboxItem: inboxItemPda,
           onre: { redemptionRequest: redemptionRequestPda },
         })

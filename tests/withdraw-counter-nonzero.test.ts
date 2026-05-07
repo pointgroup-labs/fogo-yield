@@ -39,7 +39,7 @@ describe('withdraw flow with non-zero request_counter', () => {
   })
 
   it('binds tracker to the counter=42 derivation and increments to 43', async () => {
-    const { svm, authority, client, usdcMint, onycMint, usdcAta } = rig
+    const { svm, authority, client, usdcMint, onycMint, feeVault, usdcAta } = rig
 
     const { inboxItemPda, outflightPda } = await runUnlockOnycLeg1(rig)
 
@@ -72,6 +72,7 @@ describe('withdraw flow with non-zero request_counter', () => {
           payer: authority.publicKey,
           usdcMint: usdcMint.publicKey,
           onycMint: onycMint.publicKey,
+          feeVault,
           nttInboxItem: inboxItemPda,
           onre: { redemptionRequest: redemptionRequestPda },
         })

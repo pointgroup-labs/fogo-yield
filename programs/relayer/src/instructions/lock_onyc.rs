@@ -4,18 +4,32 @@ use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
 
 use crate::constants::{
     CONFIG_SEED, FLOW_INBOUND_SEED, FOGO_WORMHOLE_CHAIN_ID, NTT_ONYC_PROGRAM_ID,
-    NTT_TRANSFER_LOCK_IX, RELAYER_SEED, SPL_TOKEN_APPROVE_IX_TAG,
+    NTT_RELEASE_WORMHOLE_OUTBOUND_IX, NTT_TRANSFER_LOCK_IX, RELAYER_SEED,
+    SPL_TOKEN_APPROVE_IX_TAG,
 };
-use crate::cpi::invoke_relayer_signed;
+use crate::cpi::{invoke_relayer_passthrough_signed, invoke_relayer_signed};
 use crate::error::RelayerError;
 use crate::events::OnycLocked;
-use crate::ntt::{derive_session_authority, NttTransferArgs};
+use crate::ntt::{derive_session_authority, NttReleaseOutboundArgs, NttTransferArgs};
 use crate::state::{Flow, FlowStatus, RelayerConfig};
 
-/// Lock the flow's ONyc via Wormhole NTT, sending bONyc back to
-/// `flow.fogo_sender`. Permissionless; closing the PDA returns rent and
-/// blocks replay.
-pub fn handler<'info>(ctx: Context<'info, LockOnyc<'info>>) -> Result<()> {
+/// Lock the flow's ONyc via Wormhole NTT and atomically publish the
+/// outbound Wormhole VAA, sending bONyc back to `flow.fogo_sender`.
+/// Permissionless; closing the PDA returns rent and blocks replay.
+///
+/// `transfer_lock_account_count` partitions `remaining_accounts` between
+/// the two CPIs:
+///
+///   `remaining_accounts[..N]` → NTT `transfer_lock` (14 entries)
+///   `remaining_accounts[N..]` → NTT `release_wormhole_outbound` (15 entries)
+///
+/// Without the merged release, the OutboxItem would queue without a VAA
+/// and a separate `release_wormhole_outbound` would be needed — see the
+/// rationale in the SDK builder docstring.
+pub fn handler<'info>(
+    ctx: Context<'info, LockOnyc<'info>>,
+    transfer_lock_account_count: u8,
+) -> Result<()> {
     let flow = &mut ctx.accounts.inflight_flow;
     require!(
         flow.status == FlowStatus::Swapped,
@@ -76,12 +90,34 @@ pub fn handler<'info>(ctx: Context<'info, LockOnyc<'info>>) -> Result<()> {
         &[signer_seeds],
     )?;
 
+    // Split AFTER the pre-CPI checks above (status / amount / session-auth
+    // lookup) so failure-path tests that supply a stub remaining_accounts
+    // still trip those errors first.
+    let split = transfer_lock_account_count as usize;
+    require!(
+        ctx.remaining_accounts.len() > split,
+        RelayerError::InvalidAccountSplit,
+    );
+    let (transfer_lock_accs, release_accs) = ctx.remaining_accounts.split_at(split);
+
     invoke_relayer_signed(
         NTT_ONYC_PROGRAM_ID,
         &NTT_TRANSFER_LOCK_IX,
         &transfer_args,
-        ctx.remaining_accounts,
+        transfer_lock_accs,
         &ctx.accounts.relayer_authority.to_account_info(),
+        ctx.accounts.relayer_config.relayer_authority_bump,
+    )?;
+
+    // Atomic VAA emission. NTT v3 splits queue (`transfer_lock`) from
+    // attestation (`release_wormhole_outbound`) — running both in one ix
+    // means every successful `lock_onyc` emits a Wormhole message,
+    // closing the "OutboxItem queued but never released" failure mode.
+    invoke_relayer_passthrough_signed(
+        NTT_ONYC_PROGRAM_ID,
+        &NTT_RELEASE_WORMHOLE_OUTBOUND_IX,
+        &NttReleaseOutboundArgs { revert_on_delay: false },
+        release_accs,
         ctx.accounts.relayer_config.relayer_authority_bump,
     )?;
 
