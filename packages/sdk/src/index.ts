@@ -111,7 +111,7 @@ export {
   quoteDeposit,
   quoteWithdraw,
   type WithdrawQuote,
-} from './pricing'
+} from './utils/pricing'
 export { type FogoOnreRelayer } from './types/fogo_onre_relayer'
 export { BN } from '@anchor-lang/core'
 export type { Provider } from '@anchor-lang/core'

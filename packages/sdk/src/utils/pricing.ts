@@ -1,4 +1,4 @@
-import { FEE_DENOMINATOR_BPS, MAX_FEE_BPS, ONYC_DECIMALS, SECONDS_PER_YEAR, USDC_DECIMALS } from './constants'
+import { FEE_DENOMINATOR_BPS, MAX_FEE_BPS, ONYC_DECIMALS, SECONDS_PER_YEAR, USDC_DECIMALS } from '../constants'
 
 /**
  * Fee + price math for the relayer.
