@@ -1,10 +1,9 @@
+import type { NttInboxItem, ResolvedNttVaa } from '@fogo-onre/sdk'
 import type { BridgeContext, BridgePlan, BridgeRedeemResult, BridgeRedeemTarget } from './types'
 import {
   buildFogoNttReleaseInboundMintIx,
   buildFogoNttReleaseInboundUnlockIx,
   decodeNttInboxItem,
-  type NttInboxItem,
-  type ResolvedNttVaa,
   resolveNttVaa,
 } from '@fogo-onre/sdk'
 import {

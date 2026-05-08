@@ -1,6 +1,6 @@
+import type { ResolvedNttVaa, WormholescanVaa } from '@fogo-onre/sdk'
 import type { AdvanceContext } from './advance/types'
 import type { ScannedFlow } from './scan'
-import type { ResolvedNttVaa, WormholescanVaa } from '@fogo-onre/sdk'
 import {
   describeStatus,
   NTT_ONYC_PROGRAM_ID,

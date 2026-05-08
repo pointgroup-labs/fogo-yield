@@ -6,9 +6,11 @@ import { executeBridgePlan, planBridgeRedeem } from './redeem'
 export interface BridgeScanOptions {
   pageSize: number
   maxPages: number
-  /** Bridge-side concurrency budget — separate from `maxConcurrentAdvances`
+  /**
+   * Bridge-side concurrency budget — separate from `maxConcurrentAdvances`
    *  on the relayer-Flow scanner so a Wormholescan backfill can't starve
-   *  normal Flow advances. */
+   *  normal Flow advances.
+   */
   maxConcurrentRedeems: number
   /**
    * Per-iteration class-aggregator (same shape as scan.ts). Lets the

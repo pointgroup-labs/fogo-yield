@@ -30,7 +30,7 @@ export function errorFields(err: unknown): LogFields {
 // Used by errorClass() to collapse 100 "cannot derive userWallet for VAA
 // recipient <pubkey>" failures into one class with stable identity.
 const BASE58_RE = /\b[1-9A-HJ-NP-Za-km-z]{32,88}\b/g
-const HEX_RE = /\b[0-9a-fA-F]{32,}\b/g
+const HEX_RE = /\b[0-9a-f]{32,}\b/gi
 
 /**
  * Stable class fingerprint for an error: message text with variable

@@ -30,8 +30,10 @@ const schema = z.object({
   FOGO_USDC_EMITTER_HEX: z.string().regex(/^[0-9a-f]{64}$/i).default(DEFAULT_USDC_EMITTER_HEX),
   /** Hex emitter for the FOGO ONyc NTT manager. Defaults to PDA derived from SDK's NTT_ONYC_PROGRAM_ID. */
   FOGO_ONYC_EMITTER_HEX: z.string().regex(/^[0-9a-f]{64}$/i).default(DEFAULT_ONYC_EMITTER_HEX),
-  /** Hex emitter for the Solana ONyc NTT manager. Outbound source for the bridge pipeline.
-   *  Defaults to PDA derived from SDK's NTT_ONYC_PROGRAM_ID (same bytecode as FOGO side). */
+  /**
+   * Hex emitter for the Solana ONyc NTT manager. Outbound source for the bridge pipeline.
+   *  Defaults to PDA derived from SDK's NTT_ONYC_PROGRAM_ID (same bytecode as FOGO side).
+   */
   SOLANA_ONYC_EMITTER_HEX: z.string().regex(/^[0-9a-f]{64}$/i).default(DEFAULT_SOLANA_ONYC_EMITTER_HEX),
   /** Set to "false" to disable the Solana → FOGO ONyc bridge pipeline (e.g. during incident triage). */
   BRIDGE_PIPELINE_ENABLED: z.enum(['true', 'false']).default('true'),

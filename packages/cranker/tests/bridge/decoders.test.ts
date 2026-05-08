@@ -1,14 +1,15 @@
+import type { NttManagerMode } from '@fogo-onre/sdk'
+import {
+  decodeNttConfig,
+  decodeNttInboxItem,
+
+} from '@fogo-onre/sdk'
 /**
  * Decoder fixture tests for the SDK's NTT Config / InboxItem decoders.
  * Hand-encode known values, run through the decoder, assert round-trip.
  * No on-chain dependency — pure byte-layout coverage.
  */
 import { sha256 } from '@noble/hashes/sha2.js'
-import {
-  decodeNttConfig,
-  decodeNttInboxItem,
-  type NttManagerMode,
-} from '@fogo-onre/sdk'
 import { Keypair } from '@solana/web3.js'
 import { describe, expect, it } from 'vitest'
 
@@ -129,7 +130,7 @@ describe('decodeNttConfig', () => {
       paused: false,
       custody: Buffer.from(custody.toBytes()),
     })
-    buf[0] = 0xff
+    buf[0] = 0xFF
     expect(() => decodeNttConfig(buf)).toThrow(/discriminator mismatch/)
   })
 

@@ -9,13 +9,13 @@
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
-import { sha256 } from '@noble/hashes/sha2.js'
 import {
   buildFogoNttRedeemIx,
   buildFogoNttReleaseInboundMintIx,
   buildFogoNttReleaseInboundUnlockIx,
   NTT_ONYC_PROGRAM_ID,
 } from '@fogo-onre/sdk'
+import { sha256 } from '@noble/hashes/sha2.js'
 import { Keypair, PublicKey } from '@solana/web3.js'
 import { describe, expect, it } from 'vitest'
 
@@ -94,7 +94,7 @@ function anchorSighash(rustName: string): Uint8Array {
   return sha256(new TextEncoder().encode(`global:${rustName}`)).slice(0, 8)
 }
 
-describe('FOGO NTT redeem builders — IDL pin', () => {
+describe('fOGO NTT redeem builders — IDL pin', () => {
   const payer = Keypair.generate().publicKey
   const mint = new PublicKey('oNyCm1QsAatj3ckaEwZjtAPWvstPn3Zm5MAYPtkjEfa')
   const nttManagerProgramId = NTT_ONYC_PROGRAM_ID

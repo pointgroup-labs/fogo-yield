@@ -1,7 +1,7 @@
 import type { AdvanceContext, AdvanceResult } from './types'
 import {
-  describeStatus,
   deriveUserWalletFromFogoTx,
+  describeStatus,
   findUserInboxAuthorityPda,
   NTT_USDC_PROGRAM_ID,
   resolveNttVaa,

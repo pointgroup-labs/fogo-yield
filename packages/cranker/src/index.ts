@@ -1,18 +1,18 @@
 import type { AdvanceContext } from './advance/types'
+import type { BridgeRedeemTarget } from './bridge'
 import type { Logger } from './log'
 import type { Metrics } from './metrics'
 import { readFileSync } from 'node:fs'
 import { AnchorProvider, Wallet } from '@anchor-lang/core'
 import { RelayerClient } from '@fogo-onre/sdk'
 import { Connection, Keypair, LAMPORTS_PER_SOL, PublicKey } from '@solana/web3.js'
-import { type BridgeRedeemTarget, buildSolanaOnycToFogoTarget, scanAndRedeemBridge } from './bridge'
+import { buildSolanaOnycToFogoTarget, scanAndRedeemBridge } from './bridge'
 import { loadConfig } from './config'
 import { runDaemon } from './daemon'
 import { makeEnumerator } from './enumerate'
 import { createLogger, errorFields, errorMessage, writeLogLine } from './log'
 import { createMetrics } from './metrics'
 import { scanAndAdvance } from './scan'
-
 
 type ShutdownSignal = 'SIGTERM' | 'SIGINT'
 

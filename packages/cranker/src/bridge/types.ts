@@ -1,7 +1,7 @@
+import type { NttManagerMode } from '@fogo-onre/sdk'
 import type { Connection, Keypair, PublicKey, TransactionInstruction } from '@solana/web3.js'
 import type { Logger } from '../log'
 import type { Metrics } from '../metrics'
-import type { NttManagerMode } from '@fogo-onre/sdk'
 
 /**
  * One direction of cross-chain VAA bridging the cranker can drive.
@@ -18,16 +18,20 @@ import type { NttManagerMode } from '@fogo-onre/sdk'
  * call site, not a second abstraction layer.
  */
 export interface BridgeRedeemTarget {
-  /** Stable label for logs + metrics — must be a static string so the
-   *  Prometheus cardinality is bounded. */
+  /**
+   * Stable label for logs + metrics — must be a static string so the
+   *  Prometheus cardinality is bounded.
+   */
   name: string
   /** Wormhole chain id of the *source* chain (where the VAA was emitted). */
   sourceChainId: number
   /** Hex emitter of the source NTT manager (32 bytes, no 0x). */
   sourceEmitterHex: string
-  /** Wormhole chain id of the *destination* chain (where redeem lands).
+  /**
+   * Wormhole chain id of the *destination* chain (where redeem lands).
    *  Used as the gating filter so a stray same-emitter VAA addressed to
-   *  a different chain isn't silently submitted. */
+   *  a different chain isn't silently submitted.
+   */
   destChainId: number
   destConnection: Connection
   destNttManagerProgramId: PublicKey
@@ -44,9 +48,11 @@ export interface BridgeRedeemTarget {
   destMint: PublicKey
   /** Keypair that pays + signs `redeem` + `release_inbound_*` on dest. */
   destSigner: Keypair
-  /** Mode of the destination NTT manager — probed once at daemon startup
+  /**
+   * Mode of the destination NTT manager — probed once at daemon startup
    *  via `decodeNttConfig` and asserted to match this declared value.
-   *  Picks the release variant (`mint` for Burning, `unlock` for Locking). */
+   *  Picks the release variant (`mint` for Burning, `unlock` for Locking).
+   */
   destReleaseMode: NttManagerMode
   /**
    * `true` iff the dest-side NTT manager has the per-source-chain

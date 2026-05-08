@@ -5,8 +5,8 @@
  * hand-rolled VAA + InboxItem bytes.
  */
 import type { BridgeContext, BridgeRedeemTarget } from '../../src/bridge/types'
-import { sha256 } from '@noble/hashes/sha2.js'
 import { NTT_ONYC_PROGRAM_ID } from '@fogo-onre/sdk'
+import { sha256 } from '@noble/hashes/sha2.js'
 import { Connection, Keypair, PublicKey } from '@solana/web3.js'
 import { describe, expect, it, vi } from 'vitest'
 import { planBridgeRedeem } from '../../src/bridge/redeem'
@@ -53,8 +53,10 @@ function encodeInboxItem(args: {
   return Buffer.concat(parts)
 }
 
-/** Wormhole VAA + transceiver wrapper + NttManagerMessage assembled
- *  inline. Sigless (sigCount=0) — enough for the parser. */
+/**
+ * Wormhole VAA + transceiver wrapper + NttManagerMessage assembled
+ *  inline. Sigless (sigCount=0) — enough for the parser.
+ */
 function buildVaa(args: {
   emitterChain: number
   emitterAddress?: Uint8Array
@@ -69,7 +71,7 @@ function buildVaa(args: {
   const recipientMgr = new Uint8Array(32)
   const messageId = new Uint8Array(32)
   // Pad an arbitrary distinguishing byte so distinct VAAs derive distinct PDAs.
-  messageId[0] = (args.emitterChain * 31 + args.toChain) & 0xff
+  messageId[0] = (args.emitterChain * 31 + args.toChain) & 0xFF
 
   // NativeTokenTransfer inner
   const inner = Buffer.alloc(4 + 1 + 8 + 32 + 32 + 2)
@@ -134,8 +136,10 @@ function makeTarget(opts: {
   inboxData: Buffer | null
   configReady?: boolean
   configError?: string
-  /** Override get_account_info — useful for tests that need to distinguish
-   *  inbox-item lookups from transceiver-message lookups. */
+  /**
+   * Override get_account_info — useful for tests that need to distinguish
+   *  inbox-item lookups from transceiver-message lookups.
+   */
   getAccountInfo?: (pubkey: PublicKey) => Promise<{ data: Buffer, executable: boolean, lamports: number, owner: PublicKey, rentEpoch: number } | null>
 }): BridgeRedeemTarget {
   const defaultGetAccountInfo = vi.fn().mockResolvedValue(
@@ -153,17 +157,17 @@ function makeTarget(opts: {
   const resolver = opts.getAccountInfo
     ? vi.fn(opts.getAccountInfo)
     : vi.fn().mockImplementation(async () => {
-      inboxQueryCount += 1
-      // First call = inbox-item lookup, follow opts.inboxData.
-      if (inboxQueryCount === 1) {
-        return opts.inboxData
-          ? { data: opts.inboxData, executable: false, lamports: 1, owner: NTT_ONYC_PROGRAM_ID, rentEpoch: 0 }
-          : null
-      }
-      // Subsequent calls = transceiver-message probe; return non-null
-      // by default so the empty-xcvr gate doesn't fire.
-      return { data: Buffer.alloc(64, 0xAA), executable: false, lamports: 1, owner: NTT_ONYC_PROGRAM_ID, rentEpoch: 0 }
-    })
+        inboxQueryCount += 1
+        // First call = inbox-item lookup, follow opts.inboxData.
+        if (inboxQueryCount === 1) {
+          return opts.inboxData
+            ? { data: opts.inboxData, executable: false, lamports: 1, owner: NTT_ONYC_PROGRAM_ID, rentEpoch: 0 }
+            : null
+        }
+        // Subsequent calls = transceiver-message probe; return non-null
+        // by default so the empty-xcvr gate doesn't fire.
+        return { data: Buffer.alloc(64, 0xAA), executable: false, lamports: 1, owner: NTT_ONYC_PROGRAM_ID, rentEpoch: 0 }
+      })
 
   void defaultGetAccountInfo // unused branch retained for backward-compat readability
 
@@ -304,7 +308,7 @@ describe('planBridgeRedeem', () => {
 
   it('returns noop when inbox bytes are present but undecodable', async () => {
     const vaa = buildVaa({ emitterChain: SOLANA_CHAIN, toChain: FOGO_CHAIN, recipient })
-    const garbage = Buffer.alloc(200, 0xab)
+    const garbage = Buffer.alloc(200, 0xAB)
     const target = makeTarget({ releaseMode: 'Burning', inboxData: garbage })
     const { plan } = await planBridgeRedeem(makeCtx(), target, vaa)
     expect(plan.action).toBe('noop')
