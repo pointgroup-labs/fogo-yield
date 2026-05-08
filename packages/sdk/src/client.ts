@@ -1,6 +1,6 @@
 import type { Provider } from '@anchor-lang/core'
 import type { PublicKey } from '@solana/web3.js'
-import type { NttRedeemContext, OnreSwapContext } from './builders'
+import type { NttRedeemContext, OnreDeployment, OnreSwapContext } from './builders'
 import type { FogoOnreRelayer } from './types/fogo_onre_relayer'
 import { BN, Program } from '@anchor-lang/core'
 
@@ -9,11 +9,7 @@ import {
   getAssociatedTokenAddressSync,
   TOKEN_PROGRAM_ID,
 } from '@solana/spl-token'
-import {
-  SystemProgram,
-} from '@solana/web3.js'
-import { FOGO_WORMHOLE_CHAIN_ID, NTT_ONYC_PROGRAM_ID, NTT_USDC_PROGRAM_ID } from './constants'
-import IDL from './idl/fogo_onre_relayer.json' with { type: 'json' }
+import { SystemProgram } from '@solana/web3.js'
 import {
   buildNttRedeemReleaseAccounts,
   buildNttReleaseWormholeOutboundAccountList,
@@ -22,8 +18,9 @@ import {
   buildOnreCreateRedemptionRequestRemainingAccounts,
   buildOnreSwapRemainingAccounts,
   NTT_TRANSFER_LOCK_ACCOUNT_COUNT,
-  type OnreDeployment,
 } from './builders'
+import { FOGO_WORMHOLE_CHAIN_ID, NTT_ONYC_PROGRAM_ID, NTT_USDC_PROGRAM_ID } from './constants'
+import IDL from './idl/fogo_onre_relayer.json' with { type: 'json' }
 import {
   findAuthorityPda,
   findConfigPda,

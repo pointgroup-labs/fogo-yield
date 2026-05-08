@@ -398,9 +398,11 @@ export interface BuildNttRedeemReleaseAccountsParams {
   programId: PublicKey
   /** PDA that signs the redeem+release CPIs (relayer authority on this stack). */
   authority: PublicKey
-  /** Destination ATA for the release leg. Caller picks per-instruction:
+  /**
+   * Destination ATA for the release leg. Caller picks per-instruction:
    *  `claim_usdc` routes to the per-user inbox ATA, `unlock_onyc` routes
-   *  to the long-lived relayer custody ATA. */
+   *  to the long-lived relayer custody ATA.
+   */
   recipientAta: PublicKey
 }
 
