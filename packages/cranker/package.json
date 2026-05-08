@@ -1,37 +1,27 @@
 {
   "name": "@fogo-onre/cranker",
-  "type": "module",
   "version": "0.1.0",
   "private": true,
   "description": "Fogo-OnRe permissionless cranker daemon",
+  "bin": {
+    "cranker": "./dist/bin.js"
+  },
   "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
-    },
-    "./advance": {
-      "types": "./dist/advance/index.d.ts",
-      "import": "./dist/advance/index.js"
-    },
     "./vaa": {
       "types": "./dist/vaa.d.ts",
-      "import": "./dist/vaa.js"
+      "default": "./dist/vaa.js"
     },
     "./wormholescan": {
       "types": "./dist/wormholescan.d.ts",
-      "import": "./dist/wormholescan.js"
+      "default": "./dist/wormholescan.js"
     }
-  },
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
-  "bin": {
-    "cranker": "dist/bin.js"
   },
   "files": [
     "dist"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "tsup",
+    "dev": "tsup --watch",
     "test": "vitest run",
     "test:watch": "vitest",
     "clean": "rm -rf dist"
@@ -50,6 +40,7 @@
   },
   "devDependencies": {
     "@types/node": "^25.6.0",
+    "tsup": "^8.5.1",
     "typescript": "^6.0.3",
     "vitest": "^4.1.5"
   }
