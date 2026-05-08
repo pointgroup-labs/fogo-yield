@@ -13,6 +13,8 @@
     "@fogo-onre/sdk": "workspace:*",
     "@fogo/sessions-sdk-react": "^0.1.17",
     "@hookform/resolvers": "^3.10.0",
+    "@radix-ui/react-label": "^2.1.8",
+    "@radix-ui/react-slot": "^1.2.4",
     "@solana/spl-token": "^0.4.14",
     "@solana/web3.js": "^1.98.4",
     "@tanstack/query-sync-storage-persister": "^5.100.9",
