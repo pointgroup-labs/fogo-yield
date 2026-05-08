@@ -5,7 +5,6 @@ import ErrorBoundary from '@/components/ErrorBoundary'
 import Header from '@/components/Header'
 import PendingTxList from '@/components/PendingTxList'
 import ProtocolStats from '@/components/ProtocolStats'
-import ToastHost from '@/components/ToastHost'
 import TransferCard from '@/components/TransferCard'
 
 type Tab = 'deposit' | 'withdraw'
@@ -58,7 +57,6 @@ export default function Page() {
           </FooterLink>
         </nav>
       </footer>
-      <ToastHost />
     </div>
   )
 }
