@@ -1,8 +1,30 @@
-import { PublicKey } from '@solana/web3.js'
+import type { AdvanceContext } from '../src/advance/types'
+import type { WormholescanVaa } from '../src/wormholescan'
 import { describe, expect, it, vi } from 'vitest'
 import { makeEnumerator } from '../src/enumerate'
 
-const PUBKEY = new PublicKey('11111111111111111111111111111111')
+function jsonResponse(body: unknown): Response {
+  return new Response(JSON.stringify(body), { status: 200 })
+}
+
+function makeFetchImpl(handler: (url: string) => unknown): typeof fetch {
+  return vi.fn(async (input: RequestInfo | URL) => jsonResponse(handler(String(input)))) as typeof fetch
+}
+
+function makeCtx(abortSignal = new AbortController().signal): AdvanceContext {
+  return {
+    abortSignal,
+    client: { fetchInflightFlow: async () => null },
+    connection: undefined as never,
+    fogoConnection: undefined as never,
+    provider: undefined as never,
+    keypair: undefined as never,
+    relayerProgramId: undefined as never,
+    wormholescanUrl: '',
+    wormholescanTimeoutMs: 0,
+    metrics: undefined as never,
+  }
+}
 
 describe('makeEnumerator', () => {
   it('returns empty when no emitters configured', async () => {
@@ -14,17 +36,13 @@ describe('makeEnumerator', () => {
       baseUrl: 'https://wh.test',
       fetchImpl,
     })
-    const ctx = { abortSignal: new AbortController().signal, client: {} as any } as any
-    const flows = await enumerate(ctx)
+    const flows = await enumerate(makeCtx())
     expect(flows).toHaveLength(0)
     expect(fetchImpl).not.toHaveBeenCalled()
   })
 
   it('respects abort during pagination', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ data: [] }),
-    } as any)
+    const fetchImpl = makeFetchImpl(() => ({ data: [] }))
     const ac = new AbortController()
     const enumerate = makeEnumerator({
       fogoWormholeChainId: 28,
@@ -35,21 +53,27 @@ describe('makeEnumerator', () => {
       fetchImpl,
     })
     ac.abort()
-    const ctx = { abortSignal: ac.signal, client: {} as any } as any
-    const flows = await enumerate(ctx)
+    const flows = await enumerate(makeCtx(ac.signal))
     expect(flows).toHaveLength(0)
   })
 
   it('skips VAAs that fail to parse', async () => {
-    // Wormholescan returns an item with garbage VAA bytes; resolveNttVaa throws; enumerate must continue.
-    const fetchImpl = vi.fn().mockImplementation(async (url: string) => {
+    const badVaa: WormholescanVaa = {
+      vaa: Uint8Array.from(Buffer.from('not-a-vaa')),
+      sequence: 1n,
+      txHash: 'tx1',
+    }
+    const fetchImpl = makeFetchImpl((url) => {
       if (url.includes('vaas/28')) {
         return {
-          ok: true,
-          json: async () => ({ data: [{ vaa: Buffer.from('not-a-vaa').toString('base64'), sequence: '1', txHash: 'tx1' }] }),
+          data: [{
+            vaa: Buffer.from(badVaa.vaa).toString('base64'),
+            sequence: badVaa.sequence.toString(),
+            txHash: badVaa.txHash,
+          }],
         }
       }
-      return { ok: true, json: async () => ({ data: [] }) }
+      return { data: [] }
     })
     const enumerate = makeEnumerator({
       fogoWormholeChainId: 28,
@@ -57,14 +81,9 @@ describe('makeEnumerator', () => {
       pageSize: 50,
       maxPages: 1,
       baseUrl: 'https://wh.test',
-      fetchImpl: fetchImpl as any,
+      fetchImpl,
     })
-    const ctx = {
-      abortSignal: new AbortController().signal,
-      client: { fetchInflightFlow: async () => null },
-    } as any
-    void PUBKEY
-    const flows = await enumerate(ctx)
+    const flows = await enumerate(makeCtx())
     expect(flows).toHaveLength(0)
   })
 })

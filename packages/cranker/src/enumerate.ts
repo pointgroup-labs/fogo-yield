@@ -1,5 +1,7 @@
 import type { AdvanceContext } from './advance/types'
 import type { ScannedFlow } from './scan'
+import type { ResolvedNttVaa } from './vaa'
+import type { WormholescanVaa } from './wormholescan'
 import { NTT_ONYC_PROGRAM_ID, NTT_USDC_PROGRAM_ID } from '@fogo-onre/sdk'
 import { describeStatus } from './advance/helpers'
 import { resolveNttVaa } from './vaa'
@@ -9,6 +11,8 @@ const VAA_LEG = {
   deposit: { nttProgramId: NTT_USDC_PROGRAM_ID },
   withdraw: { nttProgramId: NTT_ONYC_PROGRAM_ID },
 } as const
+
+type VaaLeg = keyof typeof VAA_LEG
 
 export type EnumerateOptions = {
   fogoWormholeChainId: number
@@ -42,10 +46,7 @@ export function makeEnumerator(opts: EnumerateOptions) {
   return async function enumerateFlows(ctx: AdvanceContext): Promise<ScannedFlow[]> {
     const out: ScannedFlow[] = []
 
-    const harvest = async (
-      emitterHex: string,
-      leg: keyof typeof VAA_LEG,
-    ): Promise<void> => {
+    async function harvest(emitterHex: string, leg: VaaLeg): Promise<void> {
       for (let page = 0; page < opts.maxPages; page++) {
         if (ctx.abortSignal.aborted) {
           return
@@ -58,29 +59,13 @@ export function makeEnumerator(opts: EnumerateOptions) {
           return
         }
         for (const item of items) {
+          const flow = await scanWormholescanVaa(ctx, item, leg)
           if (ctx.abortSignal.aborted) {
             return
           }
-          let resolved
-          try {
-            resolved = resolveNttVaa({
-              vaaBytes: item.vaa,
-              nttProgramId: VAA_LEG[leg].nttProgramId,
-            })
-          } catch {
-            // Not an NTT VAA we can route — skip silently.
-            continue
+          if (flow) {
+            out.push(flow)
           }
-          const flow = await ctx.client
-            .fetchInflightFlow(resolved.nttInboxItem)
-            .catch(() => null)
-          const status = flow ? describeStatus(flow.status) : 'Pending'
-          out.push({
-            pubkey: resolved.nttInboxItem,
-            status,
-            fogoTx: item.txHash ?? '',
-            vaaHex: Buffer.from(item.vaa).toString('hex'),
-          })
         }
       }
     }
@@ -92,5 +77,36 @@ export function makeEnumerator(opts: EnumerateOptions) {
       await harvest(opts.fogoOnycEmitterHex, 'withdraw')
     }
     return out
+  }
+}
+
+async function scanWormholescanVaa(
+  ctx: AdvanceContext,
+  item: WormholescanVaa,
+  leg: VaaLeg,
+): Promise<ScannedFlow | null> {
+  const resolved = resolveVaaForLeg(item.vaa, leg)
+  if (!resolved) {
+    return null
+  }
+  const flow = await ctx.client
+    .fetchInflightFlow(resolved.nttInboxItem)
+    .catch(() => null)
+  return {
+    pubkey: resolved.nttInboxItem,
+    status: flow ? describeStatus(flow.status) : 'Pending',
+    fogoTx: item.txHash ?? '',
+    vaaHex: Buffer.from(item.vaa).toString('hex'),
+  }
+}
+
+function resolveVaaForLeg(vaaBytes: Uint8Array, leg: VaaLeg): ResolvedNttVaa | null {
+  try {
+    return resolveNttVaa({
+      vaaBytes,
+      nttProgramId: VAA_LEG[leg].nttProgramId,
+    })
+  } catch {
+    return null
   }
 }

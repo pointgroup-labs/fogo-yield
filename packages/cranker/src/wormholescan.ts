@@ -1,15 +1,10 @@
-/**
- * Tiny Wormholescan REST client. Two operations the cranker needs:
- *
- *   - Resolve a source-chain tx signature → signed VAA bytes
- *   - Fetch a signed VAA by `(chain, emitter, sequence)` triple
- *
- * Built on global `fetch` (Node 18+). Errors are thrown as plain Errors
- * with the failing URL + status. Originally lived in the CLI; moved
- * here so the daemon and CLI both consume the same implementation.
- */
-
 const DEFAULT_BASE_URL = 'https://api.wormholescan.io'
+
+export type WormholescanVaa = {
+  vaa: Uint8Array
+  sequence: bigint
+  txHash: string | null
+}
 
 export interface WormholescanClientOptions {
   baseUrl?: string
@@ -65,8 +60,8 @@ export class WormholescanClient {
   async listVaasByEmitter(
     chain: number,
     emitterHex: string,
-    opts: { pageSize?: number, page?: number, txHash?: boolean } = {},
-  ): Promise<Array<{ vaa: Uint8Array, sequence: bigint, txHash: string | null }>> {
+    opts: { pageSize?: number, page?: number } = {},
+  ): Promise<WormholescanVaa[]> {
     const pageSize = opts.pageSize ?? 50
     const page = opts.page ?? 0
     const url = `${this.baseUrl}/api/v1/vaas/${chain}/${emitterHex}?pageSize=${pageSize}&page=${page}`
@@ -76,7 +71,7 @@ export class WormholescanClient {
     if (!json.data) {
       return []
     }
-    const out: Array<{ vaa: Uint8Array, sequence: bigint, txHash: string | null }> = []
+    const out: WormholescanVaa[] = []
     for (const item of json.data) {
       if (!item.vaa) {
         continue

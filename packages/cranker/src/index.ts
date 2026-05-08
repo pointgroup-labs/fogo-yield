@@ -8,12 +8,14 @@ import { Connection, Keypair, LAMPORTS_PER_SOL, PublicKey } from '@solana/web3.j
 import { loadConfig } from './config'
 import { runDaemon } from './daemon'
 import { makeEnumerator } from './enumerate'
-import { createLogger } from './log'
+import { createLogger, errorFields, errorMessage, writeLogLine } from './log'
 import { createMetrics } from './metrics'
 import { scanAndAdvance } from './scan'
 
 export * from './vaa'
 export * from './wormholescan'
+
+type ShutdownSignal = 'SIGTERM' | 'SIGINT'
 
 /**
  * Throws if the cranker pubkey equals RelayerConfig.authority.
@@ -39,7 +41,7 @@ export function assertCrankerNotAuthority(authority: PublicKey, crankerPubkey: P
  * than being silently swallowed.
  */
 export function installShutdownHandlers(controller: AbortController, log?: Logger): void {
-  const onSignal = (sig: string): void => {
+  const onSignal = (sig: ShutdownSignal): void => {
     log?.info('shutdown signal', { sig })
     controller.abort()
   }
@@ -66,11 +68,10 @@ export function startBalancePoller(args: {
       const lamports = await args.connection.getBalance(args.pubkey, 'confirmed')
       args.metrics.solBalance.set(lamports / LAMPORTS_PER_SOL)
     } catch (err) {
-      args.log.warn('balance poll failed', { err: String(err) })
+      args.log.warn('balance poll failed', errorFields(err))
       args.metrics.rpcErrors.inc({ endpoint: 'solana', kind: 'getBalance' })
     }
   }
-  // Fire once immediately so the gauge is non-zero before the first scrape.
   void tick()
   const handle = setInterval(() => {
     if (args.signal.aborted) {
@@ -101,7 +102,7 @@ export function startWsKeepalive(args: {
       args.metrics.wsAlive.set(1)
     })
   } catch (err) {
-    args.log.warn('ws subscribe failed', { err: String(err) })
+    args.log.warn('ws subscribe failed', errorFields(err))
     args.metrics.wsAlive.set(0)
     return
   }
@@ -110,6 +111,15 @@ export function startWsKeepalive(args: {
       args.connection.removeSlotChangeListener(subId).catch(() => undefined)
     }
   }, { once: true })
+}
+
+function loadKeypair(path: string): Keypair {
+  try {
+    const raw = readFileSync(path, 'utf8')
+    return Keypair.fromSecretKey(Uint8Array.from(JSON.parse(raw)))
+  } catch (err) {
+    throw new Error(`failed to load keypair from ${path}: ${errorMessage(err)}`)
+  }
 }
 
 async function main(): Promise<void> {
@@ -124,15 +134,7 @@ async function main(): Promise<void> {
   })
   await metrics.start()
 
-  // Load keypair. Wrap to control error message — the path is fine to
-  // log; the secret bytes are not.
-  let keypair: Keypair
-  try {
-    const raw = readFileSync(cfg.keypairPath, 'utf8')
-    keypair = Keypair.fromSecretKey(Uint8Array.from(JSON.parse(raw)))
-  } catch (err) {
-    throw new Error(`failed to load keypair from ${cfg.keypairPath}: ${err instanceof Error ? err.message : String(err)}`)
-  }
+  const keypair = loadKeypair(cfg.keypairPath)
 
   const connection = new Connection(cfg.solanaRpcUrl, {
     commitment: 'confirmed',
@@ -147,7 +149,6 @@ async function main(): Promise<void> {
   })
   const client = new RelayerClient(provider)
 
-  // Invariant gate — must run BEFORE any scan dispatch.
   const relayerConfig = await client.fetchConfig()
   assertCrankerNotAuthority(relayerConfig.authority as PublicKey, keypair.publicKey)
 
@@ -163,7 +164,6 @@ async function main(): Promise<void> {
   const shutdown = new AbortController()
   installShutdownHandlers(shutdown, log)
 
-  // Background pollers — fire-and-forget, bound to shutdown signal.
   startBalancePoller({
     connection,
     pubkey: keypair.publicKey,
@@ -195,8 +195,6 @@ async function main(): Promise<void> {
     metrics,
   } satisfies Omit<AdvanceContext, 'abortSignal'>
 
-  // Periodic invariant re-check. Cheap (one fetchConfig per scan) and
-  // catches authority rotation that happens while we're running.
   const preScan = async (): Promise<void> => {
     const cfgFresh = await client.fetchConfig()
     assertCrankerNotAuthority(cfgFresh.authority as PublicKey, keypair.publicKey)
@@ -233,21 +231,16 @@ async function main(): Promise<void> {
  */
 export function bootstrap(): void {
   process.on('unhandledRejection', (reason) => {
-    console.error(JSON.stringify({ level: 'fatal', msg: 'unhandledRejection', reason: String(reason) }))
+    writeLogLine('fatal', 'unhandledRejection', errorFields(reason))
     process.exit(1)
   })
   process.on('uncaughtException', (err) => {
-    console.error(JSON.stringify({ level: 'fatal', msg: 'uncaughtException', err: String(err) }))
+    writeLogLine('fatal', 'uncaughtException', errorFields(err))
     process.exit(1)
   })
 
   main().catch((err) => {
-    console.error(JSON.stringify({
-      level: 'fatal',
-      msg: 'unhandled error in main',
-      err: err instanceof Error ? err.message : String(err),
-      stack: err instanceof Error ? err.stack : undefined,
-    }))
+    writeLogLine('fatal', 'unhandled error in main', errorFields(err))
     process.exit(1)
   })
 }

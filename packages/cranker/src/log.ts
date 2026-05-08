@@ -1,12 +1,5 @@
-/**
- * Tiny structured logger. JSON-per-line on stderr (so stdout stays
- * clean for any future tooling). Centralizes level filtering and
- * defensive error serialization — `console.error(JSON.stringify({err}))`
- * scattered across modules turned into a footgun (non-serializable
- * Error fields, BigInt values, etc.).
- */
-
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error' | 'fatal'
+export type LogFields = Record<string, unknown>
 
 const ORDER: Record<LogLevel, number> = {
   debug: 10,
@@ -17,12 +10,20 @@ const ORDER: Record<LogLevel, number> = {
 }
 
 export type Logger = {
-  debug: (msg: string, fields?: Record<string, unknown>) => void
-  info: (msg: string, fields?: Record<string, unknown>) => void
-  warn: (msg: string, fields?: Record<string, unknown>) => void
-  error: (msg: string, fields?: Record<string, unknown>) => void
-  fatal: (msg: string, fields?: Record<string, unknown>) => void
-  child: (extra: Record<string, unknown>) => Logger
+  debug: (msg: string, fields?: LogFields) => void
+  info: (msg: string, fields?: LogFields) => void
+  warn: (msg: string, fields?: LogFields) => void
+  error: (msg: string, fields?: LogFields) => void
+  fatal: (msg: string, fields?: LogFields) => void
+  child: (extra: LogFields) => Logger
+}
+
+export function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err)
+}
+
+export function errorFields(err: unknown): LogFields {
+  return { err: err instanceof Error ? err : String(err) }
 }
 
 function safeStringify(value: unknown): string {
@@ -41,23 +42,24 @@ function safeStringify(value: unknown): string {
   }
 }
 
-export function createLogger(opts: { level: LogLevel, base?: Record<string, unknown> } = { level: 'info' }): Logger {
+export function writeLogLine(level: LogLevel, msg: string, fields: LogFields = {}): void {
+  console.error(safeStringify({
+    level,
+    msg,
+    time: new Date().toISOString(),
+    ...fields,
+  }))
+}
+
+export function createLogger(opts: { level: LogLevel, base?: LogFields } = { level: 'info' }): Logger {
   const threshold = ORDER[opts.level]
   const base = opts.base ?? {}
 
-  const emit = (level: LogLevel, msg: string, fields?: Record<string, unknown>): void => {
+  const emit = (level: LogLevel, msg: string, fields?: LogFields): void => {
     if (ORDER[level] < threshold) {
       return
     }
-    const line = safeStringify({
-      level,
-      msg,
-      time: new Date().toISOString(),
-      ...base,
-      ...fields,
-    })
-
-    console.error(line)
+    writeLogLine(level, msg, { ...base, ...fields })
   }
 
   return {

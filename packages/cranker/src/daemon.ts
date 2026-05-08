@@ -1,5 +1,6 @@
 import type { EventEmitter } from 'node:events'
 import { once } from 'node:events'
+import { errorFields, writeLogLine } from './log'
 
 export type DaemonHeartbeat = {
   setNow: () => void
@@ -36,8 +37,8 @@ export type DaemonOptions = {
  *  - on failure, exponential backoff up to `maxBackoffMs`; logs (no throw)
  *  - sleeps min(currentDelay, until 'wake' event) between iterations
  *  - self-kills the process when heartbeat exceeds heartbeatStaleMs
- *    (codex P1 fix: --restart unless-stopped doesn't react to /healthz=503,
- *    so the daemon must crash itself for Docker to restart it)
+ *    (--restart unless-stopped doesn't react to /healthz=503, so the
+ *    daemon must crash itself for Docker to restart it)
  *  - on abortSignal, drains the in-flight scan up to `shutdownDeadlineMs`
  *    then exits — bounded so SIGTERM-then-SIGKILL doesn't truncate cleanup
  */
@@ -49,12 +50,9 @@ export async function runDaemon(opts: DaemonOptions): Promise<void> {
   let consecutiveErrors = 0
 
   const watchdog = setInterval(() => {
-    if (opts.metrics.heartbeat.ageMs() > opts.heartbeatStaleMs) {
-      console.error(JSON.stringify({
-        level: 'fatal',
-        msg: 'heartbeat stale — self-killing for restart',
-        ageMs: opts.metrics.heartbeat.ageMs(),
-      }))
+    const ageMs = opts.metrics.heartbeat.ageMs()
+    if (ageMs > opts.heartbeatStaleMs) {
+      writeLogLine('fatal', 'heartbeat stale — self-killing for restart', { ageMs })
       process.exit(1)
     }
   }, watchdogIntervalMs)
@@ -66,7 +64,7 @@ export async function runDaemon(opts: DaemonOptions): Promise<void> {
         try {
           await opts.preScan()
         } catch (err) {
-          console.error(JSON.stringify({ level: 'fatal', msg: 'preScan failed', err: String(err) }))
+          writeLogLine('fatal', 'preScan failed', errorFields(err))
           process.exit(1)
         }
       }
@@ -86,11 +84,7 @@ export async function runDaemon(opts: DaemonOptions): Promise<void> {
         }
         await Promise.race([
           opts.scan(scanCtl.signal),
-          new Promise<void>((resolve) => {
-            opts.abortSignal.addEventListener('abort', () => {
-              setTimeout(resolve, shutdownDeadlineMs).unref()
-            }, { once: true })
-          }),
+          waitForShutdownDeadline(opts.abortSignal, shutdownDeadlineMs),
         ])
         opts.metrics.heartbeat.setNow()
         opts.metrics.scanIterations.inc({ result: 'ok' })
@@ -99,8 +93,7 @@ export async function runDaemon(opts: DaemonOptions): Promise<void> {
       } catch (err) {
         scanError = true
         opts.metrics.scanIterations.inc({ result: 'error' })
-
-        console.error(JSON.stringify({ level: 'error', msg: 'scan failed', err: String(err) }))
+        writeLogLine('error', 'scan failed', errorFields(err))
       } finally {
         opts.abortSignal.removeEventListener('abort', linkAbort)
         opts.metrics.scanDuration.observe((Date.now() - t0) / 1000)
@@ -116,16 +109,39 @@ export async function runDaemon(opts: DaemonOptions): Promise<void> {
         break
       }
 
-      // Sleep for currentDelay, OR until 'wake' fires, OR until aborted.
       await Promise.race([
-        new Promise<void>(r => setTimeout(r, currentDelay).unref()),
+        sleep(currentDelay),
         opts.wakeup ? once(opts.wakeup, 'wake').then(() => undefined) : new Promise<never>(() => {}),
-        new Promise<void>((resolve) => {
-          opts.abortSignal.addEventListener('abort', () => resolve(), { once: true })
-        }),
+        waitForAbort(opts.abortSignal),
       ])
     }
   } finally {
     clearInterval(watchdog)
   }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms).unref()
+  })
+}
+
+function waitForAbort(signal: AbortSignal): Promise<void> {
+  if (signal.aborted) {
+    return Promise.resolve()
+  }
+  return new Promise((resolve) => {
+    signal.addEventListener('abort', () => resolve(), { once: true })
+  })
+}
+
+function waitForShutdownDeadline(signal: AbortSignal, deadlineMs: number): Promise<void> {
+  if (signal.aborted) {
+    return sleep(deadlineMs)
+  }
+  return new Promise((resolve) => {
+    signal.addEventListener('abort', () => {
+      setTimeout(resolve, deadlineMs).unref()
+    }, { once: true })
+  })
 }
