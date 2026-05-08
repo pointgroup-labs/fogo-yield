@@ -1,6 +1,6 @@
 import type { Connection } from '@solana/web3.js'
 import { PublicKey } from '@solana/web3.js'
-import { INTENT_TRANSFER_PROGRAM_ID } from './constants'
+import { INTENT_TRANSFER_PROGRAM_ID } from '../constants'
 
 /**
  * Recover the user's Solana wallet from the FOGO source tx that emitted

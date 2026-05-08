@@ -1,7 +1,7 @@
 import { Buffer } from 'node:buffer'
 import { keccak_256 } from '@noble/hashes/sha3.js'
 import { PublicKey } from '@solana/web3.js'
-import { findInboxItemPda } from './builders/ntt'
+import { findInboxItemPda } from '../builders/ntt'
 
 /**
  * VAA + Wormhole-NTT-transceiver + NttManagerMessage wire decoders, plus
