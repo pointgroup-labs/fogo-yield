@@ -1,6 +1,6 @@
 'use client'
 
-import { Suspense, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import ErrorBoundary from '@/components/ErrorBoundary'
 import Header from '@/components/Header'
 import PendingTxList from '@/components/PendingTxList'
@@ -26,9 +26,7 @@ export default function Page() {
             </p>
           </div>
           <ErrorBoundary label="protocol stats">
-            <Suspense fallback={null}>
-              <ProtocolStats />
-            </Suspense>
+            <ProtocolStats />
           </ErrorBoundary>
           <Tabs active={tab} onChange={setTab} />
           <ErrorBoundary label={tab}>
