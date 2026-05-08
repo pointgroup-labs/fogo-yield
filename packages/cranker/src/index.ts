@@ -18,24 +18,6 @@ export * from './wormholescan'
 type ShutdownSignal = 'SIGTERM' | 'SIGINT'
 
 /**
- * Throws if the cranker pubkey equals RelayerConfig.authority.
- *
- * The cranker is grief-only: a stolen cranker host costs at most a few
- * SOL of fee burn. The authority key has fee/redemption-cancel/fee_vault
- * powers — never co-locate. Enforced here, off-chain, because the
- * program has no way to know which keypair is "the cranker".
- */
-export function assertCrankerNotAuthority(authority: PublicKey, crankerPubkey: PublicKey): void {
-  if (authority.equals(crankerPubkey)) {
-    throw new Error(
-      'CRANKER_KEYPAIR equals RelayerConfig.authority — refusing to start. '
-      + 'The cranker is grief-only; the authority key holds fee + redemption-cancel powers '
-      + 'and must never be co-located with the cranker host.',
-    )
-  }
-}
-
-/**
  * Wires SIGTERM/SIGINT to abort the controller. `once` (not `on`) so a
  * second signal escalates to default behavior (immediate kill) rather
  * than being silently swallowed.
@@ -150,7 +132,6 @@ async function main(): Promise<void> {
   const client = new RelayerClient(provider)
 
   const relayerConfig = await client.fetchConfig()
-  assertCrankerNotAuthority(relayerConfig.authority as PublicKey, keypair.publicKey)
 
   log.info('cranker started', {
     cranker: keypair.publicKey.toBase58(),
@@ -195,11 +176,6 @@ async function main(): Promise<void> {
     metrics,
   } satisfies Omit<AdvanceContext, 'abortSignal'>
 
-  const preScan = async (): Promise<void> => {
-    const cfgFresh = await client.fetchConfig()
-    assertCrankerNotAuthority(cfgFresh.authority as PublicKey, keypair.publicKey)
-  }
-
   try {
     await runDaemon({
       scan: signal => scanAndAdvance(
@@ -216,7 +192,6 @@ async function main(): Promise<void> {
       heartbeatStaleMs: cfg.heartbeatStaleMs,
       maxBackoffMs: cfg.scanMaxBackoffMs,
       shutdownDeadlineMs: cfg.shutdownDeadlineMs,
-      preScan,
       abortSignal: shutdown.signal,
     })
   } finally {

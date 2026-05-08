@@ -71,7 +71,7 @@ Operator-facing guide: take a clean Hetzner CX22 from blank to running cranker; 
    docker compose ps   # all five services should show "healthy" within ~2m
    curl -s http://127.0.0.1:9090/healthz
    ```
-6. Verify on-chain activity: `docker compose logs -f cranker` should show `cranker started` followed by per-scan iterations. The `assertCrankerNotAuthority` check runs at boot — if your keypair equals `RelayerConfig.authority`, the container exits 1 with an explicit error.
+6. Verify on-chain activity: `docker compose logs -f cranker` should show `cranker started` followed by per-scan iterations. **Out-of-band: confirm `CRANKER_KEYPAIR.pubkey != RelayerConfig.authority`** — these two roles must never share a key. The cranker no longer asserts this at boot, so a misconfigured deploy will silently sign permissionless advances with the authority key.
 
 ## 3. Rolling updates and rollback
 
@@ -96,7 +96,7 @@ The cranker key is grief-only — its theft costs at most a small amount of SOL 
    solana-keygen new --no-bip39-passphrase --outfile cranker-new.json
    solana-keygen pubkey cranker-new.json   # note the pubkey
    ```
-2. **Verify the new pubkey is NOT** `RelayerConfig.authority`. The on-host `assertCrankerNotAuthority` check will catch this at boot, but verify out-of-band first to avoid a crashloop.
+2. **Verify the new pubkey is NOT** `RelayerConfig.authority`. There is no on-host check anymore — a misconfigured rotation will silently merge the cranker and authority roles. Run `solana account <RelayerConfig PDA>` (or use the CLI's `relayer config` command) and compare against the new pubkey before swapping.
 3. Fund with ~0.5 SOL: `solana transfer <new-pubkey> 0.5 --keypair <treasury>`.
 4. Copy to host: `scp cranker-new.json deploy@<host>:/opt/cranker/secrets/`.
 5. On host:
