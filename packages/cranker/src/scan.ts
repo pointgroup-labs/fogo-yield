@@ -33,6 +33,17 @@ export type ScanOptions = {
   advanceFns?: AdvanceFns
   /** Optional skip counter — incremented when a Flow has a status the cranker cannot currently advance (e.g. withdraw-leg statuses gated on ONyc deploy). */
   skipCounter?: { inc: (labels: { reason: string }) => void }
+  /**
+   * Cross-iteration dedup state for `flow advance failed` warnings.
+   * Without this, an unrecoverable flow re-emits the same warning every
+   * scan interval forever (e.g. a deposit whose VAA recipient encoding
+   * is broken — see "cannot derive userWallet"). With it, the first
+   * (flow, error-fingerprint) sighting logs at warn; repeats log at debug.
+   *
+   * Owned by the daemon (one Map per process); passed in so this module
+   * stays free of module-level mutable state and stays unit-testable.
+   */
+  seenAdvanceErrors?: Map<string, string>
 }
 
 const DEFAULT_ADVANCE_FNS: AdvanceFns = {
@@ -81,7 +92,7 @@ export async function scanAndAdvance(
     tasks.push(async () => {
       ctx.log.debug('dispatching advance', { flow: flowKey, status: flow.status })
       const result = await dispatch(ctx, { fogoTx: flow.fogoTx, vaaHex: flow.vaaHex })
-      logAdvanceResult(ctx, flowKey, flow.status, result)
+      logAdvanceResult(ctx, flowKey, flow.status, result, opts.seenAdvanceErrors)
       return result
     })
   }
@@ -94,6 +105,7 @@ function logAdvanceResult(
   flow: string,
   fromStatus: string,
   result: AdvanceResult,
+  seenErrors?: Map<string, string>,
 ): void {
   switch (result.kind) {
     case 'advanced':
@@ -103,21 +115,46 @@ function logAdvanceResult(
         to: result.toStatus,
         signatures: result.signatures,
       })
+      // A successful advance clears the dedup memo: if the flow ever
+      // fails again with the same error, we want to hear about it again.
+      seenErrors?.delete(flow)
       return
     case 'noop':
       // Routine: another cranker advanced first, or pre-flight rejected.
       ctx.log.debug('flow noop', { flow, status: fromStatus, reason: result.reason })
       return
-    case 'error':
+    case 'error': {
       // Per-flow failures are warnings, not errors — the next scan retries.
       // The scan-loop-level `error` log is reserved for whole-iteration failures.
-      ctx.log.warn('flow advance failed', {
+      // Dedup: same (flow, error-message) pair downgrades to debug after the
+      // first sighting in this process. Different error → re-emit at warn.
+      const fingerprint = errorFingerprint(result.error)
+      const previously = seenErrors?.get(flow)
+      const isRepeat = previously === fingerprint
+      const fields = {
         flow,
         status: fromStatus,
         partialSignatures: result.partialSignatures,
         ...errorFields(result.error),
-      })
+      }
+      if (isRepeat) {
+        ctx.log.debug('flow advance failed (repeat)', fields)
+      } else {
+        ctx.log.warn('flow advance failed', fields)
+        seenErrors?.set(flow, fingerprint)
+      }
+    }
   }
+}
+
+/**
+ * Stable identity for an error: its message text. We deliberately don't
+ * include stack frames (line numbers churn across builds) or pubkeys
+ * (already part of `flow`). Two failures with identical messages on the
+ * same flow are treated as the same recurring problem.
+ */
+function errorFingerprint(err: Error): string {
+  return err.message
 }
 
 type DispatchFn = (

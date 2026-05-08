@@ -179,6 +179,9 @@ async function main(): Promise<void> {
   } satisfies Omit<AdvanceContext, 'abortSignal'>
 
   try {
+    // One Map per process — dedupes recurring per-flow advance failures so
+    // unrecoverable flows don't spam warn every scan interval.
+    const seenAdvanceErrors = new Map<string, string>()
     await runDaemon({
       scan: signal => scanAndAdvance(
         { ...advanceCtxBase, abortSignal: signal },
@@ -187,6 +190,7 @@ async function main(): Promise<void> {
           rpcTimeoutMs: cfg.rpcTimeoutMs,
           enumerateFlows,
           skipCounter: metrics.flowSkipped,
+          seenAdvanceErrors,
         },
       ),
       metrics,

@@ -1,4 +1,5 @@
 import type { AdvanceContext } from '../src/advance/types'
+import type { Logger } from '../src/log'
 import { PublicKey } from '@solana/web3.js'
 import { describe, expect, it, vi } from 'vitest'
 import { silentLogger } from '../src/log'
@@ -6,11 +7,27 @@ import { scanAndAdvance } from '../src/scan'
 
 // Minimal mock context — scanAndAdvance only reads abortSignal + log directly;
 // the rest is forwarded to advance fns which we mock entirely.
-function makeCtx(abortSignal = new AbortController().signal): AdvanceContext {
+function makeCtx(abortSignal = new AbortController().signal, log: Logger = silentLogger()): AdvanceContext {
   return {
     abortSignal,
-    log: silentLogger(),
+    log,
   } as unknown as AdvanceContext
+}
+
+function recordingLogger(): { log: Logger, calls: Array<{ level: string, msg: string }> } {
+  const calls: Array<{ level: string, msg: string }> = []
+  const mk = (level: string) => (msg: string) => {
+    calls.push({ level, msg })
+  }
+  const self: Logger = {
+    debug: mk('debug'),
+    info: mk('info'),
+    warn: mk('warn'),
+    error: mk('error'),
+    fatal: mk('fatal'),
+    child: () => self,
+  }
+  return { log: self, calls }
 }
 
 const PUBKEY = new PublicKey('11111111111111111111111111111111')
@@ -100,5 +117,114 @@ describe('scanAndAdvance', () => {
         },
       }),
     ).rejects.toThrow(/abort/)
+  })
+
+  it('dedupes recurring per-flow advance failures: warn once, debug repeats', async () => {
+    const recorder = recordingLogger()
+    const seenAdvanceErrors = new Map<string, string>()
+    const claimUsdc = vi.fn().mockResolvedValue({
+      kind: 'error',
+      error: new Error('cannot derive userWallet'),
+      partialSignatures: [],
+    })
+
+    const opts = {
+      maxConcurrentAdvances: 1,
+      rpcTimeoutMs: 5000,
+      enumerateFlows: async () => [{ pubkey: PUBKEY, status: 'Pending', fogoTx: 'tx-A' }],
+      advanceFns: {
+        claimUsdc,
+        swapUsdcToOnyc: vi.fn(),
+        lockOnyc: vi.fn(),
+        unlockOnyc: vi.fn(),
+        requestRedemption: vi.fn(),
+        claimRedemption: vi.fn(),
+        sendUsdcToUser: vi.fn(),
+      },
+      seenAdvanceErrors,
+    }
+
+    // Three consecutive scans (same flow, same error each time).
+    await scanAndAdvance(makeCtx(undefined, recorder.log), opts)
+    await scanAndAdvance(makeCtx(undefined, recorder.log), opts)
+    await scanAndAdvance(makeCtx(undefined, recorder.log), opts)
+
+    const warns = recorder.calls.filter(c => c.msg === 'flow advance failed')
+    const debugs = recorder.calls.filter(c => c.msg === 'flow advance failed (repeat)')
+    expect(warns).toHaveLength(1) // first sighting only
+    expect(debugs).toHaveLength(2) // subsequent repeats
+  })
+
+  it('re-emits warn when the error message changes for the same flow', async () => {
+    const recorder = recordingLogger()
+    const seenAdvanceErrors = new Map<string, string>()
+    let attempt = 0
+    const claimUsdc = vi.fn().mockImplementation(async () => ({
+      kind: 'error' as const,
+      error: new Error(attempt++ === 0 ? 'first kind of failure' : 'different failure mode'),
+      partialSignatures: [],
+    }))
+
+    const opts = {
+      maxConcurrentAdvances: 1,
+      rpcTimeoutMs: 5000,
+      enumerateFlows: async () => [{ pubkey: PUBKEY, status: 'Pending', fogoTx: 'tx-A' }],
+      advanceFns: {
+        claimUsdc,
+        swapUsdcToOnyc: vi.fn(),
+        lockOnyc: vi.fn(),
+        unlockOnyc: vi.fn(),
+        requestRedemption: vi.fn(),
+        claimRedemption: vi.fn(),
+        sendUsdcToUser: vi.fn(),
+      },
+      seenAdvanceErrors,
+    }
+
+    await scanAndAdvance(makeCtx(undefined, recorder.log), opts)
+    await scanAndAdvance(makeCtx(undefined, recorder.log), opts)
+
+    const warns = recorder.calls.filter(c => c.msg === 'flow advance failed')
+    expect(warns).toHaveLength(2) // both sightings warn — different fingerprints
+  })
+
+  it('clears dedup memo when a flow finally advances', async () => {
+    const recorder = recordingLogger()
+    const seenAdvanceErrors = new Map<string, string>()
+    let attempt = 0
+    const claimUsdc = vi.fn().mockImplementation(async () => {
+      const n = attempt++
+      if (n === 0) {
+        return { kind: 'error' as const, error: new Error('transient RPC blip'), partialSignatures: [] }
+      }
+      if (n === 1) {
+        return { kind: 'advanced' as const, signatures: ['sig'], fromStatus: 'Pending', toStatus: 'Claimed' }
+      }
+      return { kind: 'error' as const, error: new Error('transient RPC blip'), partialSignatures: [] }
+    })
+
+    const opts = {
+      maxConcurrentAdvances: 1,
+      rpcTimeoutMs: 5000,
+      enumerateFlows: async () => [{ pubkey: PUBKEY, status: 'Pending', fogoTx: 'tx-A' }],
+      advanceFns: {
+        claimUsdc,
+        swapUsdcToOnyc: vi.fn(),
+        lockOnyc: vi.fn(),
+        unlockOnyc: vi.fn(),
+        requestRedemption: vi.fn(),
+        claimRedemption: vi.fn(),
+        sendUsdcToUser: vi.fn(),
+      },
+      seenAdvanceErrors,
+    }
+
+    await scanAndAdvance(makeCtx(undefined, recorder.log), opts) // warn (first failure)
+    await scanAndAdvance(makeCtx(undefined, recorder.log), opts) // info advanced — clears memo
+    await scanAndAdvance(makeCtx(undefined, recorder.log), opts) // warn again (memo was cleared)
+
+    const warns = recorder.calls.filter(c => c.msg === 'flow advance failed')
+    expect(warns).toHaveLength(2)
+    expect(seenAdvanceErrors.get(PUBKEY.toBase58())).toBe('transient RPC blip')
   })
 })
