@@ -2,7 +2,7 @@
 
 **Date:** 2026-05-09
 **Scope:** `packages/webapp/` only
-**Status:** Design — pending user approval
+**Status:** Design — pending user approval (revised after codex CLI review)
 
 ## Goal
 
@@ -44,6 +44,9 @@ Tailwind layout and toast systems.
 
 Added (webapp only):
 - `antd@^5`
+- `@ant-design/v5-patch-for-react-19` — required because the webapp
+  uses React 19; imported once at the top of `app/layout.tsx` *before*
+  any antd component import.
 - `@ant-design/nextjs-registry` (App Router CSS-in-JS SSR)
 - `@tanstack/react-query@^5`
 - `@tanstack/react-query-devtools` (dev only)
@@ -87,16 +90,31 @@ flow into `App`'s portal-rendered notifications/messages.
   if a real brand color is preferred).
 - Persisted via the `settings` Zustand store under key `theme`
   (`'dark' | 'light' | 'auto'`, default `'dark'`).
-- An inline `<script>` in `app/layout.tsx` `<head>` reads the
-  persisted preference and sets `data-theme` on `<html>` before
-  hydration to avoid FOUC (`rendering-hydration-no-flicker`).
+- **SSR posture:** the server always renders with the default dark
+  algorithm — `localStorage` is unreadable on the server. On the
+  client, the `ConfigProvider` algorithm switches to the persisted
+  preference at first paint after hydration. Users with `'light'` or
+  `'auto'` will see one frame of dark theme on cold load; this is an
+  accepted tradeoff (the alternative is no SSR at all). The inline
+  `<script>` in `<head>` only sets `data-theme` on `<html>` for *non-
+  antd* surfaces (raw body styling, scrollbar) — it does **not**
+  drive antd tokens; antd tokens come exclusively from `ConfigProvider`.
 
 ### Bundle/perf rules applied
 
 - `bundle-dynamic-imports`: `SettingsDrawer` is `next/dynamic`-loaded
   (`{ ssr: false }`); wallet adapter UI stays dynamic as today.
-- `server-hoist-static-io`: `QueryClient` constructed once at module
-  scope with default `staleTime`; not per-render.
+- `server-hoist-static-io`: query defaults (`staleTime`, `retry`)
+  defined in a static `defaultOptions` object at module scope.
+- **`QueryClient` lifecycle (App Router pattern):** never a true
+  module-scope singleton. A `getQueryClient()` helper returns a fresh
+  client on the server (per request) and a memoized browser singleton
+  via `globalThis.__fogoQueryClient` on the client. `Providers` is a
+  `'use client'` component that calls `getQueryClient()` inside a
+  `useState` initializer (`rerender-lazy-state-init`). The
+  `localStoragePersister` is constructed only when `typeof window !==
+  'undefined'`; `PersistQueryClientProvider` is mounted only on the
+  client to avoid SSR `localStorage` access.
 - `bundle-barrel-imports`: import directly from `'antd'` (antd 5
   tree-shakes); revisit if bundle analysis shows regression.
 
@@ -145,61 +163,128 @@ New components:
 
 `TransferCard` uses antd `Form` with controlled validation:
 - `Form.useForm()` for imperative submit/reset.
-- `Form.useWatch('amount')` to drive the live receive-amount.
+- `Form.useWatch('amount', form)` to drive the live receive-amount.
 - `rules` for amount validation (positive, ≤ balance, decimals).
 - `Form.onFinish` only fires when validation passes.
+- `InputNumber` is configured with `stringMode` so token amounts
+  preserve full decimal precision (no float coercion); the form
+  value's type is `string`, and base-unit conversion happens in the
+  submit handler.
+- The submit `Button`'s `disabled` state is derived explicitly via
+  `Form.useWatch` over the relevant fields plus
+  `form.getFieldsError()` — antd does not provide "disable while
+  invalid" automatically.
 
-Collapses ~6 `useState`s into one form instance and gets submit-on-Enter
-+ disabled-while-invalid for free.
+Collapses ~6 `useState`s into one form instance and gets
+submit-on-Enter for free.
 
 ## Data Flow
 
 ### Query keys
 
+All keys use string-safe primitives only — `PublicKey` becomes
+`pubkey.toBase58()`, `bigint`/amounts become decimal strings. No
+class instances or `bigint` in keys or persisted payloads.
+
 | Key | `staleTime` | `refetchInterval` | Notes |
 |---|---|---|---|
-| `['balances', publicKey, mint]` | `10s` | `15s` when tab visible, off when hidden | one query per (wallet, mint); visibility via `useDocumentVisible` in the `refetchInterval` callback |
+| `['balances', ownerB58, mintB58]` | `10s` | `15s` when tab visible, off when hidden | one query per (wallet, mint); visibility via `useDocumentVisible` in the `refetchInterval` callback |
 | `['onyc-price']` | `60s` | `5min` | shared (`client-swr-dedup`) |
-| `['protocol-state', programId]` | `30s` | `1min` | feeds `ProtocolStats` |
-| `['bridge-fee', srcChain, dstChain, mint, amount]` | `30s` | none | refetched on input change via key |
-| `['flow-status', flowId]` | `5s` while pending; `Infinity` once terminal | `5s` while pending | per-pending-tx |
-| `['pending-txs']` | derived | n/a | a `useQueries` over flow IDs known from the persisted cache |
+| `['protocol-state', programIdB58]` | `30s` | `1min` | feeds `ProtocolStats`; uses `useSuspenseQuery` so the `Suspense` + `Skeleton` boundary actually triggers |
+| `['bridge-fee', srcChain, dstChain, mintB58, amountStr]` | `30s` | none | refetched on input change via key |
+| `['flow-status', flowId]` | `5s` while non-terminal; `Infinity` once terminal | `5s` while non-terminal | per-pending-tx |
+| `['pending-flow-ids']` | `Infinity` | none | persisted index of known flow IDs; the source of truth for `PendingTxList`'s `useQueries`. Mutated via `setQueryData` on submit and on terminal-prune. |
+
+### Persisted flow-status payload
+
+A persisted `['flow-status', flowId]` entry must carry enough state
+to (a) render the row without re-fetching anything, and (b) resume
+polling correctly after reload:
+
+```ts
+type PersistedFlowStatus = {
+  flowId: string                 // PDA address (base58)
+  kind: 'deposit' | 'withdraw'
+  signature: string              // origin tx signature for explorer link
+  ownerB58: string               // wallet that initiated
+  mintB58: string                // source mint (USDC.s for deposit, ONyc for withdraw)
+  amountStr: string              // base-unit amount as decimal string
+  startedAt: number              // ms epoch
+  baselineDestBalanceStr: string // dest balance captured *before* sign — see Race section
+  status: 'pending' | 'in-progress' | 'terminal-success' | 'terminal-failure'
+  notified: boolean              // whether the terminal notification has fired
+  lastPolledAt: number           // ms epoch
+}
+```
 
 ### Persistence
 
 - `localStoragePersister` keyed `fogo-onre.queries.v1`.
-- `dehydrateOptions.shouldDehydrateQuery`: only `['flow-status', ...]`
-  queries persist. Balances/prices stay in-memory and refetch on load.
-- `maxAge: 24h`. Older pending entries surface a warning state.
-- Schema versioning per `client-localstorage-schema`: bump `.v1` to
-  invalidate.
+- `dehydrateOptions.shouldDehydrateQuery`: only
+  `['flow-status', ...]` and `['pending-flow-ids']` queries persist.
+  Balances/prices stay in-memory and refetch on load.
+- **No `maxAge` cap.** Stale-but-still-pending entries are kept and
+  surfaced with a warning state in the row (computed from
+  `Date.now() - startedAt > 24h`). Capping via `maxAge` would silently
+  drop them, which contradicts the warning UX.
+- Schema versioning per `client-localstorage-schema`: bump the `.v1`
+  suffix on the persister key when `PersistedFlowStatus` shape
+  changes; old caches are then ignored on load.
 
 ### Submit flow (deposit/withdraw)
 
-1. `Form.onFinish` fires with `{ amount, recipient? }`.
+The submit handler is a `useMutation` so concurrent submits are
+locked at the mutation level (TanStack Query's `mutate` is a no-op
+while `isPending`). This is the local "double-click / reload race"
+guard; the relayer's on-chain mutex remains the real enforcement.
+
+1. `Form.onFinish` fires with `{ amount, recipient? }`; mutation runs.
 2. Cheap pre-checks (`async-cheap-condition-before-await`):
-   - `publicKey == null` → notification, return.
-   - amount invalid → defensive return (validation already caught).
-   - withdraw + non-terminal withdraw flow exists → notification
-     "withdraw already in flight", return.
-3. `queryClient.fetchQuery(['bridge-fee', ...])` — one-shot
-   (`async-defer-await`).
-4. Build NTT instruction via the SDK
+   - `publicKey == null` → notification, abort mutation.
+   - amount invalid → defensive abort (validation already caught).
+   - withdraw + non-terminal withdraw flow exists in
+     `['pending-flow-ids']` → notification "withdraw already in
+     flight", abort.
+3. **Capture destination baseline** before any signing:
+   `baselineDestBalanceStr = await fetchBalance(destOwner, destMint)`.
+   This is what the original hook comments already guarded; persisting
+   it lets a post-reload poll distinguish "not yet delivered" from
+   "delivered before page loaded".
+4. `queryClient.fetchQuery({ queryKey: ['bridge-fee', ...], queryFn })`
+   — one-shot (`async-defer-await`); v5 object syntax.
+5. Build NTT instruction via the SDK
    (`buildFogoNttDepositIx` / `buildFogoNttWithdrawIx`) — semantically
    unchanged.
-5. Send via wallet adapter; on signature returned, immediately
-   `queryClient.setQueryData(['flow-status', flowId], { status: 'pending', startedAt: Date.now() })`.
-6. The cache entry triggers `PendingTxList` (a `useQueries` over
-   known flow IDs) to render a new row; polling kicks in.
+6. Send via wallet adapter; on signature returned:
+   - `setQueryData(['flow-status', flowId], { ...PersistedFlowStatus, status: 'pending', notified: false })`
+   - `setQueryData(['pending-flow-ids'], (prev) => [...prev, flowId])`
+     — this is the reactive trigger that makes `PendingTxList`
+     re-render (it subscribes to `['pending-flow-ids']` via `useQuery`).
 7. `notification.success` confirms submission.
-8. On terminal status, `notification.success` again with a "view
-   explorer" action; `staleTime` becomes `Infinity` so polling stops.
+8. The per-row `useQuery(['flow-status', flowId])` polls every 5s
+   while non-terminal. On observed transition to a terminal status:
+   - `setQueryData(['flow-status', flowId], { ..., status, notified: true })`
+   - if `notified` was `false` *before* this transition, fire
+     `notification.success` (or `error`) with a "view explorer"
+     action. The `notified` flag prevents replay on reload — if the
+     flow was already terminal-and-notified in localStorage, no
+     notification fires on rehydration.
+   - polling stops because `staleTime` is `Infinity` once terminal.
 
 ### Withdraw singleton guard
 
-Relayer enforces a singleton `RedemptionTracker`. UI guard: withdraw
-submit is disabled when any non-terminal withdraw `flow-status`
-query exists. On-chain mutex remains the real enforcement.
+Three layers, weakest to strongest:
+1. **Mutation-level lock.** The submit `useMutation`'s `isPending`
+   blocks rapid double-clicks within a tab.
+2. **Cache-level guard.** Submit handler reads
+   `['pending-flow-ids']` → checks if any non-terminal
+   `['flow-status', id]` entry has `kind === 'withdraw'`; if so,
+   notification "withdraw already in flight" and abort.
+3. **On-chain mutex.** Relayer enforces a singleton
+   `RedemptionTracker`. The cache guard is racy across tabs and
+   reloads; the on-chain mutex catches what the UI misses. The
+   handler treats the relayer's mutex error as expected UX (friendly
+   notification, no console error spam).
 
 ## Error Handling
 
@@ -223,15 +308,22 @@ query exists. On-chain mutex remains the real enforcement.
 
 - `retry: 2` with exponential backoff for read queries.
 - `retry: false` for the one-shot `fetchQuery` inside submit.
-- `throwOnError: false` everywhere — render-time errors and runtime
-  errors stay on separate channels.
+- `throwOnError: false` everywhere except `useSuspenseQuery` queries
+  (which must throw to trigger Suspense/error fallbacks). Plain
+  `useQuery` errors surface inline via `query.isError` /
+  `query.error` rendered as antd `Alert` or `Result` mini-states —
+  they do **not** propagate to `ErrorBoundary`. Render-time errors
+  (component bugs) and runtime data errors stay on separate channels.
 
 ### Loading states
 
-- `Skeleton` inside `Suspense` for `ProtocolStats`.
+- `Suspense` + `Skeleton` for `ProtocolStats` is driven by
+  `useSuspenseQuery` (plain `useQuery` does not suspend).
 - `Spin` for `TransferCard` while wallet is connecting.
-- `Button loading` for in-flight submits.
-- `List` `loading` while persisted queries rehydrate.
+- `Button loading` for in-flight submits (sourced from
+  `mutation.isPending`).
+- `List` `loading` while persisted queries rehydrate (read from
+  `useIsRestoring()` from `@tanstack/react-query-persist-client`).
 
 ### SSR / hydration
 
@@ -242,30 +334,53 @@ query exists. On-chain mutex remains the real enforcement.
 
 ## Implementation Order
 
-Each step keeps the app buildable.
+Each step keeps the app buildable. Tailwind is removed **last**
+among the convert-then-strip pairs, so every page renders with at
+least one of {old Tailwind layout, new antd layout} at any moment.
 
-1. **Provider scaffolding.** Add deps; rewrite `providers.tsx` and
-   `app/layout.tsx`. Theme toggle wired. Old body still renders.
-2. **Tailwind removal.** Strip configs/directives; convert `page.tsx`
-   and `Header.tsx` layouts to antd `Layout`/`Flex`.
-3. **Hooks → TanStack Query.** Rewrite `useBalances`,
-   `useOnycPrice`, `useProtocolState`, `useBridgeFee`,
-   `useFlowStatus`. RPC internals untouched. Old hook signatures
-   preserved during this step.
-4. **Pending-tx persistence.** Wrap with
-   `PersistQueryClientProvider`; delete `store/pending-txs.ts`;
-   `PendingTxList` becomes `useQueries` over persisted IDs.
-5. **`TransferCard` rewrite.** antd `Form`; drop `AmountInput` /
-   `ReceiveField`; submit handler implements the data-flow steps.
-6. **Notifications.** Delete `ToastHost`/`store/toasts.ts`; replace
-   every `pushToast` call site with `App.useApp().notification.X`.
-7. **Polish.** `BridgeSteps` in `PendingTxList` items; `ProtocolStats`
-   → `Statistic` + `Suspense`/`Skeleton`; `SettingsDrawer` → antd
-   `Drawer` + `Form`; `ThemeToggle` in header.
-8. **Bundle pass.** `next/dynamic` `SettingsDrawer` (and others if
-   measurement helps); `next build`; review first-load JS.
-9. **Cleanup.** Remove dead exports/CSS; `pnpm lint:fix`;
-   `pnpm sdk build`.
+1. **Provider scaffolding.** Add deps (including
+   `@ant-design/v5-patch-for-react-19` imported first in
+   `app/layout.tsx`); rewrite `providers.tsx` and `app/layout.tsx`
+   with `AntdRegistry`, `ConfigProvider`, `App`, the
+   `getQueryClient()` helper, and `PersistQueryClientProvider`
+   mounted client-side only. App still renders the old `page.tsx`
+   body. `ThemeToggle` not yet added — algorithm reads from store
+   directly inside `Providers`.
+2. **Hooks → TanStack Query.** Rewrite `useBalances`,
+   `useOnycPrice`, `useProtocolState` (`useSuspenseQuery`),
+   `useBridgeFee`, `useFlowStatus` to use `useQuery`. RPC internals
+   in `utils/transfer.ts` and `lib/bridge/*` untouched. Old hook
+   signatures preserved during this step so call sites don't churn.
+3. **Combined: pending-tx persistence + `TransferCard` rewrite.**
+   Done together because deleting `store/pending-txs.ts` requires
+   the new submit handler to write to QueryClient instead. Adds
+   `['pending-flow-ids']`, the `PersistedFlowStatus` schema, the
+   `useMutation` submit, the baseline-balance capture, the
+   notify-once flag. Rewrites `TransferCard` to antd `Form` + drops
+   `AmountInput` / `ReceiveField`. Rewrites `PendingTxList` to
+   `useQueries` driven by `['pending-flow-ids']`.
+4. **Notifications.** Delete `ToastHost` and `store/toasts.ts`;
+   replace every `pushToast` call site with `App.useApp().notification.X`.
+5. **Polish.** `BridgeSteps` in `PendingTxList` items;
+   `ProtocolStats` rewritten to `Statistic` + `Suspense`/`Skeleton`;
+   `SettingsDrawer` rewritten to antd `Drawer` + `Form` and
+   `next/dynamic`-loaded; `ThemeToggle` (`Segmented`) added to
+   `Header` and wired to `settings`.
+6. **Header & layout polish.** Convert `Header` and `page.tsx`
+   chrome (footer, main wrapper) to antd `Layout` / `Flex`. At this
+   point only utility classes remain; everything component-shaped is
+   antd.
+7. **Tailwind removal.** Strip `tailwindcss`,
+   `@tailwindcss/postcss`, postcss config, `@tailwind` directives,
+   `tailwind.config.*`. Convert any remaining utility classes to
+   antd `Flex`/`Space` props or inline styles. App must still build
+   and render after this step.
+8. **Bundle pass.** Confirm `next/dynamic` on `SettingsDrawer` (and
+   add for other heavy panels if measurement helps); `next build`;
+   review the route's first-load JS for regressions.
+9. **Cleanup.** Remove dead exports/CSS; `pnpm lint:fix`. (Skipping
+   `pnpm sdk build` — webapp refactor doesn't touch the SDK and
+   triggering it would violate the no-`packages/sdk` constraint.)
 
 ## Validation (V1)
 
@@ -297,18 +412,27 @@ Manual devnet smoke checklist:
 
 ## Risks
 
-- **Wallet adapter integration with antd `Button` styling.** The
-  adapter's default button has its own CSS. Mitigation: wrap, don't
-  replace — `WalletButton` calls into the adapter hooks
-  (`useWallet`, `useWalletModal`) and renders antd primitives.
-- **CSS-in-JS SSR with App Router.** antd 5's `@ant-design/nextjs-registry`
+- **React 19 + antd 5 internal-API breakages.** Antd 5 has known
+  warnings under React 19 around `findDOMNode` and message/notification
+  static methods. Mitigation: import
+  `@ant-design/v5-patch-for-react-19` at the top of `app/layout.tsx`
+  and use the contextual API (`App.useApp()`) exclusively — never the
+  static `notification.error(...)` import.
+- **CSS-in-JS SSR with App Router.** `@ant-design/nextjs-registry`
   is the supported path; verify on first boot that styles aren't
   duplicated between SSR injection and client hydration.
-- **TanStack Query persistence schema drift.** A future shape change
-  to `flow-status` data without bumping the `v1` key would deserialize
-  stale entries. Mitigation: a `version` field in the persisted
-  payload + a migration step on rehydration.
-- **Withdraw singleton UI guard race.** If a withdraw flow goes
-  terminal between query refetch and submit, the guard might briefly
-  block a legitimate second withdraw. Mitigation: re-check in
-  `onFinish` against the live cache before notification.
+- **Persistence schema drift.** A future shape change to
+  `PersistedFlowStatus` without bumping the `v1` key would
+  deserialize stale entries. Mitigation: bump the `.v1` suffix in the
+  persister key whenever the schema changes; treat the rehydrated
+  cache as advisory and revalidate via the live `flow-status` query.
+- **Cross-tab withdraw race.** Cache guard does not lock across tabs.
+  Mitigation: rely on the on-chain mutex; render the relayer's mutex
+  error as an expected UX state, not a failure.
+- **Notify-once on reload.** Without the `notified` flag, terminal
+  notifications would replay on every reload of a completed flow.
+  The flag is persisted with the rest of the flow status and gated
+  on the *transition* (not the value) so legitimate later
+  transitions still notify.
+- **SSR theme flash.** Users with non-default theme see one frame of
+  dark on cold load. Accepted tradeoff; the alternative is no SSR.
