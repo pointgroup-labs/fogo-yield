@@ -14,20 +14,17 @@ export type FogoOnreRelayer = {
     "repository": "https://github.com/pointgroup-labs/fogo-onre"
   },
   "docs": [
-    "On-chain relayer for OnRe's cross-chain yield product.",
-    "",
-    "OnRe issues ONyc, a tokenized reinsurance position on Solana. This",
-    "program lets FOGO users hold that yield exposure without leaving",
-    "FOGO: USDC.s on FOGO ↔ ONyc on Solana, both legs over Wormhole NTT."
+    "Cross-chain relayer: USDC.s on FOGO ↔ ONyc on Solana, both legs over",
+    "Wormhole NTT. Lets FOGO users hold OnRe's ONyc yield exposure without",
+    "leaving FOGO."
   ],
   "instructions": [
     {
       "name": "acceptAuthority",
       "docs": [
-        "Two-step rotation, step two. Signer must equal",
-        "`relayer_config.pending_authority`. Current authority does NOT",
-        "participate — by design, so two independent multisigs can rotate",
-        "without atomic cross-multisig coordination."
+        "Two-step rotation, step 2. Signer must equal `pending_authority`;",
+        "current authority does not sign (lets independent multisigs rotate",
+        "without atomic co-sign)."
       ],
       "discriminator": [
         107,
@@ -77,11 +74,9 @@ export type FogoOnreRelayer = {
     {
       "name": "cancelRedemptionOnyc",
       "docs": [
-        "Authority-only escape hatch. Aborts an in-flight OnRe redemption",
-        "(returns ONyc to `onyc_ata`, rolls flow back to `Claimed`, frees",
-        "the singleton). Authority-gated to prevent the",
-        "request→cancel→request fee-griefing loop a permissionless cancel",
-        "would enable."
+        "Authority-only escape hatch — rolls a stuck redemption back to",
+        "`Claimed` and frees the singleton. Authority-gated to prevent a",
+        "request→cancel fee-griefing loop."
       ],
       "discriminator": [
         173,
@@ -130,8 +125,7 @@ export type FogoOnreRelayer = {
         {
           "name": "relayerAuthority",
           "docs": [
-            "inside `redemption_request` (OnRe enforces this), so the unlocked",
-            "ONyc returns to its `onyc_ata`."
+            "`redemption_request`, so unlocked ONyc returns to its `onyc_ata`."
           ],
           "pda": {
             "seeds": [
@@ -159,7 +153,7 @@ export type FogoOnreRelayer = {
         {
           "name": "onycAta",
           "docs": [
-            "Receives the unlocked ONyc back from OnRe's redemption vault."
+            "Receives unlocked ONyc from OnRe's redemption vault."
           ],
           "writable": true,
           "pda": {
@@ -278,9 +272,6 @@ export type FogoOnreRelayer = {
         },
         {
           "name": "payerForClose",
-          "docs": [
-            "init-time payer always gets rent back."
-          ],
           "writable": true
         },
         {
@@ -305,8 +296,8 @@ export type FogoOnreRelayer = {
         {
           "name": "cranker",
           "docs": [
-            "Receives rent from the closed `redemption_tracker`. Need not equal",
-            "`tracker.payer` — close-target is pinned by `payer_for_close` below."
+            "Receives rent from closed `redemption_tracker`. Need not equal",
+            "`tracker.payer` — close-target is `payer_for_close` below."
           ],
           "writable": true,
           "signer": true
@@ -485,7 +476,7 @@ export type FogoOnreRelayer = {
         {
           "name": "redemptionRequest",
           "docs": [
-            "it has been closed by OnRe's `fulfill_redemption_request`."
+            "it has been closed by OnRe."
           ]
         },
         {
@@ -497,9 +488,7 @@ export type FogoOnreRelayer = {
     {
       "name": "claimUsdc",
       "docs": [
-        "Redeem bridged USDC.s from FOGO via NTT and create an inflight `Flow`",
-        "receipt binding the eventual ONyc return to the originator's FOGO",
-        "wallet."
+        "Redeem inbound USDC.s VAA, create inbound `Flow` receipt."
       ],
       "discriminator": [
         43,
@@ -631,16 +620,13 @@ export type FogoOnreRelayer = {
         {
           "name": "userWallet",
           "docs": [
-            "Originating FOGO wallet (same pubkey on Solana — keys are chain-agnostic).",
-            "Cranker-supplied; pinned by the `user_inbox_authority` PDA derivation",
-            "below + the NTT release ATA-authority check chain. See handler doc."
+            "Originating FOGO wallet (Solana keys are chain-agnostic).",
+            "Pinned via `user_inbox_authority` PDA derivation + NTT release",
+            "ATA-authority check. See handler doc."
           ]
         },
         {
           "name": "userInboxAuthority",
-          "docs": [
-            "Per-user inbox PDA. Owns `user_inbox_ata`; signs the sweep."
-          ],
           "pda": {
             "seeds": [
               {
@@ -668,11 +654,10 @@ export type FogoOnreRelayer = {
         {
           "name": "userInboxAta",
           "docs": [
-            "Per-user inbox USDC ATA. NTT release_inbound deposits here; the",
-            "sweep transfers exactly `flow.amount` out into `usdc_ata`.",
-            "`init_if_needed` is NOT used here — the FOGO `bridge_ntt_tokens`",
-            "arg `pay_destination_ata_rent: true` causes the Wormhole",
-            "executor to create the ATA on first delivery."
+            "NTT release_inbound deposits here; sweep moves exactly",
+            "`flow.amount` to `usdc_ata`. Not `init_if_needed`: FOGO",
+            "`bridge_ntt_tokens` arg `pay_destination_ata_rent: true` makes",
+            "the executor create the ATA on first delivery."
           ],
           "writable": true,
           "pda": {
@@ -732,27 +717,20 @@ export type FogoOnreRelayer = {
         {
           "name": "nttInboxItem",
           "docs": [
-            "Per-VAA NTT inbox-item PDA — its pubkey seeds the flow PDA.",
-            "We deliberately do NOT put `#[account(owner = NTT_USDC_PROGRAM_ID)]`",
-            "here: on a fresh claim the account doesn't exist yet (the NTT",
-            "redeem CPI inside the handler creates it), so Anchor's",
-            "pre-handler owner constraint would fail every first-time claim.",
-            "The owner check is enforced inside `validate_skip_path_inbox_item`",
-            "— the *only* path where no NTT CPI runs and forgery is therefore",
-            "possible."
+            "No `#[account(owner = ...)]` here: on a fresh claim NTT redeem",
+            "creates this account, so a pre-handler owner constraint would",
+            "fail every first-time claim. The owner check runs in",
+            "`validate_skip_path_inbox_item` — the only path where forgery is",
+            "possible (no NTT CPI runs)."
           ]
         },
         {
-          "name": "nttTransceiverMessage",
-          "docs": [
-            "`owner = NTT_USDC_PROGRAM_ID` pins the writer; nothing outside NTT can",
-            "have crafted this data."
-          ]
+          "name": "nttTransceiverMessage"
         },
         {
           "name": "inflightFlow",
           "docs": [
-            "`init` blocks double-claims against the same NTT inbox item."
+            "`init` blocks double-claims against the same inbox item."
           ],
           "writable": true,
           "pda": {
@@ -780,11 +758,9 @@ export type FogoOnreRelayer = {
         {
           "name": "redemptionTracker",
           "docs": [
-            "Withdraw-chain mutex gate. `SystemAccount` asserts",
-            "`owner == system_program::ID`, true iff the singleton",
-            "`RedemptionTracker` PDA does NOT currently exist — pausing deposit",
-            "USDC inflows so they can't pollute `claim_redemption_usdc`'s",
-            "snapshot/delta math."
+            "Withdraw-chain mutex gate. `SystemAccount` asserts no",
+            "`RedemptionTracker` exists — pauses deposit inflows so they",
+            "can't pollute `claim_redemption_usdc`'s delta math."
           ],
           "pda": {
             "seeds": [
@@ -832,10 +808,9 @@ export type FogoOnreRelayer = {
     {
       "name": "configure",
       "docs": [
-        "Authority-only. `None` args leave the corresponding field unchanged.",
-        "Fee decreases apply instantly; increases stage into `pending_fee`",
-        "for `FEE_TIMELOCK_SLOTS` (~2 days), auto-promoted on the next",
-        "`configure` call after the window elapses."
+        "Authority-only. `None` args leave fields unchanged. Fee decreases",
+        "apply instantly; increases stage for `FEE_TIMELOCK_SLOTS` (~2 days)",
+        "then auto-promote on the next `configure` after the window."
       ],
       "discriminator": [
         245,
@@ -966,8 +941,7 @@ export type FogoOnreRelayer = {
         {
           "name": "feeVault",
           "docs": [
-            "`None` leaves the stored vault unchanged; anti-aliasing check runs",
-            "in the handler."
+            "`None` leaves the stored vault unchanged."
           ],
           "optional": true
         },
@@ -999,7 +973,7 @@ export type FogoOnreRelayer = {
     {
       "name": "initialize",
       "docs": [
-        "One-time setup: create config PDA + relayer-authority-owned ATAs."
+        "One-time setup: config PDA + relayer-authority-owned ATAs."
       ],
       "discriminator": [
         175,
@@ -1186,9 +1160,8 @@ export type FogoOnreRelayer = {
         {
           "name": "feeVault",
           "docs": [
-            "Anti-aliasing constraint: forbidding `fee_vault == onyc_ata`",
-            "prevents silent self-transfer no-ops that would commingle user",
-            "funds with fees and defeat the vault split."
+            "Forbid `fee_vault == onyc_ata` to prevent self-transfer no-ops",
+            "that would commingle user funds with fees."
           ]
         },
         {
@@ -1217,12 +1190,9 @@ export type FogoOnreRelayer = {
     {
       "name": "lockOnyc",
       "docs": [
-        "Lock ONyc via NTT and atomically publish the outbound Wormhole VAA,",
-        "sending ONyc to `flow.fogo_sender`. Closes the PDA.",
-        "",
-        "`transfer_lock_account_count` is the boundary index in",
-        "`remaining_accounts` between the `transfer_lock` (14 entries) and",
-        "`release_wormhole_outbound` (15 entries) account lists."
+        "Lock ONyc via NTT and atomically emit the outbound VAA.",
+        "`transfer_lock_account_count` splits `remaining_accounts` between",
+        "`transfer_lock` and `release_wormhole_outbound`."
       ],
       "discriminator": [
         4,
@@ -1394,8 +1364,7 @@ export type FogoOnreRelayer = {
     {
       "name": "requestRedemptionOnyc",
       "docs": [
-        "Forward flow's ONyc to OnRe via `create_redemption_request` and",
-        "init the singleton tracker. Fee taken pre-CPI."
+        "Forward flow's ONyc to OnRe + init singleton tracker; fee taken pre-CPI."
       ],
       "discriminator": [
         117,
@@ -1473,8 +1442,7 @@ export type FogoOnreRelayer = {
         {
           "name": "usdcAta",
           "docs": [
-            "Pre-balance snapshot source for the `claim_redemption_usdc` delta.",
-            "Boxed for stack budget."
+            "Pre-balance snapshot for `claim_redemption_usdc` delta."
           ],
           "writable": true,
           "pda": {
@@ -1534,8 +1502,7 @@ export type FogoOnreRelayer = {
         {
           "name": "onycAta",
           "docs": [
-            "Source of the fee transfer; OnRe's CPI also pulls from here. Boxed",
-            "for stack budget."
+            "Source for fee transfer; OnRe's CPI also pulls from here."
           ],
           "writable": true,
           "pda": {
@@ -1631,7 +1598,7 @@ export type FogoOnreRelayer = {
         {
           "name": "redemptionTracker",
           "docs": [
-            "Singleton init — fails if any prior redemption is still in flight.",
+            "Singleton init — fails if a prior redemption is mid-flight.",
             "On-chain mutex that makes the ATA-delta math safe."
           ],
           "writable": true,
@@ -1835,13 +1802,9 @@ export type FogoOnreRelayer = {
         {
           "name": "redemptionTracker",
           "docs": [
-            "Singleton redemption tracker slot — must NOT currently exist. While",
-            "any `RedemptionTracker` is alive, a sibling flow may be mid-redemption",
-            "with its pre-balance snapshot pinned against this `usdc_ata`. A",
-            "concurrent outflow here would poison that delta, causing",
-            "`BalanceUnderflow` or silent user under-credit. Stuck redemptions",
-            "are covered by `cancel_redemption_onyc` — deliberate",
-            "correctness-over-latency trade."
+            "Singleton mutex gate — a concurrent outflow during an in-flight",
+            "redemption would poison the pre-balance delta. Stuck redemptions",
+            "are recovered via `cancel_redemption_onyc`."
           ],
           "pda": {
             "seeds": [
@@ -1949,9 +1912,6 @@ export type FogoOnreRelayer = {
         },
         {
           "name": "usdcAta",
-          "docs": [
-            "Boxed for stack budget."
-          ],
           "writable": true,
           "pda": {
             "seeds": [
@@ -2074,9 +2034,7 @@ export type FogoOnreRelayer = {
         {
           "name": "redemptionTracker",
           "docs": [
-            "Withdraw-chain mutex gate. While a withdraw redemption is in flight",
-            "this fails, pausing deposits so `claim_redemption_usdc`'s",
-            "snapshot/delta math stays correct."
+            "Withdraw-chain mutex gate (see `claim_usdc`)."
           ],
           "pda": {
             "seeds": [
@@ -2143,8 +2101,7 @@ export type FogoOnreRelayer = {
     {
       "name": "unlockOnyc",
       "docs": [
-        "Release ONyc from NTT custody and record a `Flow` receipt for the",
-        "withdrawal initiator."
+        "Release ONyc from NTT custody, create outbound `Flow` receipt."
       ],
       "discriminator": [
         225,
@@ -2271,17 +2228,10 @@ export type FogoOnreRelayer = {
           }
         },
         {
-          "name": "nttInboxItem",
-          "docs": [
-            "Per-VAA NTT inbox-item PDA — its pubkey seeds the flow PDA."
-          ]
+          "name": "nttInboxItem"
         },
         {
-          "name": "nttTransceiverMessage",
-          "docs": [
-            "`owner = NTT_ONYC_PROGRAM_ID` pins the writer; nothing outside NTT can",
-            "have crafted this data."
-          ]
+          "name": "nttTransceiverMessage"
         },
         {
           "name": "outflightFlow",
@@ -2619,9 +2569,8 @@ export type FogoOnreRelayer = {
       "name": "flow",
       "docs": [
         "One-shot receipt binding an inbound bridge message to a FOGO wallet.",
-        "Seeds: `[FLOW_*_SEED, bridge_claim_pda.key()]`. Replay protection",
-        "lives in the per-VAA claim account from NTT. Field set is",
-        "byte-stable — older PDAs must keep deserializing."
+        "Replay protection lives in the per-VAA NTT claim account. Field set",
+        "is byte-stable — older PDAs must keep deserializing."
       ],
       "type": {
         "kind": "struct",
@@ -2629,7 +2578,7 @@ export type FogoOnreRelayer = {
           {
             "name": "fogoSender",
             "docs": [
-              "Originator on FOGO; becomes the outbound recipient on the return leg."
+              "Originator on FOGO; outbound recipient on the return leg."
             ],
             "type": {
               "array": [
@@ -2780,8 +2729,7 @@ export type FogoOnreRelayer = {
           {
             "name": "readySlot",
             "docs": [
-              "`now + FEE_TIMELOCK_SLOTS` at proposal time, MAX-extended on any",
-              "later raise so a follow-up never shortens the window."
+              "MAX-extended on later raises so a follow-up never shortens the window."
             ],
             "type": "u64"
           }
@@ -2790,11 +2738,6 @@ export type FogoOnreRelayer = {
     },
     {
       "name": "redemptionCancelled",
-      "docs": [
-        "`returned_onyc_amount` is re-recorded on the flow as `flow.amount`",
-        "with status rolled back to `Claimed`. The withdraw fee originally",
-        "taken by `request_redemption_onyc` is NOT refunded by this path."
-      ],
       "type": {
         "kind": "struct",
         "fields": [
@@ -2873,32 +2816,28 @@ export type FogoOnreRelayer = {
       "name": "redemptionTracker",
       "docs": [
         "Singleton mutex for the in-flight withdraw-chain redemption.",
-        "Seeds: `[REDEMPTION_TRACKER_SEED]`. `init` here fails if another",
-        "redemption is mid-flight, blocking the USDC-delta race."
+        "`init` here fails if another redemption is mid-flight, blocking the",
+        "USDC-delta race."
       ],
       "type": {
         "kind": "struct",
         "fields": [
           {
             "name": "flow",
-            "docs": [
-              "Outbound `Flow` this tracker is bound to."
-            ],
             "type": "pubkey"
           },
           {
             "name": "redemptionRequest",
             "docs": [
-              "OnRe `RedemptionRequest` PDA we created. Polled for closure as",
-              "the fulfillment signal."
+              "OnRe `RedemptionRequest` PDA; polled for closure as fulfillment signal."
             ],
             "type": "pubkey"
           },
           {
             "name": "usdcAtaPreBalance",
             "docs": [
-              "Relayer USDC ATA balance *before* `create_redemption_request`.",
-              "`claim_redemption_usdc` uses the post-fulfillment delta vs this."
+              "Relayer USDC ATA balance pre-CPI; `claim_redemption_usdc` uses",
+              "post-fulfillment delta vs this."
             ],
             "type": "u64"
           },
@@ -2926,8 +2865,7 @@ export type FogoOnreRelayer = {
     {
       "name": "relayerConfig",
       "docs": [
-        "Long-lived program state. `authority` gates governance only; flow",
-        "instructions are permissionless."
+        "`authority` gates governance only; flow instructions are permissionless."
       ],
       "type": {
         "kind": "struct",
@@ -2967,8 +2905,7 @@ export type FogoOnreRelayer = {
           {
             "name": "pendingAuthority",
             "docs": [
-              "Two-step rotation lets multisig→multisig handoffs work without",
-              "atomic co-sign. Promoted to `authority` by `accept_authority`."
+              "Promoted to `authority` by `accept_authority` (two-step handoff)."
             ],
             "type": {
               "option": "pubkey"
@@ -2977,9 +2914,8 @@ export type FogoOnreRelayer = {
           {
             "name": "pendingFee",
             "docs": [
-              "Staged fee *increase*, auto-promoted on the next `configure` once",
-              "`ready_slot` elapses. Decreases bypass this. `Some` ⟹ at least one",
-              "inner leg is `Some` (collapsed otherwise)."
+              "Staged fee *increase*, auto-promoted on next `configure` once",
+              "`ready_slot` elapses. Decreases bypass this."
             ],
             "type": {
               "option": {
@@ -3054,15 +2990,6 @@ export type FogoOnreRelayer = {
   "constants": [
     {
       "name": "intentTransferProgramId",
-      "docs": [
-        "FOGO `intent_transfer` program ID. Pinned so `claim_usdc` can require",
-        "that any incoming VAA was originated by intent_transfer (its singleton",
-        "`intent_transfer_setter` PDA is the NTT message sender for every",
-        "intent-driven bridge). Without this pin, a direct NTT bridge that",
-        "happens to target a user's inbox PDA would also satisfy the deposit",
-        "flow — annoying rather than dangerous, but the pin enforces the",
-        "intended deposit path."
-      ],
       "type": "pubkey",
       "value": "Xfry4dW9m42ncAqm8LyEnyS5V6xu5DSJTMRQLiGkARD"
     },
@@ -3084,12 +3011,8 @@ export type FogoOnreRelayer = {
     {
       "name": "wormholeCoreProgramId",
       "docs": [
-        "Wormhole Core Bridge program id (mainnet). Pinned for documentation /",
-        "future use by handlers that need to assert the wormhole-program account",
-        "the release CPI receives. The release CPI itself is dispatched via",
-        "`remaining_accounts`, so this constant isn't directly read by `lock_onyc`",
-        "— it exists so off-chain tooling and any future on-chain assertion share",
-        "one source of truth."
+        "Wormhole Core Bridge program id. Documentation pin only — release CPIs",
+        "dispatch via `remaining_accounts`, no on-chain read site today."
       ],
       "type": "pubkey",
       "value": "worm2ZoG2kUd4vFXhvjh93UUH596ayRfgQ2MgjNMTth"
