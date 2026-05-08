@@ -1,7 +1,9 @@
 import type { AdvanceContext } from './advance/types'
 import type { BridgeRedeemTarget } from './bridge'
+import type { CrankerConfig } from './config'
 import type { Logger } from './log'
 import type { Metrics } from './metrics'
+import type { EnumerateFlowsFn } from './scan'
 import { readFileSync } from 'node:fs'
 import { AnchorProvider, Wallet } from '@anchor-lang/core'
 import { RelayerClient } from '@fogo-onre/sdk'
@@ -100,6 +102,90 @@ function loadKeypair(path: string): Keypair {
     return Keypair.fromSecretKey(Uint8Array.from(JSON.parse(raw)))
   } catch (err) {
     throw new Error(`failed to load keypair from ${path}: ${errorMessage(err)}`)
+  }
+}
+
+type ScanDeps = {
+  advanceCtxBase: Omit<AdvanceContext, 'abortSignal'>
+  bridgeTarget: BridgeRedeemTarget | undefined
+  cfg: CrankerConfig
+  metrics: Metrics
+  log: Logger
+  enumerateFlows: EnumerateFlowsFn
+  seenAdvanceErrors: Map<string, string>
+  seenBridgeErrors: Map<string, string>
+}
+
+/**
+ * One scan iteration: dispatches the relayer-Flow scanner and (if
+ * configured) the bridge scanner concurrently, isolates their failures
+ * so a sick leg doesn't poison the heartbeat of the healthy leg, and
+ * re-throws to `runDaemon` only when *both* legs failed.
+ *
+ * `Promise.allSettled` (not `Promise.all`): per-VAA failures are already
+ * mapped to noop + metrics inside each leg; a rejection here means the
+ * scan itself threw — surface it but don't drag the other leg down.
+ */
+async function runScanIteration(deps: ScanDeps, signal: AbortSignal): Promise<void> {
+  const { advanceCtxBase, bridgeTarget, cfg, metrics, log, enumerateFlows, seenAdvanceErrors, seenBridgeErrors } = deps
+  const advanceCtx = { ...advanceCtxBase, abortSignal: signal }
+
+  const flowScan = scanAndAdvance(advanceCtx, {
+    maxConcurrentAdvances: cfg.maxConcurrentAdvances,
+    rpcTimeoutMs: cfg.rpcTimeoutMs,
+    enumerateFlows,
+    skipCounter: metrics.flowSkipped,
+    seenAdvanceErrors,
+  })
+  const bridgeScan = bridgeTarget
+    ? scanAndRedeemBridge(
+        {
+          log,
+          metrics: {
+            redeemed: metrics.bridgeRedeemed,
+            txSent: metrics.txSent,
+            rpcErrors: metrics.rpcErrors,
+          },
+          abortSignal: signal,
+          wormholescanUrl: cfg.wormholescanUrl,
+          wormholescanTimeoutMs: cfg.wormholescanTimeoutMs,
+          rpcTimeoutMs: cfg.rpcTimeoutMs,
+          txConfirmTimeoutMs: cfg.txConfirmTimeoutMs,
+        },
+        bridgeTarget,
+        {
+          pageSize: cfg.wormholescanPageSize,
+          maxPages: cfg.wormholescanMaxPages,
+          maxConcurrentRedeems: cfg.bridgeMaxConcurrent,
+          seenRedeemErrors: seenBridgeErrors,
+        },
+      )
+    : Promise.resolve()
+
+  const [flowResult, bridgeResult] = await Promise.allSettled([flowScan, bridgeScan])
+  const bridgeLabel = bridgeTarget?.name ?? 'bridge'
+
+  if (flowResult.status === 'rejected') {
+    metrics.bridgeScanIterations.inc({ target: 'flow', result: 'error' })
+  }
+  if (bridgeResult.status === 'rejected') {
+    metrics.bridgeScanIterations.inc({ target: bridgeLabel, result: 'error' })
+  } else if (bridgeTarget) {
+    metrics.bridgeScanIterations.inc({ target: bridgeLabel, result: 'ok' })
+  }
+
+  // Re-throw only if BOTH failed: a single-leg failure shouldn't trip
+  // runDaemon's backoff if the other leg is healthy.
+  if (flowResult.status === 'rejected' && bridgeResult.status === 'rejected') {
+    throw flowResult.reason instanceof Error
+      ? flowResult.reason
+      : new Error(String(flowResult.reason))
+  }
+  if (flowResult.status === 'rejected') {
+    log.warn('flow scan leg failed (bridge ok)', errorFields(flowResult.reason))
+  }
+  if (bridgeResult.status === 'rejected') {
+    log.warn('bridge scan leg failed (flow ok)', errorFields(bridgeResult.reason))
   }
 }
 
@@ -229,65 +315,16 @@ async function main(): Promise<void> {
     }
 
     await runDaemon({
-      scan: async (signal) => {
-        const advanceCtx = { ...advanceCtxBase, abortSignal: signal }
-        const flowScan = scanAndAdvance(advanceCtx, {
-          maxConcurrentAdvances: cfg.maxConcurrentAdvances,
-          rpcTimeoutMs: cfg.rpcTimeoutMs,
-          enumerateFlows,
-          skipCounter: metrics.flowSkipped,
-          seenAdvanceErrors,
-        })
-        const bridgeScan = bridgeTarget
-          ? scanAndRedeemBridge(
-              {
-                log,
-                metrics: {
-                  redeemed: metrics.bridgeRedeemed,
-                  txSent: metrics.txSent,
-                  rpcErrors: metrics.rpcErrors,
-                },
-                abortSignal: signal,
-                wormholescanUrl: cfg.wormholescanUrl,
-                wormholescanTimeoutMs: cfg.wormholescanTimeoutMs,
-                rpcTimeoutMs: cfg.rpcTimeoutMs,
-                txConfirmTimeoutMs: cfg.txConfirmTimeoutMs,
-              },
-              bridgeTarget,
-              {
-                pageSize: cfg.wormholescanPageSize,
-                maxPages: cfg.wormholescanMaxPages,
-                maxConcurrentRedeems: cfg.bridgeMaxConcurrent,
-                seenRedeemErrors: seenBridgeErrors,
-              },
-            )
-          : Promise.resolve()
-        // allSettled (not Promise.all): a bridge-pipeline failure must
-        // not poison the relayer Flow scanner's heartbeat. Each leg's
-        // own error handling already maps per-VAA failures to noop +
-        // metrics; a rejection here means the *scan itself* threw —
-        // surface it but don't let the other leg drag the daemon down.
-        const results = await Promise.allSettled([flowScan, bridgeScan])
-        const labels = ['flow', 'bridge'] as const
-        for (let i = 0; i < results.length; i++) {
-          const r = results[i]
-          if (r.status === 'rejected') {
-            metrics.bridgeScanIterations.inc({
-              target: labels[i] === 'bridge' ? (bridgeTarget?.name ?? 'bridge') : 'flow',
-              result: 'error',
-            })
-            // Re-throw so runDaemon's backoff logic sees the failure —
-            // but only if BOTH failed; a single-leg failure shouldn't
-            // trip backoff if the other leg is healthy.
-            if (results.every(x => x.status === 'rejected')) {
-              throw r.reason instanceof Error ? r.reason : new Error(String(r.reason))
-            }
-            log.warn(`${labels[i]} scan leg failed (other leg ok)`, errorFields(r.reason))
-          } else if (labels[i] === 'bridge' && bridgeTarget) {
-            metrics.bridgeScanIterations.inc({ target: bridgeTarget.name, result: 'ok' })
-          }
-        }
-      },
+      scan: signal => runScanIteration({
+        advanceCtxBase,
+        bridgeTarget,
+        cfg,
+        metrics,
+        log,
+        enumerateFlows,
+        seenAdvanceErrors,
+        seenBridgeErrors,
+      }, signal),
       metrics,
       intervalMs: cfg.scanIntervalMs,
       heartbeatStaleMs: cfg.heartbeatStaleMs,
