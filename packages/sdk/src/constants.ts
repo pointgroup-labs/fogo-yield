@@ -10,6 +10,33 @@ export const NTT_USDC_PROGRAM_ID = new PublicKey('nttu74CdAmsErx5daJVCQNoDZujswF
 /** NTT manager program for ONyc on Solana mainnet. */
 export const NTT_ONYC_PROGRAM_ID = new PublicKey('nttpna5vXW7BN2Aa4AfTbkCncJWTEoBsnWvjS87Xgsd')
 
+/**
+ * Wormhole NTT-transceiver program for ONyc on both Solana and FOGO
+ * mainnet.
+ *
+ * **This deploy uses the bundled-transceiver mode** (NTT v3 supports two:
+ * standalone, where the transceiver is its own on-chain program; and
+ * bundled, where the transceiver lives inside the manager program). In
+ * bundled mode the upstream SDK keys all transceiver-side derivations
+ * (`registered_transceiver`, `transceiver_message`, etc.) on the
+ * **manager's program ID**, and CPI calls into the "transceiver" go to
+ * the manager. So this constant is a deliberate alias of
+ * `NTT_ONYC_PROGRAM_ID`.
+ *
+ * Trap to avoid: the OnRe `deployment.json` lists
+ * `"transceivers.wormhole.address": "9pCpHZW9W55xT…"` on both chains.
+ * That value is **not a program ID** — it is the manager's `emitter` PDA
+ * (seeds=["emitter"], programId=manager). It exists in `deployment.json`
+ * as a marker that the SDK uses to detect bundled mode (see
+ * `@wormhole-foundation/sdk-solana-ntt/dist/.../sdk/ntt.js:402-405`):
+ * if the address equals either the manager pubkey or its emitter PDA,
+ * the SDK switches to bundled mode and uses the manager as the
+ * transceiver program. Treating that PDA as a program ID — as we did
+ * before — produces phantom `registered_transceiver` PDAs that are
+ * always empty, which silently breaks redeem.
+ */
+export const WH_TRANSCEIVER_ONYC_PROGRAM_ID = NTT_ONYC_PROGRAM_ID
+
 /** OnRe's ONyc SPL mint on Solana mainnet. */
 export const ONYC_MINT = new PublicKey('5Y8NV33Vv7WbnLfq3zBcKSdYPrk7g2KoiQoe7M2tcxp5')
 
