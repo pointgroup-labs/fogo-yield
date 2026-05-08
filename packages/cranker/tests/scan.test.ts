@@ -1,13 +1,15 @@
 import type { AdvanceContext } from '../src/advance/types'
 import { PublicKey } from '@solana/web3.js'
 import { describe, expect, it, vi } from 'vitest'
+import { silentLogger } from '../src/log'
 import { scanAndAdvance } from '../src/scan'
 
-// Minimal mock context — scanAndAdvance only reads abortSignal directly;
+// Minimal mock context — scanAndAdvance only reads abortSignal + log directly;
 // the rest is forwarded to advance fns which we mock entirely.
 function makeCtx(abortSignal = new AbortController().signal): AdvanceContext {
   return {
     abortSignal,
+    log: silentLogger(),
   } as unknown as AdvanceContext
 }
 

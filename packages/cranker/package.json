@@ -3,9 +3,6 @@
   "version": "0.1.0",
   "private": true,
   "description": "Fogo-OnRe permissionless cranker daemon",
-  "bin": {
-    "cranker": "./dist/bin.js"
-  },
   "exports": {
     "./vaa": {
       "types": "./dist/vaa.d.ts",
@@ -15,6 +12,9 @@
       "types": "./dist/wormholescan.d.ts",
       "default": "./dist/wormholescan.js"
     }
+  },
+  "bin": {
+    "cranker": "./dist/bin.js"
   },
   "files": [
     "dist"

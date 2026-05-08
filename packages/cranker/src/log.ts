@@ -71,3 +71,20 @@ export function createLogger(opts: { level: LogLevel, base?: LogFields } = { lev
     child: extra => createLogger({ level: opts.level, base: { ...base, ...extra } }),
   }
 }
+
+/**
+ * No-op logger for tests — discards every emission. Avoids polluting test
+ * stderr with diagnostic chatter from production-path debug/info/warn calls.
+ */
+export function silentLogger(): Logger {
+  const noop = (): void => {}
+  const self: Logger = {
+    debug: noop,
+    info: noop,
+    warn: noop,
+    error: noop,
+    fatal: noop,
+    child: () => self,
+  }
+  return self
+}

@@ -4,6 +4,7 @@ import type { ResolvedNttVaa } from './vaa'
 import type { WormholescanVaa } from './wormholescan'
 import { NTT_ONYC_PROGRAM_ID, NTT_USDC_PROGRAM_ID } from '@fogo-onre/sdk'
 import { describeStatus } from './advance/helpers'
+import { errorFields } from './log'
 import { resolveNttVaa } from './vaa'
 import { WormholescanClient } from './wormholescan'
 
@@ -45,6 +46,13 @@ export function makeEnumerator(opts: EnumerateOptions) {
 
   return async function enumerateFlows(ctx: AdvanceContext): Promise<ScannedFlow[]> {
     const out: ScannedFlow[] = []
+    ctx.log.debug('scan iteration starting', {
+      chainId: opts.fogoWormholeChainId,
+      pageSize: opts.pageSize,
+      maxPages: opts.maxPages,
+      usdcEmitter: Boolean(opts.fogoUsdcEmitterHex),
+      onycEmitter: Boolean(opts.fogoOnycEmitterHex),
+    })
 
     async function harvest(emitterHex: string, leg: VaaLeg): Promise<void> {
       for (let page = 0; page < opts.maxPages; page++) {
@@ -54,7 +62,11 @@ export function makeEnumerator(opts: EnumerateOptions) {
         const items = await ws.listVaasByEmitter(opts.fogoWormholeChainId, emitterHex, {
           pageSize: opts.pageSize,
           page,
-        }).catch(() => [])
+        }).catch((err) => {
+          ctx.log.warn('wormholescan fetch failed', { leg, page, ...errorFields(err) })
+          return [] as WormholescanVaa[]
+        })
+        ctx.log.debug('wormholescan page fetched', { leg, page, count: items.length })
         if (items.length === 0) {
           return
         }
@@ -76,6 +88,7 @@ export function makeEnumerator(opts: EnumerateOptions) {
     if (opts.fogoOnycEmitterHex) {
       await harvest(opts.fogoOnycEmitterHex, 'withdraw')
     }
+    ctx.log.debug('scan iteration enumerated', { flows: out.length })
     return out
   }
 }
@@ -85,13 +98,26 @@ async function scanWormholescanVaa(
   item: WormholescanVaa,
   leg: VaaLeg,
 ): Promise<ScannedFlow | null> {
-  const resolved = resolveVaaForLeg(item.vaa, leg)
+  const resolved = resolveVaaForLeg(ctx, item.vaa, leg)
   if (!resolved) {
     return null
   }
   const flow = await ctx.client
     .fetchInflightFlow(resolved.nttInboxItem)
-    .catch(() => null)
+    .catch((err) => {
+      // Anchor's `fetch` throws "Account does not exist or has no data"
+      // when the Flow PDA isn't initialized — which is the routine
+      // "Pending, never claimed" signal. Anything else is an RPC failure.
+      if (isAccountMissingError(err)) {
+        return null
+      }
+      ctx.log.warn('fetchInflightFlow failed', {
+        leg,
+        nttInboxItem: resolved.nttInboxItem.toBase58(),
+        ...errorFields(err),
+      })
+      return null
+    })
   return {
     pubkey: resolved.nttInboxItem,
     status: flow ? describeStatus(flow.status) : 'Pending',
@@ -100,13 +126,21 @@ async function scanWormholescanVaa(
   }
 }
 
-function resolveVaaForLeg(vaaBytes: Uint8Array, leg: VaaLeg): ResolvedNttVaa | null {
+function isAccountMissingError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err)
+  return msg.includes('Account does not exist or has no data')
+}
+
+function resolveVaaForLeg(ctx: AdvanceContext, vaaBytes: Uint8Array, leg: VaaLeg): ResolvedNttVaa | null {
   try {
     return resolveNttVaa({
       vaaBytes,
       nttProgramId: VAA_LEG[leg].nttProgramId,
     })
-  } catch {
+  } catch (err) {
+    // Non-NTT VAAs from the same emitter (or malformed bytes) are skipped
+    // silently in production-info mode; debug surfaces them for triage.
+    ctx.log.debug('resolveNttVaa skipped', { leg, ...errorFields(err) })
     return null
   }
 }

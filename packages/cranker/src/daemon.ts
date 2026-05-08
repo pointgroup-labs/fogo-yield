@@ -91,9 +91,16 @@ export async function runDaemon(opts: DaemonOptions): Promise<void> {
         consecutiveErrors = 0
         currentDelay = opts.intervalMs
       } catch (err) {
-        scanError = true
-        opts.metrics.scanIterations.inc({ result: 'error' })
-        writeLogLine('error', 'scan failed', errorFields(err))
+        // An abort during scan races to the inner Promise.race; the loser
+        // throws "scan aborted mid-flight". That's the planned shutdown
+        // path, not a failure — log at info, don't trip backoff.
+        if (opts.abortSignal.aborted) {
+          writeLogLine('info', 'scan interrupted by shutdown', errorFields(err))
+        } else {
+          scanError = true
+          opts.metrics.scanIterations.inc({ result: 'error' })
+          writeLogLine('error', 'scan failed', errorFields(err))
+        }
       } finally {
         opts.abortSignal.removeEventListener('abort', linkAbort)
         opts.metrics.scanDuration.observe((Date.now() - t0) / 1000)

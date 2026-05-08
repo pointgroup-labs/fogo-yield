@@ -1,6 +1,7 @@
 import type { AnchorProvider } from '@anchor-lang/core'
 import type { RelayerClient } from '@fogo-onre/sdk'
 import type { Connection, Keypair, PublicKey, TransactionInstruction } from '@solana/web3.js'
+import type { Logger } from '../log'
 import type { Metrics } from '../metrics'
 
 export type AdvanceContext = {
@@ -13,6 +14,8 @@ export type AdvanceContext = {
   wormholescanUrl: string
   wormholescanTimeoutMs: number
   metrics: Metrics
+  /** Structured logger; threaded through scan + enumerate + (future) advance fns. */
+  log: Logger
   abortSignal: AbortSignal
 }
 

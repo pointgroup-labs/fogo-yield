@@ -1,6 +1,7 @@
 import type { PublicKey } from '@solana/web3.js'
 import type { AdvanceContext, AdvanceResult } from './advance/types'
 import * as advance from './advance'
+import { errorFields } from './log'
 import { withTimeout } from './rpc'
 
 export type AdvanceFns = {
@@ -63,17 +64,60 @@ export async function scanAndAdvance(
     'enumerateFlows',
   )
 
+  ctx.log.debug('flows enumerated', { total: flows.length })
+
   const tasks: Array<() => Promise<AdvanceResult>> = []
   for (const flow of flows) {
     const dispatch = pickAdvanceForStatus(flow.status, fns)
     if (!dispatch) {
+      ctx.log.debug('flow skipped', {
+        flow: flow.pubkey.toBase58(),
+        status: flow.status || 'unknown',
+      })
       opts.skipCounter?.inc({ reason: flow.status || 'unknown' })
       continue
     }
-    tasks.push(() => dispatch(ctx, { fogoTx: flow.fogoTx, vaaHex: flow.vaaHex }))
+    const flowKey = flow.pubkey.toBase58()
+    tasks.push(async () => {
+      ctx.log.debug('dispatching advance', { flow: flowKey, status: flow.status })
+      const result = await dispatch(ctx, { fogoTx: flow.fogoTx, vaaHex: flow.vaaHex })
+      logAdvanceResult(ctx, flowKey, flow.status, result)
+      return result
+    })
   }
 
-  await runBounded(tasks, opts.maxConcurrentAdvances, ctx.abortSignal)
+  await runBounded(tasks, opts.maxConcurrentAdvances, ctx.abortSignal, ctx.log)
+}
+
+function logAdvanceResult(
+  ctx: AdvanceContext,
+  flow: string,
+  fromStatus: string,
+  result: AdvanceResult,
+): void {
+  switch (result.kind) {
+    case 'advanced':
+      ctx.log.info('flow advanced', {
+        flow,
+        from: result.fromStatus,
+        to: result.toStatus,
+        signatures: result.signatures,
+      })
+      return
+    case 'noop':
+      // Routine: another cranker advanced first, or pre-flight rejected.
+      ctx.log.debug('flow noop', { flow, status: fromStatus, reason: result.reason })
+      return
+    case 'error':
+      // Per-flow failures are warnings, not errors — the next scan retries.
+      // The scan-loop-level `error` log is reserved for whole-iteration failures.
+      ctx.log.warn('flow advance failed', {
+        flow,
+        status: fromStatus,
+        partialSignatures: result.partialSignatures,
+        ...errorFields(result.error),
+      })
+  }
 }
 
 type DispatchFn = (
@@ -101,6 +145,7 @@ async function runBounded<T>(
   tasks: Array<() => Promise<T>>,
   concurrency: number,
   signal: AbortSignal,
+  log?: { warn: (msg: string, fields?: Record<string, unknown>) => void },
 ): Promise<void> {
   let i = 0
   let aborted = false
@@ -111,8 +156,11 @@ async function runBounded<T>(
         return
       }
       const idx = i++
-      // Advance fns return AdvanceResult (never throw); .catch is defensive.
-      await tasks[idx]().catch(() => undefined)
+      // Advance fns are contractually no-throw (they map errors into AdvanceResult.error).
+      // A throw here is a bug; surface it instead of swallowing.
+      await tasks[idx]().catch((err) => {
+        log?.warn('runBounded task threw (advance contract violation)', errorFields(err))
+      })
     }
   })
   await Promise.all(workers)

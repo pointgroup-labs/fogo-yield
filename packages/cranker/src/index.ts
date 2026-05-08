@@ -140,6 +140,7 @@ async function main(): Promise<void> {
     metricsPort: metrics.actualPort(),
     fogoUsdcEmitterConfigured: Boolean(cfg.fogoUsdcEmitterHex),
     fogoOnycEmitterConfigured: Boolean(cfg.fogoOnycEmitterHex),
+    logLevel: cfg.logLevel,
   })
 
   const shutdown = new AbortController()
@@ -174,6 +175,7 @@ async function main(): Promise<void> {
     wormholescanUrl: cfg.wormholescanUrl,
     wormholescanTimeoutMs: cfg.wormholescanTimeoutMs,
     metrics,
+    log,
   } satisfies Omit<AdvanceContext, 'abortSignal'>
 
   try {

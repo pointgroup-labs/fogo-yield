@@ -2,6 +2,7 @@ import type { AdvanceContext } from '../src/advance/types'
 import type { WormholescanVaa } from '../src/wormholescan'
 import { describe, expect, it, vi } from 'vitest'
 import { makeEnumerator } from '../src/enumerate'
+import { silentLogger } from '../src/log'
 
 function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), { status: 200 })
@@ -23,6 +24,7 @@ function makeCtx(abortSignal = new AbortController().signal): AdvanceContext {
     wormholescanUrl: '',
     wormholescanTimeoutMs: 0,
     metrics: undefined as never,
+    log: silentLogger(),
   }
 }
 
