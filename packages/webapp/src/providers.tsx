@@ -8,7 +8,7 @@ import './polyfills'
 import type { ReactNode } from 'react'
 
 import { FogoSessionProvider } from '@fogo/sessions-sdk-react'
-import { APP_DOMAIN, FOGO_ONYC_MINT, FOGO_NETWORK, USDC_S_MINT } from '@/constants'
+import { APP_DOMAIN, FOGO_NETWORK, FOGO_ONYC_MINT, USDC_S_MINT } from '@/constants'
 import { useSettings } from '@/store/settings'
 
 /* eslint-enable perfectionist/sort-imports */

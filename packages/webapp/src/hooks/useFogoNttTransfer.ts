@@ -21,10 +21,10 @@ import { getAssociatedTokenAddressSync } from '@solana/spl-token'
 import { ComputeBudgetProgram, Keypair, PublicKey } from '@solana/web3.js'
 import { useState } from 'react'
 import {
-  FOGO_ONYC_MINT,
-  FOGO_ONYC_NTT_MANAGER_ID,
   FOGO_BRIDGE_PAYMASTER_DOMAIN,
   FOGO_BRIDGE_VARIATION,
+  FOGO_ONYC_MINT,
+  FOGO_ONYC_NTT_MANAGER_ID,
   USDC_S_MINT,
 } from '@/constants'
 import { useSettings } from '@/store/settings'

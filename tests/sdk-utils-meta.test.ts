@@ -18,7 +18,7 @@ import {
 import { Keypair } from '@solana/web3.js'
 import { describe, expect, it } from 'vitest'
 
-describe('NTT_TRANSFER_LOCK_ACCOUNT_COUNT', () => {
+describe('nTT_TRANSFER_LOCK_ACCOUNT_COUNT', () => {
   it('matches the actual builder output length', () => {
     const accts = buildNttTransferLockAccountList({
       nttProgramId: NTT_USDC_PROGRAM_ID,
@@ -41,7 +41,7 @@ describe('serializeTransferArgs (via public encoders)', () => {
   // must match exactly. amount=0x0102030405060708, chain=0xAABB,
   // recipient=0x00..1F, shouldQueue=true.
   const recipient = new Uint8Array(32)
-  for (let i = 0; i < 32; i++) recipient[i] = i
+  for (let i = 0; i < 32; i++) { recipient[i] = i }
   const args = {
     amount: 0x0102030405060708n,
     recipientChain: 0xAABB,

@@ -88,7 +88,7 @@ function dedupe(keys) {
   const out = []
   for (const k of keys) {
     const s = k.toBase58()
-    if (seen.has(s)) continue
+    if (seen.has(s)) { continue }
     seen.add(s)
     out.push(k)
   }

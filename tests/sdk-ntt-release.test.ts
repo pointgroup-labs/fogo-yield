@@ -14,6 +14,7 @@
  * Reordering or losing system/clock/rent silently breaks the CPI.
  */
 
+import { AnchorProvider, Wallet } from '@anchor-lang/core'
 import {
   buildNttReleaseWormholeOutboundAccountList,
   findNttConfigPda,
@@ -23,14 +24,11 @@ import {
   NTT_ONYC_PROGRAM_ID,
   RelayerClient,
 } from '@fogo-onre/sdk'
-import { AnchorProvider, Wallet } from '@anchor-lang/core'
-import { Connection } from '@solana/web3.js'
-import {
+import { Connection,
   Keypair,
   SystemProgram,
   SYSVAR_CLOCK_PUBKEY,
-  SYSVAR_RENT_PUBKEY,
-} from '@solana/web3.js'
+  SYSVAR_RENT_PUBKEY } from '@solana/web3.js'
 import { describe, expect, it } from 'vitest'
 
 describe('buildNttReleaseWormholeOutboundAccountList', () => {
@@ -133,7 +131,7 @@ describe('buildNttReleaseWormholeOutboundAccountList', () => {
   })
 })
 
-describe('RelayerClient.lockOnyc encodes transferLockAccountCount=14', () => {
+describe('relayerClient.lockOnyc encodes transferLockAccountCount=14', () => {
   // Standalone provider; no on-chain calls — we only assert ix encoding.
   const connection = new Connection('http://127.0.0.1:8899', 'confirmed')
   const wallet = new Wallet(Keypair.generate())
