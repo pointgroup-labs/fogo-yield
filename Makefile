@@ -94,6 +94,29 @@ webapp-dev: ## dev: Next.js webapp in dev mode
 webapp-build: ## dev: Production build of the webapp
 	pnpm webapp build
 
+# Path to the env file the cranker reads. Override on CLI:
+#   make cranker CRANKER_ENV=/path/to/your.env
+CRANKER_ENV ?= deploy/cranker/cranker.env
+
+cranker-build: ## cranker: Bundle the cranker daemon (tsup → dist/bin.js)
+	pnpm --filter @fogo-onre/cranker build
+
+# Source the env file with `set -a` so every var becomes an export, then
+# exec node so signals (SIGTERM/SIGINT) reach the daemon directly. Without
+# `exec` they'd hit make first and produce a confusing double-shutdown.
+# `_env` normalization: bash's `.` (source) treats bare names as
+# PATH-relative, so prepend `./` for relative paths but leave absolute
+# paths untouched.
+cranker: cranker-build ## cranker: Run the daemon locally (override env: CRANKER_ENV=path)
+	@test -f $(CRANKER_ENV) || { \
+	  echo "missing env file: $(CRANKER_ENV)" >&2; \
+	  echo "  cp deploy/cranker/cranker.env.example $(CRANKER_ENV) && edit" >&2; \
+	  exit 1; \
+	}
+	@_env="$(CRANKER_ENV)"; case "$$_env" in /*) ;; *) _env="./$$_env" ;; esac; \
+	  set -a; . "$$_env"; set +a; \
+	  exec node packages/cranker/dist/bin.js
+
 deploy: ## deploy: anchor deploy to $CLUSTER (default: localnet)
 	anchor deploy --provider.cluster $(CLUSTER)
 
