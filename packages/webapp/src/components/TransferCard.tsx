@@ -205,7 +205,7 @@ export default function TransferCard({ kind }: TransferCardProps) {
                     symbol={ui.srcSymbol}
                     placeholder="0.0"
                     disabled={submitting || !sessionEstablished}
-                    invalid={Boolean(fieldState.error)}
+                    invalid={Boolean(field.value) && Boolean(fieldState.error)}
                     field={field}
                     balanceChip={(
                       <BalanceChip
