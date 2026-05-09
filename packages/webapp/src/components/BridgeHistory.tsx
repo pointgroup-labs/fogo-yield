@@ -11,7 +11,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { FOGO_ONYC_DECIMALS, USDC_DECIMALS } from '@/constants'
 import { useBridgeHistory } from '@/hooks/useBridgeHistory'
-import { fogoTxUrl } from '@/utils/explorers'
+import { fogoTxUrl, solanaTxUrl } from '@/utils/explorers'
 
 export default function BridgeHistory() {
   // Same hydration pattern as PendingTxList: defer the restoring branch
@@ -122,7 +122,7 @@ function BridgeRow({ row }: { row: TimelineRow }) {
               source ↗
             </a>
             {row.destinationSignature !== null && (
-              <a href={fogoTxUrl(row.destinationSignature)} target="_blank" rel="noreferrer noopener" className="hover:underline">
+              <a href={solanaTxUrl(row.destinationSignature)} target="_blank" rel="noreferrer noopener" className="hover:underline">
                 dest ↗
               </a>
             )}
