@@ -1,8 +1,8 @@
-export type FlowStatusValue =
-  | 'pending'
-  | 'in-progress'
-  | 'terminal-success'
-  | 'terminal-failure'
+export type FlowStatusValue
+  = | 'pending'
+    | 'in-progress'
+    | 'terminal-success'
+    | 'terminal-failure'
 
 export type FlowKind = 'deposit' | 'withdraw'
 
@@ -20,8 +20,8 @@ export interface PersistedFlowStatus {
   lastPolledAt: number
 }
 
-export const TERMINAL_STATUSES: ReadonlySet<FlowStatusValue> =
-  new Set(['terminal-success', 'terminal-failure'])
+export const TERMINAL_STATUSES: ReadonlySet<FlowStatusValue>
+  = new Set(['terminal-success', 'terminal-failure'])
 
 export function isTerminal(s: FlowStatusValue): boolean {
   return TERMINAL_STATUSES.has(s)

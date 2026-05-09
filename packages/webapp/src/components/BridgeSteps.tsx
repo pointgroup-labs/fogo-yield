@@ -1,5 +1,5 @@
-import { Check, X } from 'lucide-react'
 import type { FlowKind, FlowStatusValue } from '@/lib/flow-status/types'
+import { Check, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 const DEPOSIT_STEPS = ['Burn USDC.s', 'Claim', 'Swap', 'Mint ONyc'] as const
@@ -60,9 +60,15 @@ export default function BridgeSteps({ kind, status, currentIndex }: Props) {
 }
 
 function deriveIndex(status: FlowStatusValue, total: number): number {
-  if (status === 'pending') return 0
-  if (status === 'in-progress') return Math.floor(total / 2)
-  if (status === 'terminal-success') return total - 1
+  if (status === 'pending') {
+    return 0
+  }
+  if (status === 'in-progress') {
+    return Math.floor(total / 2)
+  }
+  if (status === 'terminal-success') {
+    return total - 1
+  }
   // terminal-failure: freeze at in-progress position so the failed step is highlighted.
   return Math.floor(total / 2)
 }

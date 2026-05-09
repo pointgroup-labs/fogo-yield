@@ -12,7 +12,7 @@ export function makeTransferSchema({ maxAmountStr, decimals }: TransferSchemaCon
     amount: z
       .string()
       .min(1, 'Required')
-      .refine(v => /^\d+(\.\d+)?$/.test(v), 'Invalid number')
+      .refine(v => /^\d+(?:\.\d+)?$/.test(v), 'Invalid number')
       .refine((v) => {
         const dotIdx = v.indexOf('.')
         return dotIdx === -1 || v.length - dotIdx - 1 <= decimals

@@ -105,7 +105,7 @@ export function useFlowStatus(input: FlowWatchInput): FlowStatus | null {
       }
       return visible ? POLL_MS : false
     },
-    staleTime: (q) => (isTerminal(q.state.data?.phase) ? Infinity : POLL_MS),
+    staleTime: q => (isTerminal(q.state.data?.phase) ? Infinity : POLL_MS),
     placeholderData: presetBaseline !== null && signature !== null && startedAt !== null
       ? { phase: 'submitted', signature, startedAt, baselineBalance: presetBaseline }
       : undefined,

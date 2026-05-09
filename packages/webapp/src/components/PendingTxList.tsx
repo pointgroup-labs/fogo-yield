@@ -1,5 +1,7 @@
 'use client'
 
+import type { FlowStatus } from '@/hooks/useFlowStatus'
+import type { FlowStatusValue, PersistedFlowStatus } from '@/lib/flow-status/types'
 import { PublicKey } from '@solana/web3.js'
 import { useIsRestoring, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo } from 'react'
@@ -9,10 +11,8 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
-import type { FlowStatus } from '@/hooks/useFlowStatus'
 import { useFlowStatus } from '@/hooks/useFlowStatus'
 import { patchFlow } from '@/lib/flow-status/store'
-import type { FlowStatusValue, PersistedFlowStatus } from '@/lib/flow-status/types'
 import { isTerminal } from '@/lib/flow-status/types'
 import { fogoTxUrl } from '@/utils/explorers'
 

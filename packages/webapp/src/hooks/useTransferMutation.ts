@@ -24,8 +24,8 @@ import {
   FOGO_ONYC_MINT,
   FOGO_ONYC_NTT_MANAGER_ID,
 } from '@/constants'
-import { addFlow, pendingWithdrawExists } from '@/lib/flow-status/store'
 import { findFeeConfigPda, readBridgeTransferFee } from '@/lib/bridge/feeConfig'
+import { addFlow, pendingWithdrawExists } from '@/lib/flow-status/store'
 import { useSettings } from '@/store/settings'
 import { getFogoConnection } from '@/utils/connections'
 
@@ -42,7 +42,7 @@ import { getFogoConnection } from '@/utils/connections'
  *   1. Caller-owned: parent component disables submit while
  *      `mutation.isPending` is true (T15 wires this).
  *   2. Cache guard (this layer): `pendingWithdrawExists(qc)` runs
- *      *inside* `mutationFn` so retries re-evaluate freshly.
+ *      inside* `mutationFn` so retries re-evaluate freshly.
  *   3. On-chain: relayer's `RedemptionTracker` PDA. Errors from this
  *      layer are *not* swallowed — they bubble up through `onError`.
  */

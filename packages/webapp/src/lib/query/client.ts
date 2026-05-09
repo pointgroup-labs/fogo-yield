@@ -1,7 +1,7 @@
 import { QueryClient } from '@tanstack/react-query'
 
 declare global {
-  // eslint-disable-next-line vars-on-top, no-var
+  // eslint-disable-next-line vars-on-top
   var __fogoQueryClient: QueryClient | undefined
 }
 

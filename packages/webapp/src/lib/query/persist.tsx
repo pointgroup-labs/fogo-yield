@@ -1,10 +1,10 @@
 'use client'
 
 import type { ReactNode } from 'react'
-import { useState } from 'react'
+import { createSyncStoragePersister } from '@tanstack/query-sync-storage-persister'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client'
-import { createSyncStoragePersister } from '@tanstack/query-sync-storage-persister'
+import { useState } from 'react'
 import { getQueryClient } from './client'
 
 const PERSIST_KEY = 'fogo-onre.queries.v1'
@@ -39,7 +39,7 @@ export default function QueryProviders({ children }: { children: ReactNode }) {
       persistOptions={{
         persister,
         dehydrateOptions: {
-          shouldDehydrateQuery: (query) => shouldPersistKey(query.queryKey),
+          shouldDehydrateQuery: query => shouldPersistKey(query.queryKey),
         },
       }}
     >
