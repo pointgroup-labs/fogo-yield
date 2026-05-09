@@ -190,4 +190,3 @@
 .dark [data-slot='tabs-trigger']:not([data-state='active']) {
   color: var(--muted-foreground);
 }
-
