@@ -108,29 +108,26 @@ function BridgeRow({ row, nowMs }: { row: TimelineRow, nowMs: number }) {
   const DirectionIcon = isDeposit ? ArrowUpRight : ArrowDownLeft
 
   return (
-    <Card className="transition-colors hover:border-foreground/20">
+    <Card>
       <CardContent className="flex items-center gap-3 p-3">
-        <div
-          aria-hidden
-          className={`flex size-9 shrink-0 items-center justify-center rounded-full ${
-            isDeposit ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' : 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
-          }`}
-        >
+        <span aria-hidden className="flex size-8 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
           <DirectionIcon className="size-4" />
-        </div>
+        </span>
         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
           <div className="flex items-center justify-between gap-2">
-            <span className="truncate text-sm font-medium">
+            <span className="truncate text-sm">
               <span className="text-muted-foreground">{label}</span>
               {' · '}
-              {row.amountIsApproximate
-                ? (
-                    <span title="Approximate — reconstructed from on-chain data, may differ slightly from your typed amount">
-                      ~
-                      {amount}
-                    </span>
-                  )
-                : amount}
+              <span className="font-medium tabular-nums">
+                {row.amountIsApproximate
+                  ? (
+                      <span title="Approximate — reconstructed from on-chain data, may differ slightly from your typed amount">
+                        ~
+                        {amount}
+                      </span>
+                    )
+                  : amount}
+              </span>
               {' '}
               <span className="text-muted-foreground">{ticker}</span>
             </span>
