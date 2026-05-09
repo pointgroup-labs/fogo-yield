@@ -204,11 +204,17 @@ function useNowTicker(intervalMs: number): number {
  * Compact relative-time label. Falls back to "MMM D" past a week to
  * avoid "37 days ago" looking sloppy. Caller threads `nowMs` so this
  * stays pure.
+ *
+ * Threshold note: "just now" covers everything under a minute. The
+ * earlier 45s/60s split produced a "0m ago" gap (45-59s ago →
+ * `Math.floor(sec/60) === 0`); aligning the cutoff with the minute
+ * boundary makes the label step `just now → 1m ago → 2m ago …`
+ * monotonically.
  */
 function formatRelativeTime(thenMs: number, nowMs: number): string {
   const diff = Math.max(0, nowMs - thenMs)
   const sec = Math.floor(diff / 1000)
-  if (sec < 45) {
+  if (sec < 60) {
     return 'just now'
   }
   const min = Math.floor(sec / 60)
