@@ -194,12 +194,12 @@ export default function TransferCard({ kind }: TransferCardProps) {
       </CardHeader>
       <CardContent>
         <Form {...form}>
-          <form onSubmit={form.handleSubmit(onSubmit)} className="flex flex-col gap-3">
+          <form onSubmit={form.handleSubmit(onSubmit)} className="flex flex-col gap-2.5">
             <FormField
               control={form.control}
               name="amount"
               render={({ field, fieldState }) => (
-                <FormItem className="space-y-1.5">
+                <FormItem className="space-y-0">
                   <AmountPanel
                     label="You pay"
                     symbol={ui.srcSymbol}
@@ -216,9 +216,7 @@ export default function TransferCard({ kind }: TransferCardProps) {
                       />
                     )}
                   />
-                  {fieldState.error?.message && (
-                    <FieldError message={fieldState.error.message} />
-                  )}
+                  <ErrorSlot message={fieldState.error?.message} />
                 </FormItem>
               )}
             />
@@ -235,7 +233,7 @@ export default function TransferCard({ kind }: TransferCardProps) {
 
             {kind === 'deposit' && <BridgeFeeRow fee={bridgeFee} />}
 
-            <Button type="submit" size="lg" disabled={submitDisabled}>
+            <Button type="submit" size="lg" className="mt-1 h-12 text-base" disabled={submitDisabled}>
               {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               {buttonLabel}
             </Button>
@@ -248,14 +246,12 @@ export default function TransferCard({ kind }: TransferCardProps) {
 
 function DownConnector() {
   return (
-    <div className="pointer-events-none relative h-0">
-      <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
-        <div className="flex h-7 w-7 items-center justify-center rounded-lg border bg-background text-muted-foreground">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <line x1="12" y1="5" x2="12" y2="19" />
-            <polyline points="19 12 12 19 5 12" />
-          </svg>
-        </div>
+    <div className="pointer-events-none relative -my-2.5 flex h-0 items-center justify-center">
+      <div className="flex h-9 w-9 items-center justify-center rounded-full border border-border bg-background text-muted-foreground shadow-sm">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M12 5v14" />
+          <path d="m6 13 6 6 6-6" />
+        </svg>
       </div>
     </div>
   )
@@ -310,7 +306,7 @@ function Receive({ kind, parsed, destSymbol, destDecimals, protocol }: ReceivePr
 
   return (
     <div className="flex flex-col gap-1.5">
-      <div className="rounded-xl border border-border bg-card/60 px-4 py-3">
+      <div className="rounded-xl border border-border bg-card/60 px-4 py-3.5">
         <div className="flex items-center justify-between text-xs text-muted-foreground">
           <span>You receive</span>
         </div>
@@ -357,7 +353,7 @@ interface AmountPanelProps {
 function AmountPanel({ label, symbol, placeholder, disabled, invalid, field, balanceChip }: AmountPanelProps) {
   return (
     <div
-      className={`rounded-xl border bg-card/60 px-4 py-3 transition-colors ${
+      className={`rounded-xl border bg-card/60 px-4 py-3.5 transition-colors ${
         invalid
           ? 'border-destructive/60 focus-within:border-destructive'
           : 'border-border focus-within:border-foreground/40'
@@ -384,16 +380,23 @@ function AmountPanel({ label, symbol, placeholder, disabled, invalid, field, bal
   )
 }
 
-function FieldError({ message }: { message: string }) {
+function ErrorSlot({ message }: { message: string | undefined }) {
   return (
-    <p role="alert" className="flex items-center gap-1.5 px-1 text-xs font-medium text-destructive">
-      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.25" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-        <circle cx="12" cy="12" r="10" />
-        <line x1="12" y1="8" x2="12" y2="12" />
-        <line x1="12" y1="16" x2="12.01" y2="16" />
-      </svg>
-      <span>{message}</span>
-    </p>
+    <div className="h-5 px-1 pt-1" aria-live="polite">
+      <p
+        role="alert"
+        className={`flex items-center gap-1.5 text-xs font-medium text-destructive transition-opacity duration-150 ${
+          message ? 'opacity-100' : 'opacity-0'
+        }`}
+      >
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.25" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="10" />
+          <line x1="12" y1="8" x2="12" y2="12" />
+          <line x1="12" y1="16" x2="12.01" y2="16" />
+        </svg>
+        <span>{message ?? ' '}</span>
+      </p>
+    </div>
   )
 }
 
