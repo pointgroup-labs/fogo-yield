@@ -12,7 +12,7 @@ import SymbolPill from '@/components/SymbolPill'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Form, FormField, FormItem, FormMessage } from '@/components/ui/form'
+import { Form, FormField, FormItem } from '@/components/ui/form'
 import {
   FOGO_ONYC_DECIMALS,
   FOGO_ONYC_DEPLOYMENT_READY,
@@ -198,13 +198,14 @@ export default function TransferCard({ kind }: TransferCardProps) {
             <FormField
               control={form.control}
               name="amount"
-              render={({ field }) => (
+              render={({ field, fieldState }) => (
                 <FormItem className="space-y-1.5">
                   <AmountPanel
                     label="You pay"
                     symbol={ui.srcSymbol}
                     placeholder="0.0"
                     disabled={submitting || !sessionEstablished}
+                    invalid={Boolean(fieldState.error)}
                     field={field}
                     balanceChip={(
                       <BalanceChip
@@ -215,7 +216,9 @@ export default function TransferCard({ kind }: TransferCardProps) {
                       />
                     )}
                   />
-                  <FormMessage />
+                  {fieldState.error?.message && (
+                    <FieldError message={fieldState.error.message} />
+                  )}
                 </FormItem>
               )}
             />
@@ -340,6 +343,7 @@ interface AmountPanelProps {
   symbol: string
   placeholder: string
   disabled: boolean
+  invalid?: boolean
   field: {
     value: string
     onChange: (...args: unknown[]) => void
@@ -350,9 +354,15 @@ interface AmountPanelProps {
   balanceChip: ReactNode
 }
 
-function AmountPanel({ label, symbol, placeholder, disabled, field, balanceChip }: AmountPanelProps) {
+function AmountPanel({ label, symbol, placeholder, disabled, invalid, field, balanceChip }: AmountPanelProps) {
   return (
-    <div className="rounded-xl border border-border bg-card/60 px-4 py-3 transition-colors focus-within:border-foreground/40">
+    <div
+      className={`rounded-xl border bg-card/60 px-4 py-3 transition-colors ${
+        invalid
+          ? 'border-destructive/60 focus-within:border-destructive'
+          : 'border-border focus-within:border-foreground/40'
+      }`}
+    >
       <div className="flex items-center justify-between text-xs text-muted-foreground">
         <span>{label}</span>
         {balanceChip}
@@ -364,12 +374,26 @@ function AmountPanel({ label, symbol, placeholder, disabled, field, balanceChip 
           spellCheck={false}
           placeholder={placeholder}
           disabled={disabled}
+          aria-invalid={invalid || undefined}
           className="min-w-0 flex-1 bg-transparent text-2xl font-medium tracking-tight outline-none placeholder:text-muted-foreground/40 disabled:opacity-50"
           {...field}
         />
         <SymbolPill symbol={symbol} />
       </div>
     </div>
+  )
+}
+
+function FieldError({ message }: { message: string }) {
+  return (
+    <p role="alert" className="flex items-center gap-1.5 px-1 text-xs font-medium text-destructive">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.25" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="10" />
+        <line x1="12" y1="8" x2="12" y2="12" />
+        <line x1="12" y1="16" x2="12.01" y2="16" />
+      </svg>
+      <span>{message}</span>
+    </p>
   )
 }
 
