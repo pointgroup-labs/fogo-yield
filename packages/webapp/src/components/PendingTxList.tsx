@@ -4,7 +4,7 @@ import type { FlowStatus } from '@/hooks/useFlowStatus'
 import type { FlowStatusValue, PersistedFlowStatus } from '@/lib/flow-status/types'
 import { PublicKey } from '@solana/web3.js'
 import { useIsRestoring, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import BridgeSteps from '@/components/BridgeSteps'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -17,6 +17,17 @@ import { isTerminal } from '@/lib/flow-status/types'
 import { fogoTxUrl } from '@/utils/explorers'
 
 export default function PendingTxList() {
+  // SSR has no localStorage, so the server always emits the empty-state
+  // Alert below. On the client, `PersistQueryClientProvider` flips
+  // `useIsRestoring()` to true synchronously during the very first
+  // render — which would emit the Skeleton branch and tear the
+  // hydration. Defer the restoring branch to a post-mount render so
+  // the first client paint matches the server, then swap to the
+  // skeleton (or the resolved list) on the next commit.
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => {
+    setMounted(true)
+  }, [])
   const restoring = useIsRestoring()
   const idsQuery = useQuery<string[]>({
     queryKey: ['pending-flow-ids'],
@@ -25,7 +36,7 @@ export default function PendingTxList() {
   })
   const ids = idsQuery.data ?? []
 
-  if (restoring) {
+  if (mounted && restoring) {
     return (
       <div className="flex flex-col gap-2">
         <Skeleton className="h-16" />
