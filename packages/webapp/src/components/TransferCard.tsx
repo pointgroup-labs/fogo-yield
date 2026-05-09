@@ -239,7 +239,7 @@ export default function TransferCard({ kind }: TransferCardProps) {
               </div>
             )}
 
-            <Button type="submit" size="lg" className="-mt-2 h-12 text-base" disabled={submitDisabled}>
+            <Button type="submit" size="lg" className="h-12 text-base" disabled={submitDisabled}>
               {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               {buttonLabel}
             </Button>
