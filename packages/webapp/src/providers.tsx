@@ -34,7 +34,7 @@ export default function Providers({ children }: { children: ReactNode }) {
           enableUnlimited
         >
           {children}
-          <Toaster richColors closeButton position="bottom-center" />
+          <Toaster richColors position="bottom-center" />
         </FogoSessionProvider>
       </QueryProviders>
     </ThemeProvider>
