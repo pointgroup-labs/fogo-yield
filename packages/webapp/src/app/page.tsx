@@ -1,8 +1,9 @@
 'use client'
 
+import BridgeHistory from '@/components/BridgeHistory'
 import ErrorBoundary from '@/components/ErrorBoundary'
 import Header from '@/components/Header'
-import PendingTxList from '@/components/PendingTxList'
+import LiveJournalTracker from '@/components/LiveJournalTracker'
 import ProtocolStats from '@/components/ProtocolStats'
 import TransferCard from '@/components/TransferCard'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -32,7 +33,8 @@ export default function Page() {
               <ErrorBoundary label="withdraw"><TransferCard kind="withdraw" /></ErrorBoundary>
             </TabsContent>
           </Tabs>
-          <ErrorBoundary label="recent transactions"><PendingTxList /></ErrorBoundary>
+          <LiveJournalTracker />
+          <ErrorBoundary label="bridge history"><BridgeHistory /></ErrorBoundary>
         </div>
       </main>
       <footer className="border-t px-4 py-4 text-xs text-muted-foreground sm:px-6">
