@@ -37,6 +37,14 @@ export interface TimelineRow {
   signature: string
   kind: FlowKind
   amountRaw: bigint
+  /**
+   * True when `amountRaw` is the on-chain burn delta (gross =
+   * principal + bridge fee), not the user's typed principal. Cross-
+   * session/device deposits hit this path because no journal entry
+   * exists; the UI surfaces it with an "incl. fee" annotation so the
+   * user isn't misled.
+   */
+  amountIsGross: boolean
   mintB58: string
   blockTime: number
   status: OperationStatus['kind']

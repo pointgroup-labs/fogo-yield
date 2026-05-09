@@ -95,6 +95,12 @@ function BridgeRow({ row }: { row: TimelineRow }) {
   const label = row.kind === 'deposit' ? 'Deposit' : 'Withdraw'
   const amount = formatAmount(row.amountRaw, decimals)
   const time = new Date(row.blockTime * 1000).toLocaleString()
+  // Deposit-only annotation: `amountIsGross` means we have no journal
+  // entry for this signature, so `amountRaw` is the on-chain burn
+  // delta (principal + bridge fee). Withdraws don't deduct via
+  // `FeeConfig.bridge_transfer_fee`, so their burn delta IS the
+  // principal — no annotation needed.
+  const showFeeAnnotation = row.kind === 'deposit' && row.amountIsGross
 
   return (
     <Card>
@@ -107,6 +113,9 @@ function BridgeRow({ row }: { row: TimelineRow }) {
             {amount}
             {' '}
             {ticker}
+            {showFeeAnnotation && (
+              <span className="ml-1 text-xs font-normal text-muted-foreground">(incl. fee)</span>
+            )}
           </span>
           <StatusBadge row={row} />
         </div>

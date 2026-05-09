@@ -59,6 +59,7 @@ export function mergeRow(
     // on FOGO = withdrawing.
     kind: isDeposit ? 'deposit' : 'withdraw',
     amountRaw: principalFromJournal ?? burn.amountRaw,
+    amountIsGross: principalFromJournal === null,
     mintB58: burn.mint.toBase58(),
     blockTime: burn.blockTime,
     status: op?.kind ?? 'unknown',
