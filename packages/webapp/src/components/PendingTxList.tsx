@@ -29,10 +29,20 @@ export default function PendingTxList() {
     setMounted(true)
   }, [])
   const restoring = useIsRestoring()
+  // Pure cache subscription — the writer is `addFlow` via setQueryData.
+  // An active queryFn here would race: on first mount it would resolve
+  // with `[]` *after* a mutation already wrote the new id, clobbering it.
+  //
+  // `gcTime: Infinity` keeps the entry alive even if this component
+  // unmounts: the persister listens to cache events and would flush a
+  // smaller snapshot if a query were GC'd, permanently losing history.
   const idsQuery = useQuery<string[]>({
     queryKey: ['pending-flow-ids'],
-    queryFn: async () => [],
+    queryFn: () => [],
+    enabled: false,
     staleTime: Infinity,
+    gcTime: Infinity,
+    initialData: [],
   })
   const ids = idsQuery.data ?? []
 
@@ -78,11 +88,13 @@ function PendingRow({ flowId }: { flowId: string }) {
   const qc = useQueryClient()
   // Subscribe via useQuery so external addFlow/patchFlow writes to the same
   // cache key trigger a row re-render. The queryFn never runs (enabled: false).
+  // gcTime: Infinity for the same reason as the index above.
   const { data: persisted } = useQuery<PersistedFlowStatus | null>({
     queryKey: ['flow-status', flowId],
     queryFn: () => null,
     enabled: false,
     staleTime: Infinity,
+    gcTime: Infinity,
   })
 
   const flowInput = useMemo(() => {
