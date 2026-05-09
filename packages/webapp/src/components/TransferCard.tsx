@@ -216,7 +216,7 @@ export default function TransferCard({ kind }: TransferCardProps) {
                       />
                     )}
                   />
-                  <ErrorSlot message={fieldState.error?.message} />
+                  <ErrorSlot message={field.value ? fieldState.error?.message : undefined} />
                 </FormItem>
               )}
             />
