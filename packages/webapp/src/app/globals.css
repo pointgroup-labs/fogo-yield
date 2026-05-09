@@ -1,6 +1,6 @@
 @import 'tailwindcss';
-@import "tw-animate-css";
-@import "shadcn/tailwind.css";
+@import 'tw-animate-css';
+@import 'shadcn/tailwind.css';
 
 @custom-variant dark (&:is(.dark *));
 
@@ -177,16 +177,59 @@
    original.
    ============================================================ */
 
-.dark [data-slot="tabs-list"] {
+.dark [data-slot='tabs-list'] {
   background: var(--secondary);
 }
 
-.dark [data-slot="tabs-trigger"][data-state="active"] {
+.dark [data-slot='tabs-trigger'][data-state='active'] {
   background: oklch(0.961 0 0);
   color: oklch(0.09 0 0);
   box-shadow: none;
 }
 
-.dark [data-slot="tabs-trigger"]:not([data-state="active"]) {
+.dark [data-slot='tabs-trigger']:not([data-state='active']) {
   color: var(--muted-foreground);
+}
+
+/* ============================================================
+   Sonner toast — anchor the close button INSIDE the toast.
+   Sonner's default styling floats the close button outside the
+   top-left corner via `transform: translate(-35%, -35%)`, which
+   reads as a misaligned, broken-looking UI element rather than
+   intentional chrome. Reposition it to sit cleanly inside the
+   top-right corner as a subtle icon button using the toast's
+   own foreground/muted palette, with right-padding on the toast
+   so content doesn't collide with it.
+   ============================================================ */
+
+[data-sonner-toaster] [data-sonner-toast] {
+  padding-right: 2rem;
+}
+
+[data-sonner-toaster] [data-sonner-toast] [data-close-button] {
+  left: auto;
+  right: 0.5rem;
+  top: 0.5rem;
+  transform: none;
+  width: 1.25rem;
+  height: 1.25rem;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--muted-foreground);
+  border-radius: calc(var(--radius) - 4px);
+  transition:
+    color 120ms ease,
+    background-color 120ms ease,
+    border-color 120ms ease;
+}
+
+[data-sonner-toaster] [data-sonner-toast] [data-close-button]:hover {
+  color: var(--foreground);
+  background: var(--muted);
+  border-color: var(--border);
+}
+
+[data-sonner-toaster] [data-sonner-toast] [data-close-button]:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
 }
