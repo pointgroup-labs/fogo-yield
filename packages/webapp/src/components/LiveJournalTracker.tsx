@@ -9,6 +9,7 @@ import { toast } from 'sonner'
 import { useFlowStatus } from '@/hooks/useFlowStatus'
 import { patchFlow } from '@/lib/flow-status/store'
 import { isTerminal } from '@/lib/flow-status/types'
+import { fogoTxUrl } from '@/utils/explorers'
 
 /**
  * Headless. Renders nothing. Mounted once per page, drives every
@@ -89,10 +90,16 @@ function TrackerRow({ flowId }: { flowId: string }) {
     const liveStatus = statusFromPhase(flow.phase)
     if (isTerminal(liveStatus) && !persisted.notified) {
       patchFlow(qc, flowId, { status: liveStatus, notified: true })
+      const action = {
+        label: 'View',
+        onClick: () => {
+          window.open(fogoTxUrl(persisted.signature), '_blank', 'noopener,noreferrer')
+        },
+      }
       if (liveStatus === 'terminal-success') {
-        toast.success(persisted.kind === 'deposit' ? 'Deposit complete' : 'Withdraw complete', { id: flowId })
+        toast.success(persisted.kind === 'deposit' ? 'Deposit complete' : 'Withdraw complete', { id: flowId, action })
       } else {
-        toast.error('Transfer failed', { id: flowId })
+        toast.error('Transfer failed', { id: flowId, action })
       }
     }
   }, [flow?.phase, persisted, flowId, qc, flow])

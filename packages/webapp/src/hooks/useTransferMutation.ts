@@ -28,6 +28,7 @@ import { findFeeConfigPda, readBridgeTransferFee } from '@/lib/bridge/feeConfig'
 import { addFlow, pendingWithdrawExists } from '@/lib/flow-status/store'
 import { useSettings } from '@/store/settings'
 import { getFogoConnection } from '@/utils/connections'
+import { fogoTxUrl, shortSig } from '@/utils/explorers'
 
 /**
  * Central submit hook wrapping the full deposit/withdraw flow under a
@@ -157,7 +158,16 @@ export function useTransferMutation(options: UseTransferMutationOptions = {}) {
     onSuccess: (status) => {
       toast.success(
         status.kind === 'deposit' ? 'Deposit submitted' : 'Withdraw submitted',
-        { id: status.flowId, description: `Tx ${status.signature.slice(0, 8)}…` },
+        {
+          id: status.flowId,
+          description: `Tx ${shortSig(status.signature)}`,
+          action: {
+            label: 'View',
+            onClick: () => {
+              window.open(fogoTxUrl(status.signature), '_blank', 'noopener,noreferrer')
+            },
+          },
+        },
       )
     },
     onError: (err) => {
