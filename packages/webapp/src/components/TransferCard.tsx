@@ -198,14 +198,13 @@ export default function TransferCard({ kind }: TransferCardProps) {
             <FormField
               control={form.control}
               name="amount"
-              render={({ field, fieldState }) => (
-                <FormItem className="relative space-y-0">
+              render={({ field }) => (
+                <FormItem className="space-y-0">
                   <AmountPanel
                     label="You pay"
                     symbol={ui.srcSymbol}
                     placeholder="0.0"
                     disabled={submitting || !sessionEstablished}
-                    invalid={Boolean(field.value) && Boolean(fieldState.error)}
                     field={field}
                     balanceChip={(
                       <BalanceChip
@@ -217,7 +216,6 @@ export default function TransferCard({ kind }: TransferCardProps) {
                       />
                     )}
                   />
-                  <ErrorSlot message={field.value ? fieldState.error?.message : undefined} />
                 </FormItem>
               )}
             />
@@ -353,7 +351,6 @@ interface AmountPanelProps {
   symbol: string
   placeholder: string
   disabled: boolean
-  invalid?: boolean
   field: {
     value: string
     onChange: (...args: unknown[]) => void
@@ -364,18 +361,12 @@ interface AmountPanelProps {
   balanceChip: ReactNode
 }
 
-function AmountPanel({ label, symbol, placeholder, disabled, invalid, field, balanceChip }: AmountPanelProps) {
+function AmountPanel({ label, symbol, placeholder, disabled, field, balanceChip }: AmountPanelProps) {
   return (
-    <div
-      className={`rounded-xl border bg-card/60 px-4 py-3.5 transition-colors ${
-        invalid
-          ? 'border-destructive/60 focus-within:border-destructive'
-          : 'border-border focus-within:border-foreground/40'
-      }`}
-    >
-      <div className="flex items-center justify-between text-xs text-muted-foreground">
+    <div className="rounded-xl border border-border bg-card/60 px-4 py-3.5 transition-colors focus-within:border-foreground/40">
+      <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
         <span>{label}</span>
-        {balanceChip}
+        <span className="shrink-0">{balanceChip}</span>
       </div>
       <div className="mt-2 flex items-center gap-3">
         <input
@@ -384,32 +375,11 @@ function AmountPanel({ label, symbol, placeholder, disabled, invalid, field, bal
           spellCheck={false}
           placeholder={placeholder}
           disabled={disabled}
-          aria-invalid={invalid || undefined}
           className="min-w-0 flex-1 bg-transparent text-2xl font-medium tracking-tight tabular-nums outline-none placeholder:text-muted-foreground/40 disabled:opacity-50"
           {...field}
         />
         <SymbolPill symbol={symbol} />
       </div>
-    </div>
-  )
-}
-
-function ErrorSlot({ message }: { message: string | undefined }) {
-  return (
-    <div className="pointer-events-none absolute left-0 top-full z-20 mt-0.5 max-w-[55%] overflow-hidden pl-1" aria-live="polite">
-      <p
-        role="alert"
-        className={`flex items-center gap-1.5 text-xs font-medium text-destructive transition-all duration-200 ${
-          message ? 'translate-y-0 opacity-100' : '-translate-y-1 opacity-0'
-        }`}
-      >
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.25" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <circle cx="12" cy="12" r="10" />
-          <line x1="12" y1="8" x2="12" y2="12" />
-          <line x1="12" y1="16" x2="12.01" y2="16" />
-        </svg>
-        <span>{message ?? ' '}</span>
-      </p>
     </div>
   )
 }
