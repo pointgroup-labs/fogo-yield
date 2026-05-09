@@ -189,10 +189,7 @@ export default function TransferCard({ kind }: TransferCardProps) {
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle>{ui.submitLabel}</CardTitle>
-      </CardHeader>
-      <CardContent>
+      <CardContent className="pt-1">
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="flex flex-col gap-2.5">
             <FormField
