@@ -1,5 +1,11 @@
 import type { BridgeContext, BridgeRedeemResult, BridgeRedeemTarget } from './types'
 import {
+  createAssociatedTokenAccountIdempotentInstruction,
+  getAssociatedTokenAddressSync,
+} from '@solana/spl-token'
+import {
+  ComputeBudgetProgram,
+  PublicKey,
   sendAndConfirmTransaction,
   Transaction,
   VersionedTransaction,
@@ -53,6 +59,81 @@ function getOrCreateSolanaNtt(target: BridgeRedeemTarget): FogoNtt {
 }
 
 /**
+ * Extract the recipient owner pubkey from a deserialized NTT VAA.
+ *
+ * NTT's `release_inbound_mint` (and `release_inbound_unlock`) expects
+ * `recipient` to be an *already-initialized* SPL token account — Anchor
+ * decodes it via the `Account<'_, TokenAccount>` constraint and aborts
+ * with `AccountNotInitialized (3012, 0xbc4)` if the ATA hasn't been
+ * created yet. The destination owner address sits in the inner
+ * `nativeTokenTransfer.recipientAddress` field as a 32-byte
+ * UniversalAddress; on Solana/FOGO that's just the owner pubkey.
+ */
+function extractRecipientOwner(
+  vaa: Parameters<FogoNtt['redeem']>[0][number],
+): PublicKey {
+  // Layout: WormholeTransceiverMessage → NttManagerMessage → NativeTokenTransfer
+  // SDK exposes the innermost record at vaa.payload.nttManagerPayload.payload.
+  const nativeTransfer = (vaa.payload as { nttManagerPayload: { payload: { recipientAddress: { toUint8Array: () => Uint8Array } } } })
+    .nttManagerPayload.payload
+  return new PublicKey(nativeTransfer.recipientAddress.toUint8Array())
+}
+
+/**
+ * Make sure the destination ATA the SDK is going to mint into exists.
+ *
+ * Always sends `createAssociatedTokenAccountIdempotent` rather than
+ * probing first: the program-side ix is a no-op when the account
+ * already exists, so the cost of an unconditional send (one extra
+ * tx-fee per redeem cycle) is cheaper than the alternative of an
+ * `getAccountInfo` round-trip plus a TOCTOU window where the ATA could
+ * be created between probe and send.
+ *
+ * Returns the derived ATA so callers can log it.
+ */
+async function ensureRecipientAta(
+  ctx: BridgeContext,
+  target: BridgeRedeemTarget,
+  vaa: Parameters<FogoNtt['redeem']>[0][number],
+): Promise<{ ata: PublicKey, owner: PublicKey }> {
+  const owner = extractRecipientOwner(vaa)
+  const ata = getAssociatedTokenAddressSync(target.destMint, owner, true)
+
+  const payer = target.destSigner.publicKey
+  const ix = createAssociatedTokenAccountIdempotentInstruction(
+    payer,
+    ata,
+    owner,
+    target.destMint,
+  )
+  // Modest CU budget — ATA create is cheap, but the default 200k can
+  // get out-prioritised on busy slots.
+  const cuLimit = ComputeBudgetProgram.setComputeUnitLimit({ units: 80_000 })
+  const tx = new Transaction().add(cuLimit, ix)
+
+  const sig = await withTimeout(
+    sendAndConfirmTransaction(
+      target.destConnection,
+      tx,
+      [target.destSigner],
+      { commitment: 'confirmed', skipPreflight: false },
+    ),
+    ctx.txConfirmTimeoutMs,
+    'dest.sendAndConfirmTransaction(ensure recipient ATA)',
+  )
+
+  ctx.metrics.txSent.inc({ instruction: 'ensure_recipient_ata', result: 'ok' })
+  ctx.log.debug('ensured recipient ATA before redeem', {
+    target: target.name,
+    owner: owner.toBase58(),
+    ata: ata.toBase58(),
+    mint: target.destMint.toBase58(),
+    signature: sig,
+  })
+  return { ata, owner }
+}
+
+/**
  * Run the upstream `SolanaNtt.redeem` pipeline against the destination
  * chain. Handles `post_vaa` + `wormhole-transceiver::receive_message` +
  * `redeem` + `release_inbound_*` in whatever order the SDK yields them
@@ -94,6 +175,23 @@ export async function executeSdkBundledRedeem(
       target: target.name,
       ...errorFields(err),
     })
+  }
+
+  // Pre-flight: NTT's release_inbound_mint requires the recipient ATA
+  // to be initialized; unconditionally send the idempotent ATA-create
+  // ix. Done as a separate tx because the SDK builds the redeem bundle
+  // from a fixed manager IDL — there's no clean injection point for an
+  // ATA-create ix into its VersionedTransaction output.
+  try {
+    await ensureRecipientAta(ctx, target, vaa)
+  } catch (err) {
+    ctx.metrics.redeemed.inc({ target: target.name, result: 'error' })
+    ctx.metrics.txSent.inc({ instruction: 'ensure_recipient_ata', result: 'error' })
+    ctx.log.warn('failed to ensure recipient ATA before redeem', {
+      target: target.name,
+      ...errorFields(err),
+    })
+    return { kind: 'error', error: err instanceof Error ? err : new Error(String(err)) }
   }
 
   const payerPk = target.destSigner.publicKey
