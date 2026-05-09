@@ -250,7 +250,7 @@ export default function TransferCard({ kind }: TransferCardProps) {
 
 function DownConnector() {
   return (
-    <div className="pointer-events-none relative -my-3 flex h-0 items-center justify-center">
+    <div className="pointer-events-none relative z-10 -my-3 flex h-0 items-center justify-center">
       <div className="flex h-9 w-9 items-center justify-center rounded-full border border-border bg-background text-muted-foreground shadow-sm">
         <ArrowDown className="h-4 w-4" strokeWidth={2} aria-hidden="true" />
       </div>
