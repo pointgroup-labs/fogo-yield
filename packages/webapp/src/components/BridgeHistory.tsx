@@ -8,7 +8,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { FOGO_ONYC_DECIMALS, USDC_DECIMALS } from '@/constants'
 import { useBridgeHistory } from '@/hooks/useBridgeHistory'
@@ -65,11 +65,9 @@ export default function BridgeHistory() {
 
   return (
     <div className="flex flex-col gap-3">
-      <Card className="overflow-hidden p-0">
-        <ul aria-label="Bridge history" className="divide-y">
-          {rows.map(r => <BridgeRow key={r.signature} row={r} nowMs={nowMs} />)}
-        </ul>
-      </Card>
+      <ul aria-label="Bridge history" className="flex flex-col gap-2">
+        {rows.map(r => <li key={r.signature}><BridgeRow row={r} nowMs={nowMs} /></li>)}
+      </ul>
       {hasNextPage && (
         <Button
           variant="ghost"
@@ -87,15 +85,11 @@ export default function BridgeHistory() {
 
 function SkeletonList({ count }: { count: number }) {
   return (
-    <Card className="overflow-hidden p-0">
-      <ul className="divide-y">
-        {Array.from({ length: count }, (_, i) => (
-          <li key={i} className="px-4 py-3">
-            <Skeleton className="h-10 rounded" />
-          </li>
-        ))}
-      </ul>
-    </Card>
+    <div className="flex flex-col gap-2">
+      {Array.from({ length: count }, (_, i) => (
+        <Skeleton key={i} className="h-[68px] rounded-lg" />
+      ))}
+    </div>
   )
 }
 
@@ -103,9 +97,7 @@ function BridgeRow({ row, nowMs }: { row: TimelineRow, nowMs: number }) {
   const isDeposit = row.kind === 'deposit'
   const decimals = isDeposit ? USDC_DECIMALS : FOGO_ONYC_DECIMALS
   const ticker = isDeposit ? 'USDC.s' : 'ONyc'
-  // Verb form reads naturally next to the relative time:
-  // "Deposited · 2h ago" / "Withdrew · 5m ago".
-  const action = isDeposit ? 'Deposited' : 'Withdrew'
+  const label = isDeposit ? 'Deposit' : 'Withdraw'
   const amount = formatAmount(row.amountRaw, decimals)
   const blockMs = row.blockTime * 1000
   const relTime = formatRelativeTime(blockMs, nowMs)
@@ -116,58 +108,56 @@ function BridgeRow({ row, nowMs }: { row: TimelineRow, nowMs: number }) {
   const DirectionIcon = isDeposit ? ArrowUpRight : ArrowDownLeft
 
   return (
-    <li className="flex items-center gap-3 px-4 py-3">
-      <span
-        aria-hidden
-        className={`flex size-8 shrink-0 items-center justify-center rounded-full ${
-          isDeposit ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' : 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
-        }`}
-      >
-        <DirectionIcon className="size-4" />
-      </span>
-      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <div className="flex items-baseline gap-1.5 text-base">
-          <span className="font-semibold tabular-nums">
-            {row.amountIsApproximate
-              ? (
-                  <span title="Approximate — reconstructed from on-chain data, may differ slightly from your typed amount">
-                    ~
-                    {amount}
-                  </span>
-                )
-              : amount}
-          </span>
-          <span className="text-sm text-muted-foreground">{ticker}</span>
-        </div>
-        <div className="text-xs text-muted-foreground">
-          {action}
-          {' · '}
-          <time dateTime={isoTime} title={absTime}>
-            {relTime}
-          </time>
-        </div>
-      </div>
-      <div className="flex shrink-0 flex-col items-end gap-1">
-        <StatusBadge row={row} />
-        <a
-          href={fogoTxUrl(row.signature)}
-          target="_blank"
-          rel="noreferrer noopener"
-          aria-label="View source transaction on FogoScan"
-          className="text-muted-foreground transition-colors hover:text-foreground"
+    <Card className="transition-colors hover:border-foreground/20">
+      <CardContent className="flex items-center gap-3 p-3">
+        <div
+          aria-hidden
+          className={`flex size-9 shrink-0 items-center justify-center rounded-full ${
+            isDeposit ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' : 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
+          }`}
         >
-          <ExternalLink aria-hidden className="size-3.5" />
-        </a>
-      </div>
-    </li>
+          <DirectionIcon className="size-4" />
+        </div>
+        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <div className="flex items-center justify-between gap-2">
+            <span className="truncate text-sm font-medium">
+              <span className="text-muted-foreground">{label}</span>
+              {' · '}
+              {row.amountIsApproximate
+                ? (
+                    <span title="Approximate — reconstructed from on-chain data, may differ slightly from your typed amount">
+                      ~
+                      {amount}
+                    </span>
+                  )
+                : amount}
+              {' '}
+              <span className="text-muted-foreground">{ticker}</span>
+            </span>
+            <StatusBadge row={row} />
+          </div>
+          <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+            <time dateTime={isoTime} title={absTime}>
+              {relTime}
+            </time>
+            <a
+              href={fogoTxUrl(row.signature)}
+              target="_blank"
+              rel="noreferrer noopener"
+              className="inline-flex items-center gap-1 hover:text-foreground hover:underline"
+            >
+              source
+              <ExternalLink aria-hidden className="size-3" />
+            </a>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
   )
 }
 
 function StatusBadge({ row }: { row: TimelineRow }) {
   // Precedence: phase > status. `unknown` renders no badge (graceful degrade).
-  // Visual loudness intentionally inverted from "important = bright": a
-  // delivered row is the resting state and should recede; in-progress
-  // rows are what need user attention so they get the filled treatment.
   if (row.phase !== null) {
     return (
       <Badge variant="secondary" aria-label={`status: ${row.phase}`} className="gap-1">
@@ -178,8 +168,8 @@ function StatusBadge({ row }: { row: TimelineRow }) {
   }
   if (row.status === 'delivered') {
     return (
-      <Badge variant="outline" aria-label="status: delivered" className="gap-1 text-muted-foreground">
-        <Check aria-hidden className="size-3 text-emerald-600 dark:text-emerald-400" />
+      <Badge variant="default" aria-label="status: delivered" className="gap-1">
+        <Check aria-hidden className="size-3" />
         Delivered
       </Badge>
     )
