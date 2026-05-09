@@ -15,7 +15,7 @@ import {
 } from '@fogo-onre/sdk'
 import { isEstablished, TransactionResultType, useSession } from '@fogo/sessions-sdk-react'
 import { getAssociatedTokenAddressSync } from '@solana/spl-token'
-import { ComputeBudgetProgram, Keypair, PublicKey } from '@solana/web3.js'
+import { ComputeBudgetProgram, Keypair, PublicKey, TransactionInstruction, TransactionMessage, VersionedTransaction } from '@solana/web3.js'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import {
@@ -110,46 +110,59 @@ export function useTransferMutation(options: UseTransferMutationOptions = {}) {
         ? await buildDepositIxs({ sessionState, amount, provider: bridgeContextProvider })
         : buildWithdrawIxs({ sessionState, amount })
 
-      const sendOptions: {
-        extraSigners: Keypair[]
-        addressLookupTable?: string
-        paymasterDomain?: string
-        variation?: string
-      } = { extraSigners: built.extraSigners }
-      if (built.addressLookupTable) {
-        sendOptions.addressLookupTable = built.addressLookupTable.toBase58()
-      }
-      // Route both deposit and withdraw through the same paymaster
-      // variation. Deposit uses `intent_transfer.bridge_ntt_tokens`,
-      // which the variation was designed for; withdraw uses raw NTT
-      // `transfer_burn` against the ONyc manager. Whether the variation
-      // accepts the raw shape is an empirical question — see
-      // `docs/superpowers/specs` discussion. Without this, withdraw hits
-      // the default-origin paymaster rule, which rejects the ephemeral
-      // `outboxItem` extra signer with a 400 "Missing or invalid
-      // signature" because it either rewrites the blockhash (breaking
-      // the pre-attached sig) or doesn't allowlist non-session signers.
-      sendOptions.paymasterDomain = FOGO_BRIDGE_PAYMASTER_DOMAIN
-      sendOptions.variation = FOGO_BRIDGE_VARIATION
-
-      const result = await sessionState.sendTransaction(built.ixs, sendOptions)
-      if (result.type === TransactionResultType.Failed) {
-        const message = result.error instanceof Error
-          ? result.error.message
-          : typeof result.error === 'string'
-            ? result.error
-            : 'Transaction failed'
-        throw new Error(message)
+      let signature: string
+      if (args.kind === 'withdraw') {
+        // Withdraw bypasses the session paymaster: the raw NTT
+        // `transfer_burn` ix shape doesn't match any registered
+        // paymaster variation, so the `'sessions'` policy gate rejects
+        // the ephemeral `outboxItem` keypair as an unauthorized signer
+        // ("Missing or invalid signature for account <outboxItem>").
+        // Until Fogo Labs registers `FeeConfig(ONyc)` (which would let
+        // withdraw route through `intent_transfer.bridge_ntt_tokens`
+        // and ride the existing `'Intent NTT Bridge'` variation), the
+        // user's main wallet pays gas directly. UX cost: one extra
+        // wallet popup on withdraw — acceptable on a deliberate,
+        // higher-stakes action.
+        signature = await sendWithMainWallet({
+          sessionState,
+          ixs: built.ixs,
+          extraSigners: built.extraSigners,
+          fogoRpcUrl,
+        })
+      } else {
+        const sendOptions: {
+          extraSigners: Keypair[]
+          addressLookupTable?: string
+          paymasterDomain?: string
+          variation?: string
+        } = {
+          extraSigners: built.extraSigners,
+          paymasterDomain: FOGO_BRIDGE_PAYMASTER_DOMAIN,
+          variation: FOGO_BRIDGE_VARIATION,
+        }
+        if (built.addressLookupTable) {
+          sendOptions.addressLookupTable = built.addressLookupTable.toBase58()
+        }
+        const result = await sessionState.sendTransaction(built.ixs, sendOptions)
+        if (result.type === TransactionResultType.Failed) {
+          const message = result.error instanceof Error
+            ? result.error.message
+            : typeof result.error === 'string'
+              ? result.error
+              : 'Transaction failed'
+          throw new Error(message)
+        }
+        signature = result.signature
       }
 
       // Signatures are unique per landed tx, so reusing the signature
       // as flowId gives a deterministic key that survives reload
       // without an additional derivation table.
-      const flowId = result.signature
+      const flowId = signature
       const persisted: PersistedFlowStatus = {
         flowId,
         kind: args.kind,
-        signature: result.signature,
+        signature,
         ownerB58: sessionState.walletPublicKey.toBase58(),
         mintB58: args.mintB58,
         amountStr: args.amountStr,
@@ -212,6 +225,44 @@ async function readDestinationBalance(
   } catch {
     return 0n
   }
+}
+
+// Submits a tx with the user's main (Solana) wallet as fee payer,
+// bypassing the session paymaster. Used for withdraw because the raw
+// NTT `transfer_burn` shape isn't covered by any registered paymaster
+// variation; the session-paymaster policy gate rejects the ephemeral
+// `outboxItem` keypair as an unauthorized signer regardless of the
+// signature being mathematically valid.
+async function sendWithMainWallet(args: {
+  sessionState: Extract<ReturnType<typeof useSession>, { walletPublicKey: PublicKey }>
+  ixs: TransactionInstruction[]
+  extraSigners: Keypair[]
+  fogoRpcUrl: string
+}): Promise<string> {
+  const { sessionState, ixs, extraSigners, fogoRpcUrl } = args
+  const wallet = (sessionState as unknown as {
+    solanaWallet: {
+      signTransaction: <T extends VersionedTransaction>(tx: T) => Promise<T>
+    }
+  }).solanaWallet
+  const conn = getFogoConnection(fogoRpcUrl)
+  const { blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash('confirmed')
+  const message = new TransactionMessage({
+    payerKey: sessionState.walletPublicKey,
+    recentBlockhash: blockhash,
+    instructions: ixs,
+  }).compileToV0Message()
+  const tx = new VersionedTransaction(message)
+  if (extraSigners.length > 0) {
+    tx.sign(extraSigners)
+  }
+  const signed = await wallet.signTransaction(tx)
+  const signature = await conn.sendRawTransaction(signed.serialize(), { skipPreflight: false })
+  const conf = await conn.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, 'confirmed')
+  if (conf.value.err !== null) {
+    throw new Error(`Withdraw transaction failed: ${JSON.stringify(conf.value.err)}`)
+  }
+  return signature
 }
 
 // Mirrors `useFogoNttTransfer.buildDepositIxs` — kept private here so
