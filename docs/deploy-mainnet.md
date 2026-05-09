@@ -591,6 +591,12 @@ Before declaring the deploy "live":
    binary sha256, multisig address + roster, fee_vault address, SDK
    version, deploy date, signer.
 
+### Webapp: archival FOGO RPC required
+
+The webapp's bridge-history view (`BridgeHistory` component, backed by `useBridgeHistory`) calls `getSignaturesForAddress` against the user's canonical USDC.s and ONyc ATAs on FOGO. This returns unbounded history only when the configured FOGO RPC is **archival**. Public/free FOGO RPCs typically prune the signature index to the last ~2 days, which silently caps the user's visible history at that horizon — the feature looks incomplete with no error.
+
+Verify pre-prod by paging an ATA back >7 days; if the cursor terminates earlier than expected, swap to an archival provider before going live. The RPC URL is configured via `NEXT_PUBLIC_FOGO_RPC_URL` (or the user's settings drawer override; see `packages/webapp/src/store/settings.ts`).
+
 ---
 
 ## 10. Reference: post-deploy admin operations
