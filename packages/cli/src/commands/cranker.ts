@@ -1323,6 +1323,486 @@ export function crankerCommands(): Command {
       }
     })
 
+  // ─────────────────────────────────────────────────────────────────────
+  // Withdraw-leg commands. Mirror of the daemon handlers in
+  // `packages/cranker/src/relayer/{unlock-onyc,request-redemption-onyc,
+  // claim-redemption-usdc,send-usdc-to-user}.ts`. Same pre-flight gates,
+  // same race semantics, but with `--confirm`-gated dry-run plans for
+  // operator manual recovery (the daemon does this all automatically).
+  //
+  // The withdraw chain originates on FOGO from the user's `transfer_burn`
+  // + `release_wormhole_outbound` (now bundled atomically by the webapp;
+  // pre-fix stranded items use `scripts/release-fogo-outbound.mjs` to
+  // produce the missing VAA). The four steps below then run on Solana:
+  //   unlock-onyc          → request-redemption-onyc
+  //                       → claim-redemption-usdc (gated on OnRe fulfill)
+  //                       → send-usdc-to-user
+  // ─────────────────────────────────────────────────────────────────────
+
+  cranker
+    .command('unlock-onyc')
+    .description('Redeem ONyc burn VAA from FOGO + init outflight Flow (withdraw leg, step 1)')
+    .requiredOption('--fogo-tx <signature>', 'FOGO tx signature that emitted the burn VAA')
+    .option('--vaa <hex>', 'Override Wormholescan lookup with raw signed VAA bytes (hex)')
+    .option('--ntt-program <pubkey>', `NTT ONyc manager program id (default: ${NTT_ONYC_PROGRAM_ID.toBase58()})`)
+    .option('--wormholescan-url <url>', `Wormholescan REST base URL [default: ${DEFAULT_WORMHOLESCAN_URL}]`)
+    .option('--confirm', 'Actually broadcast the transaction (default: dry-run)')
+    .action(async (opts: {
+      fogoTx: string
+      vaa?: string
+      nttProgram?: string
+      wormholescanUrl?: string
+      confirm?: boolean
+    }) => {
+      const { connection, keypair, client } = useContext()
+      const nttProgram = opts.nttProgram ? new PublicKey(opts.nttProgram) : NTT_ONYC_PROGRAM_ID
+
+      const vaaBytes = await fetchVaaBytes({ fogoTx: opts.fogoTx, vaaHex: opts.vaa, wormholescanUrl: opts.wormholescanUrl })
+      const resolved = resolveNttVaa({ vaaBytes, nttProgramId: nttProgram })
+
+      // Pre-flight 1: RelayerConfig present.
+      const cfgInfo = await connection.getAccountInfo(client.configPda).catch(() => null)
+      if (!cfgInfo) {
+        throw new Error(`RelayerConfig not found at ${client.configPda.toBase58()} — relayer not initialized on this RPC`)
+      }
+      const cfg = await client.fetchConfig()
+      const onycMint = cfg.onycMint as PublicKey
+
+      // Pre-flight 2: outflight Flow must NOT exist.
+      const existing = await client.fetchOutflightFlow(resolved.nttInboxItem).catch(() => null)
+      if (existing) {
+        throw new Error(
+          `Outflight Flow already exists for inbox-item ${resolved.nttInboxItem.toBase58()} — `
+          + `unlock_onyc has already run (status=${describeStatus(existing.status)}).`,
+        )
+      }
+
+      // Pre-flight 3: FOGO peer registered on the ONyc NTT manager.
+      const [fogoPeerPda] = findNttPeerPda(FOGO_WORMHOLE_CHAIN_ID, nttProgram)
+      const peerInfo = await connection.getAccountInfo(fogoPeerPda).catch(() => null)
+      if (!peerInfo) {
+        throw new Error(
+          `FOGO peer not registered on ONyc NTT manager (${fogoPeerPda.toBase58()}) — `
+          + `operator must run NTT register-peer for FOGO chain ${FOGO_WORMHOLE_CHAIN_ID} before unlock_onyc can succeed.`,
+        )
+      }
+
+      console.log(chalk.cyan('unlock-onyc plan'))
+      console.log(chalk.dim(`  payer (signer):         ${keypair.publicKey.toBase58()}`))
+      console.log(chalk.dim(`  onycMint:               ${onycMint.toBase58()}`))
+      console.log(chalk.dim(`  nttProgram:             ${nttProgram.toBase58()}`))
+      console.log(chalk.dim(`  nttInboxItem:           ${resolved.nttInboxItem.toBase58()}`))
+      console.log(chalk.dim(`  nttTransceiverMessage:  ${resolved.nttTransceiverMessage.toBase58()}`))
+      console.log(chalk.dim(`  trimmedAmount:          ${resolved.manager.trimmedAmount} (decimals=${resolved.manager.trimmedDecimals})`))
+      console.log(chalk.dim(`  fogoPeerPda:            ${fogoPeerPda.toBase58()} ✓`))
+
+      if (!opts.confirm) {
+        console.log()
+        console.log(chalk.yellow('dry-run only. Re-run with --confirm to broadcast.'))
+        return
+      }
+
+      console.log()
+      const sig = await runTx(() =>
+        client
+          .unlockOnyc({
+            payer: keypair.publicKey,
+            onycMint,
+            nttInboxItem: resolved.nttInboxItem,
+            nttTransceiverMessage: resolved.nttTransceiverMessage,
+            ntt: { transceiverAddress: nttProgram },
+          })
+          .rpc(),
+      )
+      console.log(chalk.green('unlock-onyc landed'))
+      console.log(chalk.dim(`  tx: ${sig}`))
+    })
+
+  cranker
+    .command('request-redemption-onyc')
+    .description('Apply withdraw fee + CPI OnRe create_redemption_request, init RedemptionTracker (withdraw leg, step 2)')
+    .requiredOption('--fogo-tx <signature>', 'FOGO tx signature that emitted the burn VAA')
+    .option('--vaa <hex>', 'Override Wormholescan lookup with raw signed VAA bytes (hex)')
+    .option('--ntt-program <pubkey>', `NTT ONyc manager program id (default: ${NTT_ONYC_PROGRAM_ID.toBase58()})`)
+    .option('--wormholescan-url <url>', `Wormholescan REST base URL [default: ${DEFAULT_WORMHOLESCAN_URL}]`)
+    .option('--confirm', 'Actually broadcast the transaction (default: dry-run)')
+    .action(async (opts: {
+      fogoTx: string
+      vaa?: string
+      nttProgram?: string
+      wormholescanUrl?: string
+      confirm?: boolean
+    }) => {
+      const { connection, keypair, client } = useContext()
+      const nttProgram = opts.nttProgram ? new PublicKey(opts.nttProgram) : NTT_ONYC_PROGRAM_ID
+
+      const vaaBytes = await fetchVaaBytes({ fogoTx: opts.fogoTx, vaaHex: opts.vaa, wormholescanUrl: opts.wormholescanUrl })
+      const resolved = resolveNttVaa({ vaaBytes, nttProgramId: nttProgram })
+
+      const flow = await client.fetchOutflightFlow(resolved.nttInboxItem).catch(() => null)
+      if (!flow) {
+        throw new Error(`No outflight Flow for inbox-item ${resolved.nttInboxItem.toBase58()} — run \`cranker unlock-onyc\` first.`)
+      }
+      const flowStatus = describeStatus(flow.status)
+      if (flowStatus !== 'Claimed') {
+        throw new Error(`Outflight Flow status is ${flowStatus}, expected Claimed (synthetic: WithdrawClaimed).`)
+      }
+
+      const cfg = await client.fetchConfig()
+      const usdcMint = cfg.usdcMint as PublicKey
+      const onycMint = cfg.onycMint as PublicKey
+      const feeVault = cfg.feeVault as PublicKey
+
+      // Singleton mutex check — surfaces "another withdraw is in flight"
+      // as a clear error rather than letting the on-chain
+      // `AccountAlreadyInUse` confuse the operator.
+      const trackerInfo = await connection.getAccountInfo(client.redemptionTrackerPda).catch(() => null)
+      if (trackerInfo) {
+        throw new Error(
+          `RedemptionTracker singleton ${client.redemptionTrackerPda.toBase58()} already held — `
+          + `another withdraw flow is mid-redemption. Wait for it to land (or cancel via \`relayer cancel-redemption\`).`,
+        )
+      }
+
+      const redemptionRequest = Keypair.generate()
+
+      console.log(chalk.cyan('request-redemption-onyc plan'))
+      console.log(chalk.dim(`  payer (signer):         ${keypair.publicKey.toBase58()}`))
+      console.log(chalk.dim(`  usdcMint:               ${usdcMint.toBase58()}`))
+      console.log(chalk.dim(`  onycMint:               ${onycMint.toBase58()}`))
+      console.log(chalk.dim(`  feeVault:               ${feeVault.toBase58()}`))
+      console.log(chalk.dim(`  nttInboxItem:           ${resolved.nttInboxItem.toBase58()}`))
+      console.log(chalk.dim(`  flow.amount (gross):    ${flow.amount.toString()}`))
+      console.log(chalk.dim(`  redemptionRequest:      ${redemptionRequest.publicKey.toBase58()} (ephemeral keypair, signed once)`))
+      console.log(chalk.dim(`  redemptionTrackerPda:   ${client.redemptionTrackerPda.toBase58()} (will init)`))
+
+      if (!opts.confirm) {
+        console.log()
+        console.log(chalk.yellow('dry-run only. Re-run with --confirm to broadcast.'))
+        console.log(chalk.dim('  NOTE: the redemptionRequest pubkey above is regenerated on the next run.'))
+        return
+      }
+
+      console.log()
+      const sig = await runTx(() =>
+        client
+          .requestRedemptionOnyc({
+            payer: keypair.publicKey,
+            usdcMint,
+            onycMint,
+            nttInboxItem: resolved.nttInboxItem,
+            feeVault,
+            onre: { redemptionRequest: redemptionRequest.publicKey },
+          })
+          .signers([redemptionRequest])
+          .rpc(),
+      )
+      console.log(chalk.green('request-redemption-onyc landed'))
+      console.log(chalk.dim(`  tx:                     ${sig}`))
+      console.log(chalk.dim(`  redemptionRequest:      ${redemptionRequest.publicKey.toBase58()} (now persisted in tracker.redemption_request)`))
+    })
+
+  cranker
+    .command('claim-redemption-usdc')
+    .description('Verify OnRe fulfilled, book USDC delta, close tracker (withdraw leg, step 3)')
+    .requiredOption('--fogo-tx <signature>', 'FOGO tx signature that emitted the burn VAA')
+    .option('--vaa <hex>', 'Override Wormholescan lookup with raw signed VAA bytes (hex)')
+    .option('--ntt-program <pubkey>', `NTT ONyc manager program id (default: ${NTT_ONYC_PROGRAM_ID.toBase58()})`)
+    .option('--wormholescan-url <url>', `Wormholescan REST base URL [default: ${DEFAULT_WORMHOLESCAN_URL}]`)
+    .option('--confirm', 'Actually broadcast the transaction (default: dry-run)')
+    .action(async (opts: {
+      fogoTx: string
+      vaa?: string
+      nttProgram?: string
+      wormholescanUrl?: string
+      confirm?: boolean
+    }) => {
+      const { connection, keypair, client } = useContext()
+      const nttProgram = opts.nttProgram ? new PublicKey(opts.nttProgram) : NTT_ONYC_PROGRAM_ID
+
+      const vaaBytes = await fetchVaaBytes({ fogoTx: opts.fogoTx, vaaHex: opts.vaa, wormholescanUrl: opts.wormholescanUrl })
+      const resolved = resolveNttVaa({ vaaBytes, nttProgramId: nttProgram })
+
+      const flow = await client.fetchOutflightFlow(resolved.nttInboxItem).catch(() => null)
+      if (!flow) {
+        throw new Error(`No outflight Flow for inbox-item ${resolved.nttInboxItem.toBase58()}.`)
+      }
+      const flowStatus = describeStatus(flow.status)
+      if (flowStatus !== 'RedemptionPending') {
+        throw new Error(`Outflight Flow status is ${flowStatus}, expected RedemptionPending.`)
+      }
+
+      // Recover redemption_request pubkey from tracker — same handoff
+      // the daemon uses. No off-chain state needed.
+      const trackerAccount = await (
+        client.program.account as unknown as {
+          redemptionTracker: { fetch: (k: PublicKey) => Promise<{
+            redemptionRequest: PublicKey
+            payer: PublicKey
+            usdcAtaPreBalance: { toString: () => string }
+            onycAmountIn: { toString: () => string }
+          }> }
+        }
+      ).redemptionTracker.fetch(client.redemptionTrackerPda).catch(() => null)
+      if (!trackerAccount) {
+        throw new Error(
+          `RedemptionTracker missing at ${client.redemptionTrackerPda.toBase58()} but flow status is RedemptionPending — chain inconsistency.`,
+        )
+      }
+
+      // Fulfillment signal: redemption_request must be closed.
+      const reqInfo = await connection.getAccountInfo(trackerAccount.redemptionRequest).catch(() => null)
+      const closed = reqInfo === null
+        || (reqInfo.lamports === 0 && reqInfo.data.length === 0 && reqInfo.owner.equals(SystemProgram.programId))
+      if (!closed) {
+        throw new Error(
+          `OnRe redemption_request ${trackerAccount.redemptionRequest.toBase58()} not yet closed — `
+          + `OnRe hasn't called fulfill_redemption_request. Wait, then re-run.`,
+        )
+      }
+
+      const cfg = await client.fetchConfig()
+      const usdcMint = cfg.usdcMint as PublicKey
+
+      console.log(chalk.cyan('claim-redemption-usdc plan'))
+      console.log(chalk.dim(`  cranker (signer):       ${keypair.publicKey.toBase58()}`))
+      console.log(chalk.dim(`  usdcMint:               ${usdcMint.toBase58()}`))
+      console.log(chalk.dim(`  nttInboxItem:           ${resolved.nttInboxItem.toBase58()}`))
+      console.log(chalk.dim(`  redemptionRequest:      ${trackerAccount.redemptionRequest.toBase58()} (closed ✓)`))
+      console.log(chalk.dim(`  tracker.payer:          ${trackerAccount.payer.toBase58()} (rent → here)`))
+      console.log(chalk.dim(`  tracker.preBalance:     ${trackerAccount.usdcAtaPreBalance.toString()}`))
+      console.log(chalk.dim(`  tracker.onycAmountIn:   ${trackerAccount.onycAmountIn.toString()}`))
+
+      if (!opts.confirm) {
+        console.log()
+        console.log(chalk.yellow('dry-run only. Re-run with --confirm to broadcast.'))
+        return
+      }
+
+      console.log()
+      const sig = await runTx(() =>
+        client
+          .claimRedemptionUsdc({
+            cranker: keypair.publicKey,
+            usdcMint,
+            nttInboxItem: resolved.nttInboxItem,
+            redemptionRequest: trackerAccount.redemptionRequest,
+            payerForClose: trackerAccount.payer,
+          })
+          .rpc(),
+      )
+      console.log(chalk.green('claim-redemption-usdc landed'))
+      console.log(chalk.dim(`  tx: ${sig}`))
+    })
+
+  cranker
+    .command('send-usdc-to-user')
+    .description('NTT lock USDC.s back to flow.fogo_sender + close outflight Flow (withdraw leg, step 4 — terminal)')
+    .requiredOption('--fogo-tx <signature>', 'FOGO tx signature that emitted the burn VAA')
+    .option('--vaa <hex>', 'Override Wormholescan lookup with raw signed VAA bytes (hex)')
+    .option('--ntt-program <pubkey>', `NTT USDC.s manager program id (default: ${NTT_USDC_PROGRAM_ID.toBase58()})`)
+    .option('--onyc-ntt-program <pubkey>', `NTT ONyc manager program id used to resolve the inbox-item (default: ${NTT_ONYC_PROGRAM_ID.toBase58()})`)
+    .option('--wormholescan-url <url>', `Wormholescan REST base URL [default: ${DEFAULT_WORMHOLESCAN_URL}]`)
+    .option('--confirm', 'Actually broadcast the transaction (default: dry-run)')
+    .action(async (opts: {
+      fogoTx: string
+      vaa?: string
+      nttProgram?: string
+      onycNttProgram?: string
+      wormholescanUrl?: string
+      confirm?: boolean
+    }) => {
+      const { connection, keypair, client } = useContext()
+      const nttProgram = opts.nttProgram ? new PublicKey(opts.nttProgram) : NTT_USDC_PROGRAM_ID
+      const onycNttProgram = opts.onycNttProgram ? new PublicKey(opts.onycNttProgram) : NTT_ONYC_PROGRAM_ID
+
+      const vaaBytes = await fetchVaaBytes({ fogoTx: opts.fogoTx, vaaHex: opts.vaa, wormholescanUrl: opts.wormholescanUrl })
+      // Inbox-item PDA is keyed under the ONyc program (the burn manager).
+      const resolved = resolveNttVaa({ vaaBytes, nttProgramId: onycNttProgram })
+
+      const flow = await client.fetchOutflightFlow(resolved.nttInboxItem).catch(() => null)
+      if (!flow) {
+        throw new Error(`No outflight Flow for inbox-item ${resolved.nttInboxItem.toBase58()}.`)
+      }
+      const flowStatus = describeStatus(flow.status)
+      if (flowStatus !== 'Swapped') {
+        throw new Error(`Outflight Flow status is ${flowStatus}, expected Swapped (synthetic: WithdrawSwapped).`)
+      }
+
+      // Tracker must be closed.
+      const trackerInfo = await connection.getAccountInfo(client.redemptionTrackerPda).catch(() => null)
+      if (trackerInfo && trackerInfo.lamports > 0) {
+        throw new Error(
+          `RedemptionTracker ${client.redemptionTrackerPda.toBase58()} still open — run \`cranker claim-redemption-usdc\` first.`,
+        )
+      }
+
+      // FOGO peer must be registered on USDC NTT manager.
+      const [fogoPeerPda] = findNttPeerPda(FOGO_WORMHOLE_CHAIN_ID, nttProgram)
+      const peerInfo = await connection.getAccountInfo(fogoPeerPda).catch(() => null)
+      if (!peerInfo) {
+        throw new Error(`FOGO peer not registered on USDC NTT manager (${fogoPeerPda.toBase58()}).`)
+      }
+
+      const cfg = await client.fetchConfig()
+      const usdcMint = cfg.usdcMint as PublicKey
+
+      const flowFogoSender = Uint8Array.from(flow.fogoSender as ArrayLike<number>)
+      const flowAmount = BigInt(flow.amount.toString())
+      const outboxItem = Keypair.generate()
+
+      // Lamport top-ups for relayer_authority + session_authority,
+      // mirror of `lock-onyc` since both use NTT outbound transfer_lock.
+      const argsHash = nttTransferArgsHash({
+        amount: flowAmount,
+        recipientChain: FOGO_WORMHOLE_CHAIN_ID,
+        recipientAddress: flowFogoSender,
+        shouldQueue: false,
+      })
+      const [relayerAuthorityPda] = findAuthorityPda(client.program.programId)
+      const [sessionAuthorityPda] = findSessionAuthorityPda(relayerAuthorityPda, argsHash, nttProgram)
+      const [relayerAuthInfo, sessionAuthInfo] = await Promise.all([
+        connection.getAccountInfo(relayerAuthorityPda).catch(() => null),
+        connection.getAccountInfo(sessionAuthorityPda).catch(() => null),
+      ])
+      const RELAYER_AUTH_TOPUP = 3_000_000n
+      const SESSION_AUTH_TOPUP = 2_000_000n
+      const computeTopUp = (existing: number | undefined, target: bigint): bigint => {
+        const e = BigInt(existing ?? 0)
+        return e >= target ? 0n : target - e
+      }
+      const relayerTopUp = computeTopUp(relayerAuthInfo?.lamports, RELAYER_AUTH_TOPUP)
+      const sessionTopUp = computeTopUp(sessionAuthInfo?.lamports, SESSION_AUTH_TOPUP)
+      const fundIxs: TransactionInstruction[] = []
+      if (relayerTopUp > 0n) {
+        fundIxs.push(SystemProgram.transfer({ fromPubkey: keypair.publicKey, toPubkey: relayerAuthorityPda, lamports: Number(relayerTopUp) }))
+      }
+      if (sessionTopUp > 0n) {
+        fundIxs.push(SystemProgram.transfer({ fromPubkey: keypair.publicKey, toPubkey: sessionAuthorityPda, lamports: Number(sessionTopUp) }))
+      }
+
+      console.log(chalk.cyan('send-usdc-to-user plan'))
+      console.log(chalk.dim(`  payer (signer):         ${keypair.publicKey.toBase58()}`))
+      console.log(chalk.dim(`  usdcMint:               ${usdcMint.toBase58()}`))
+      console.log(chalk.dim(`  nttProgram (USDC):      ${nttProgram.toBase58()}`))
+      console.log(chalk.dim(`  nttInboxItem (ONyc):    ${resolved.nttInboxItem.toBase58()}`))
+      console.log(chalk.dim(`  flow.amount (net):      ${flowAmount.toString()}`))
+      console.log(chalk.dim(`  flow.fogoSender:        ${Buffer.from(flowFogoSender).toString('hex')}`))
+      console.log(chalk.dim(`  rentDestination:        ${(flow.payer as PublicKey).toBase58()} (= flow.payer)`))
+      console.log(chalk.dim(`  outboxItem:             ${outboxItem.publicKey.toBase58()} (ephemeral)`))
+      console.log(chalk.dim(`  relayerAuthority topUp: ${relayerTopUp} lamports`))
+      console.log(chalk.dim(`  sessionAuthority topUp: ${sessionTopUp} lamports`))
+
+      if (!opts.confirm) {
+        console.log()
+        console.log(chalk.yellow('dry-run only. Re-run with --confirm to broadcast.'))
+        console.log(chalk.dim('  NOTE: the outboxItem keypair above is regenerated on the next run.'))
+        return
+      }
+
+      console.log()
+      const sig = await runTx(() =>
+        client
+          .sendUsdcToUser({
+            payer: keypair.publicKey,
+            usdcMint,
+            nttInboxItem: resolved.nttInboxItem,
+            rentDestination: flow.payer as PublicKey,
+            flowAmount,
+            flowFogoSender,
+            outboxItem: outboxItem.publicKey,
+          })
+          .preInstructions(fundIxs)
+          .signers([outboxItem])
+          .rpc(),
+      )
+      console.log(chalk.green('send-usdc-to-user landed'))
+      console.log(chalk.dim(`  tx: ${sig}`))
+    })
+
+  cranker
+    .command('advance-withdraw')
+    .description(
+      'Sequence the four withdraw-leg steps for one VAA, executing whichever are still pending. '
+      + 'Stops at any leg that reports "not ready yet" (e.g. waiting on OnRe fulfill).',
+    )
+    .requiredOption('--fogo-tx <signature>', 'FOGO tx signature that emitted the burn VAA')
+    .option('--vaa <hex>', 'Override Wormholescan lookup with raw signed VAA bytes (hex)')
+    .option('--ntt-program <pubkey>', `NTT ONyc manager program id (default: ${NTT_ONYC_PROGRAM_ID.toBase58()})`)
+    .option('--wormholescan-url <url>', `Wormholescan REST base URL [default: ${DEFAULT_WORMHOLESCAN_URL}]`)
+    .option('--confirm', 'Actually broadcast (default: dry-run, plan-only per leg)')
+    .action(async (opts: {
+      fogoTx: string
+      vaa?: string
+      nttProgram?: string
+      wormholescanUrl?: string
+      confirm?: boolean
+    }) => {
+      const { connection, client } = useContext()
+      const nttProgram = opts.nttProgram ? new PublicKey(opts.nttProgram) : NTT_ONYC_PROGRAM_ID
+
+      const vaaBytes = await fetchVaaBytes({ fogoTx: opts.fogoTx, vaaHex: opts.vaa, wormholescanUrl: opts.wormholescanUrl })
+      const resolved = resolveNttVaa({ vaaBytes, nttProgramId: nttProgram })
+
+      console.log(chalk.cyan('advance-withdraw'))
+      console.log(chalk.dim(`  vaa.sequence:   ${resolved.vaa.sequence}`))
+      console.log(chalk.dim(`  nttInboxItem:   ${resolved.nttInboxItem.toBase58()}`))
+
+      // Read current state. The chain decision-tree:
+      //   no flow                         → unlock-onyc next
+      //   flow.Claimed                    → request-redemption-onyc next
+      //   flow.RedemptionPending + req closed → claim-redemption-usdc next
+      //   flow.RedemptionPending + req open   → STOP (waiting on OnRe)
+      //   flow.Swapped + tracker closed    → send-usdc-to-user next
+      //   flow.Swapped + tracker open      → STOP (sibling withdraw blocking)
+      //   no flow + inbox_item exists      → DONE (terminal — flow already closed)
+      const flow = await client.fetchOutflightFlow(resolved.nttInboxItem).catch(() => null)
+      const flowStatus = flow ? describeStatus(flow.status) : '(none)'
+      const inboxInfo = await connection.getAccountInfo(resolved.nttInboxItem).catch(() => null)
+
+      console.log(chalk.dim(`  flow.status:    ${flowStatus}`))
+      console.log(chalk.dim(`  inbox_item:     ${inboxInfo ? 'exists' : '(none)'}`))
+
+      if (!flow && inboxInfo) {
+        console.log(chalk.green('terminal: flow already closed — withdraw fully landed.'))
+        return
+      }
+
+      // Build the queue of subcommands to run. The user re-invokes this
+      // chain runner by hand each scan tick when in OnRe-waiting state;
+      // we don't sleep+poll here (that's the daemon's job).
+      const next: string[] = []
+      if (!flow) {
+        next.push('unlock-onyc')
+        next.push('request-redemption-onyc')
+        next.push('claim-redemption-usdc (gated on OnRe fulfill — likely STOP here on first run)')
+        next.push('send-usdc-to-user')
+      } else if (flowStatus === 'Claimed') {
+        next.push('request-redemption-onyc')
+        next.push('claim-redemption-usdc (gated on OnRe fulfill)')
+        next.push('send-usdc-to-user')
+      } else if (flowStatus === 'RedemptionPending') {
+        next.push('claim-redemption-usdc (gated on OnRe fulfill)')
+        next.push('send-usdc-to-user')
+      } else if (flowStatus === 'Swapped') {
+        next.push('send-usdc-to-user')
+      } else {
+        console.log(chalk.yellow(`unknown flow status ${flowStatus} — manual triage required.`))
+        return
+      }
+
+      console.log(chalk.cyan('queued legs'))
+      for (const [i, leg] of next.entries()) {
+        console.log(chalk.dim(`  ${i + 1}. cranker ${leg} --fogo-tx ${opts.fogoTx}${opts.vaa ? ` --vaa ${opts.vaa}` : ''}${opts.confirm ? ' --confirm' : ''}`))
+      }
+
+      console.log()
+      console.log(chalk.yellow(
+        'advance-withdraw is a planner, not a runner — review the legs above and execute them manually. '
+        + 'For automated end-to-end driving, run the daemon (`pnpm cranker dev`).',
+      ))
+    })
+
   return cranker
 }
 
