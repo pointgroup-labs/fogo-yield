@@ -2,7 +2,9 @@ import type { FlowStatusName, ResolvedNttVaa, WormholescanVaa } from '@fogo-onre
 import type { AdvanceContext } from './types'
 import type { FlowStatus, ScannedFlow } from './scan'
 import type { WatermarkStore } from '../state/watermarks'
+import type { PublicKey } from '@solana/web3.js'
 import {
+  decodeNttInboxItem,
   describeStatus,
   NTT_ONYC_PROGRAM_ID,
   NTT_USDC_PROGRAM_ID,
@@ -213,16 +215,78 @@ async function scanWormholescanVaa(
       recordable: true,
     }
   }
+  // Withdraw-leg post-completion disambiguation. After `send_usdc_to_user`
+  // closes the Flow PDA, `fetchOutflightFlow` returns `missing` — same as
+  // the pre-`unlock_onyc` state — so a naive `null -> WithdrawPending`
+  // classification re-dispatches `unlock_onyc` against an already-redeemed
+  // NTT inbox-item, which NTT correctly aborts with
+  // `TransferCannotBeRedeemed (6008)`. Peek the inbox-item's release_status
+  // to break the ambiguity: `Released` means the chain is complete, route
+  // to the terminal `WithdrawClosed` so `pickAdvanceForStatus` skips it.
+  // Mirrors the deposit-side guard at `bridge/redeem.ts:134`.
+  let synthesizedStatus = synthesizeStatus(leg, flow ? describeStatus(flow.status) : null)
+  if (leg === 'withdraw' && fetchOutcome === 'missing') {
+    const terminal = await classifyMissingWithdrawFlow(ctx, resolved.nttInboxItem)
+    if (terminal) {
+      synthesizedStatus = terminal
+    }
+  }
   return {
     sequence: item.sequence,
     flow: {
       pubkey: resolved.nttInboxItem,
-      status: synthesizeStatus(leg, flow ? describeStatus(flow.status) : null),
+      status: synthesizedStatus,
       fogoTx: item.txHash ?? '',
       vaaHex: Buffer.from(item.vaa).toString('hex'),
     },
     recordable: true,
   }
+}
+
+/**
+ * Decide whether a withdraw-leg Flow PDA that's *missing* on-chain is
+ * pre-`unlock_onyc` (genuinely pending) or post-`send_usdc_to_user`
+ * (chain complete, Flow closed for rent).
+ *
+ * Returns `'WithdrawClosed'` only when we can affirmatively prove the NTT
+ * inbox-item is `Released`. RPC failures and undecodable bytes return
+ * `null`, leaving the caller's default `'WithdrawPending'` synthesis in
+ * place — the on-chain handler will give the authoritative answer on the
+ * next dispatch attempt (and the `TransferCannotBeRedeemed` it throws is
+ * already classified as a known race elsewhere). This conservatism keeps
+ * a transient RPC blip from hiding a genuinely-pending withdraw.
+ */
+async function classifyMissingWithdrawFlow(
+  ctx: AdvanceContext,
+  nttInboxItem: PublicKey,
+): Promise<FlowStatus | null> {
+  let info: Awaited<ReturnType<AdvanceContext['connection']['getAccountInfo']>>
+  try {
+    info = await ctx.connection.getAccountInfo(nttInboxItem)
+  } catch (err) {
+    ctx.log.debug('inbox-item peek failed (transient) — defaulting to WithdrawPending', {
+      nttInboxItem: nttInboxItem.toBase58(),
+      ...errorFieldsCompact(err),
+    })
+    return null
+  }
+  if (!info) {
+    // No inbox-item exists yet — NTT `Redeem` hasn't materialised it.
+    // Genuinely pre-unlock; let the default `WithdrawPending` stand.
+    return null
+  }
+  try {
+    const inboxState = decodeNttInboxItem(Buffer.from(info.data))
+    if (inboxState.releaseStatus.kind === 'Released') {
+      return 'WithdrawClosed'
+    }
+  } catch (err) {
+    ctx.log.debug('inbox-item present but undecodable — defaulting to WithdrawPending', {
+      nttInboxItem: nttInboxItem.toBase58(),
+      ...errorFieldsCompact(err),
+    })
+  }
+  return null
 }
 
 /**

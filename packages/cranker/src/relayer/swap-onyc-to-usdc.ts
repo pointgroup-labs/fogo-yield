@@ -34,7 +34,7 @@ import {
   redemptionExpectedOut,
   resolveNttVaa,
 } from '@fogo-onre/sdk'
-import { PublicKey } from '@solana/web3.js'
+import { ComputeBudgetProgram, PublicKey, TransactionMessage, VersionedTransaction } from '@solana/web3.js'
 import { withTimeout } from '../utils/rpc'
 import { fetchVaaBytes } from '../utils/wormhole'
 import { isLostRace } from './race-classifier'
@@ -172,19 +172,66 @@ export async function swapOnycToUsdc(
       }
     }
 
-    const sig = await client
-      .swapOnycToUsdc({
-        onycMint,
-        usdcMint,
-        nttInboxItem: resolved.nttInboxItem,
-        feeVault,
-        onreOffer: offerPda,
-        swapProgram: route.programId,
-        swapDelegate: route.swapDelegate,
-        swapIxData: route.ixData,
-        swapAccounts: route.routeAccounts,
+    const sig = await (async () => {
+      // Jupiter `shared_accounts_route` + on-chain Approve/NTT release
+      // blows the 1232-byte legacy tx limit; route ships ALTs for the
+      // v0 path. Build instruction → compile v0 with ALTs → send through
+      // the AnchorProvider (cranker authority is the only signer).
+      const swapIx = await client
+        .swapOnycToUsdc({
+          onycMint,
+          usdcMint,
+          nttInboxItem: resolved.nttInboxItem,
+          feeVault,
+          onreOffer: offerPda,
+          swapProgram: route.programId,
+          swapDelegate: route.swapDelegate,
+          swapIxData: route.ixData,
+          swapAccounts: route.routeAccounts,
+        })
+        .instruction()
+
+      const altAccounts = await withTimeout(
+        Promise.all(
+          route.addressLookupTables.map(async (key) => {
+            const res = await connection.getAddressLookupTable(key)
+            if (!res.value) {
+              throw new Error(`AddressLookupTable ${key.toBase58()} not found`)
+            }
+            return res.value
+          }),
+        ),
+        ctx.rpcTimeoutMs,
+        'swapOnycToUsdc.getAddressLookupTable',
+      )
+
+      const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed')
+      const payerKey = ctx.provider.wallet.publicKey
+      const messageV0 = new TransactionMessage({
+        payerKey,
+        recentBlockhash: blockhash,
+        instructions: [
+          ComputeBudgetProgram.setComputeUnitLimit({ units: 800_000 }),
+          ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1_000 }),
+          swapIx,
+        ],
+      }).compileToV0Message(altAccounts)
+      const vtx = new VersionedTransaction(messageV0)
+
+      const signature = await ctx.provider.sendAndConfirm(vtx, [], {
+        commitment: 'confirmed',
+        skipPreflight: false,
       })
-      .rpc()
+      await withTimeout(
+        connection.confirmTransaction(
+          { signature, blockhash, lastValidBlockHeight },
+          'confirmed',
+        ),
+        ctx.rpcTimeoutMs,
+        'swapOnycToUsdc.confirmTransaction',
+      )
+      return signature
+    })()
 
     metrics.txSent.inc({ instruction: 'swap_onyc_to_usdc', result: 'ok' })
     metrics.flowAdvance.inc({

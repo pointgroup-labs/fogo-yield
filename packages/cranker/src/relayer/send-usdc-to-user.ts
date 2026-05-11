@@ -12,8 +12,10 @@ import {
   resolveNttVaa,
 } from '@fogo-onre/sdk'
 import { Keypair, PublicKey, SystemProgram } from '@solana/web3.js'
+import type { Connection } from '@solana/web3.js'
+import { SolanaNtt } from '@wormhole-foundation/sdk-solana-ntt'
 import { withTimeout } from '../utils/rpc'
-import { fetchVaaBytes } from '../utils/wormhole'
+import { DEFAULT_NTT_VERSION, fetchVaaBytes, WORMHOLE_CORE_MAINNET } from '../utils/wormhole'
 import { isLostRace } from './race-classifier'
 
 export type SendUsdcToUserInput = {
@@ -21,6 +23,8 @@ export type SendUsdcToUserInput = {
   vaaHex?: string
   usdcMint?: PublicKey
   nttProgram?: PublicKey
+  nttVersion?: string
+  wormholeCore?: string
 }
 
 // NTT charges OutboxItem rent (~1,858,320 lamports) from `relayer_authority`
@@ -181,6 +185,15 @@ export async function sendUsdcToUser(
         flowAmount,
         flowFogoSender,
         outboxItem: outboxItem.publicKey,
+        release: await deriveSendUsdcReleaseAccounts(
+          connection,
+          usdcMint,
+          nttProgram,
+          input.wormholeCore ?? WORMHOLE_CORE_MAINNET,
+          input.nttVersion ?? DEFAULT_NTT_VERSION,
+          keypair.publicKey,
+          outboxItem.publicKey,
+        ),
       })
       .preInstructions(fundIxs)
       .signers([outboxItem])
@@ -210,5 +223,64 @@ export async function sendUsdcToUser(
       error: err instanceof Error ? err : new Error(String(err)),
       partialSignatures: [],
     }
+  }
+}
+
+/**
+ * Mirror of `deriveLockOnycReleaseAccounts` in `lock-onyc.ts`, but for
+ * the USDC NTT manager. Asks the upstream NTT SDK to build the canonical
+ * `release_wormhole_outbound` ix, then pulls the 7 PDA-derived accounts
+ * the on-chain handler needs from positions [4], [5], [6], [7], [8],
+ * [9], [14] of the resulting account list.
+ *
+ * Without this, the on-chain `send_usdc_to_user` handler will accept
+ * only the `transfer_lock` accounts and fail the second CPI with
+ * `InvalidAccountSplit` / missing-account errors.
+ */
+async function deriveSendUsdcReleaseAccounts(
+  connection: Connection,
+  usdcMint: PublicKey,
+  nttProgram: PublicKey,
+  wormholeCore: string,
+  nttVersion: string,
+  payer: PublicKey,
+  outboxItem: PublicKey,
+): Promise<{
+  wormholeProgram: PublicKey
+  wormholeBridge: PublicKey
+  wormholeFeeCollector: PublicKey
+  wormholeSequence: PublicKey
+  outboxItemSigner: PublicKey
+  wormholeMessage: PublicKey
+  emitter: PublicKey
+}> {
+  const ntt = new SolanaNtt(
+    'Mainnet',
+    'Solana',
+    connection,
+    {
+      coreBridge: wormholeCore,
+      ntt: {
+        manager: nttProgram.toBase58(),
+        token: usdcMint.toBase58(),
+        transceiver: { wormhole: nttProgram.toBase58() },
+      },
+    },
+    nttVersion,
+  )
+  const xcvr = await ntt.getWormholeTransceiver()
+  if (!xcvr) {
+    throw new Error('SolanaNttWormholeTransceiver wiring failed for USDC manager.')
+  }
+  const releaseIx = await xcvr.createReleaseWormholeOutboundIx(payer, outboxItem, false)
+  const k = releaseIx.keys
+  return {
+    wormholeMessage: k[4].pubkey,
+    emitter: k[5].pubkey,
+    wormholeBridge: k[6].pubkey,
+    wormholeFeeCollector: k[7].pubkey,
+    wormholeSequence: k[8].pubkey,
+    wormholeProgram: k[9].pubkey,
+    outboxItemSigner: k[14].pubkey,
   }
 }
