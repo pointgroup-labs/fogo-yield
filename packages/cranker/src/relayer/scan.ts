@@ -3,10 +3,9 @@ import type { AdvanceContext, AdvanceResult } from './types'
 import type { ClassRollupAgg } from '../utils/log'
 import type { FlowStateTracker } from '../state/flow-state'
 import { claimUsdc } from './claim-usdc'
-import { claimRedemptionUsdc } from './claim-redemption-usdc'
 import { lockOnyc } from './lock-onyc'
-import { requestRedemptionOnyc } from './request-redemption-onyc'
 import { sendUsdcToUser } from './send-usdc-to-user'
+import { swapOnycToUsdc } from './swap-onyc-to-usdc'
 import { swapUsdcToOnyc } from './swap-usdc-to-onyc'
 import { unlockOnyc } from './unlock-onyc'
 import { errorClass, errorFields, recordErrorClass, rollupErrorClasses } from '../utils/log'
@@ -36,7 +35,6 @@ export const FLOW_STATUSES = [
   // disambiguate, and `pickAdvanceForStatus` dispatches on these.
   'WithdrawPending',
   'WithdrawClaimed',
-  'RedemptionPending',
   'WithdrawSwapped',
   'WithdrawClosed',
 ] as const
@@ -47,10 +45,10 @@ export type AdvanceFns = {
   claimUsdc: typeof claimUsdc
   swapUsdcToOnyc: typeof swapUsdcToOnyc
   lockOnyc: typeof lockOnyc
-  // Withdraw leg
+  // Withdraw leg — Jupiter-direct swap. OnRe's redemption queue is
+  // KYC-gated and never executes for the relayer PDA.
   unlockOnyc: typeof unlockOnyc
-  requestRedemptionOnyc: typeof requestRedemptionOnyc
-  claimRedemptionUsdc: typeof claimRedemptionUsdc
+  swapOnycToUsdc: typeof swapOnycToUsdc
   sendUsdcToUser: typeof sendUsdcToUser
 }
 
@@ -127,8 +125,7 @@ const DEFAULT_ADVANCE_FNS: AdvanceFns = {
   swapUsdcToOnyc,
   lockOnyc,
   unlockOnyc,
-  requestRedemptionOnyc,
-  claimRedemptionUsdc,
+  swapOnycToUsdc,
   sendUsdcToUser,
 }
 
@@ -234,7 +231,13 @@ export async function scanAndAdvance(
     tasks,
     opts.maxConcurrentAdvances,
     ctx.abortSignal,
-    async task => task(),
+    // Worker is typed `Promise<void>`. `task()` returns `AdvanceResult`,
+    // which is already side-channelled through `logAdvanceResult` and the
+    // `flowState.recordSuccess/recordError` calls inside the task itself;
+    // discard the return here so we satisfy the worker signature.
+    async (task) => {
+      await task()
+    },
     {
       throwOnAbort: true,
       // Advance fns are contractually no-throw (they map errors into
@@ -343,16 +346,14 @@ function pickAdvanceForStatus(status: FlowStatus | string, fns: AdvanceFns): Dis
       return fns.lockOnyc
     // Withdraw leg — synthetic leg-prefixed strings from
     // `enumerate.ts:synthesizeStatus`. The shared on-chain `FlowStatus`
-    // (`Claimed`/`Swapped`/`RedemptionPending`) means we cannot dispatch
-    // on the bare on-chain value alone; the prefix is what lets the
-    // withdraw-leg `Claimed` route to `requestRedemptionOnyc` while the
-    // deposit-leg `Claimed` routes to `swapUsdcToOnyc`.
+    // (`Claimed`/`Swapped`) means we cannot dispatch on the bare
+    // on-chain value alone; the prefix lets the withdraw-leg `Claimed`
+    // route to `swapOnycToUsdc` while the deposit-leg `Claimed` routes
+    // to `swapUsdcToOnyc`.
     case 'WithdrawPending':
       return fns.unlockOnyc
     case 'WithdrawClaimed':
-      return fns.requestRedemptionOnyc
-    case 'RedemptionPending':
-      return fns.claimRedemptionUsdc
+      return fns.swapOnycToUsdc
     case 'WithdrawSwapped':
       return fns.sendUsdcToUser
     default:

@@ -8,12 +8,12 @@ import type { PublicKey } from '@solana/web3.js'
  */
 export interface FlowAccount {
   fogoSender: number[] | Uint8Array
-  status: { claimed?: object, swapped?: object, redemptionPending?: object }
+  status: { claimed?: object, swapped?: object }
   amount: { toString: () => string }
   payer: PublicKey
 }
 
-export type FlowStatusName = 'Claimed' | 'Swapped' | 'RedemptionPending' | 'Unknown'
+export type FlowStatusName = 'Claimed' | 'Swapped' | 'Unknown'
 
 /** Stringify the Anchor enum status into a readable label. */
 export function describeStatus(status: FlowAccount['status']): FlowStatusName {
@@ -22,9 +22,6 @@ export function describeStatus(status: FlowAccount['status']): FlowStatusName {
   }
   if (status.swapped !== undefined) {
     return 'Swapped'
-  }
-  if (status.redemptionPending !== undefined) {
-    return 'RedemptionPending'
   }
   return 'Unknown'
 }

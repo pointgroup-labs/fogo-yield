@@ -216,7 +216,7 @@ export async function claimUsdc(
     }
   } catch (err) {
     metrics.txSent.inc({ instruction: 'claim_usdc', result: 'error' })
-    // Anchor 6026 (RelayerInsufficientInboxBalance) is a benign race —
+    // Anchor 6022 (RelayerInsufficientInboxBalance) is a benign race —
     // another cranker advanced claim_usdc + swap_usdc_to_onyc between our
     // pre-flight 3 (TOCTOU window) and our submit. Classifier in
     // `race-classifier.ts` is the single source of truth for which codes

@@ -198,7 +198,16 @@ export async function executeSdkBundledRedeem(
   let lastSig: string | null = null
 
   try {
-    for await (const unsigned of ntt.redeem([vaa], payerPk)) {
+    // SolanaNtt.redeem internally wraps `payer` with `new SolanaAddress(...)`,
+    // which accepts a raw PublicKey. The TS signature wants an
+    // `AccountAddress<'Fogo'>` so we cast — pulling in
+    // `@wormhole-foundation/sdk-solana` just for the constructor would
+    // duplicate a transitive dep. Mirrors the same cast in
+    // `packages/cli/src/commands/cranker.ts` redeem path.
+    for await (const unsigned of ntt.redeem(
+      [vaa],
+      payerPk as unknown as Parameters<typeof ntt.redeem>[1],
+    )) {
       if (ctx.abortSignal.aborted) {
         return { kind: 'noop', reason: 'aborted mid-redeem' }
       }

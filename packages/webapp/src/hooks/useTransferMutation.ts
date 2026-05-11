@@ -44,13 +44,11 @@ import { fogoTxUrl, shortSig } from '@/utils/explorers'
  * deposit, raw `transfer_burn` for withdraw) are mirrored verbatim from
  * the legacy hook.
  *
- * Three-layer withdraw guard:
+ * Two-layer withdraw guard:
  *   1. Caller-owned: parent component disables submit while
  *      `mutation.isPending` is true (T15 wires this).
  *   2. Cache guard (this layer): `pendingWithdrawExists(qc)` runs
  *      inside* `mutationFn` so retries re-evaluate freshly.
- *   3. On-chain: relayer's `RedemptionTracker` PDA. Errors from this
- *      layer are *not* swallowed — they bubble up through `onError`.
  */
 
 export interface UseTransferMutationOptions {

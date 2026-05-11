@@ -129,7 +129,7 @@ function humanPhaseFromStatus(j: PersistedFlowStatus): string | null {
     case 'pending':
       return 'Submitting'
     case 'in-progress':
-      return 'Bridging'
+      return 'In progress'
     case 'terminal-success':
       return null
     case 'terminal-failure':

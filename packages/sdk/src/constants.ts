@@ -50,7 +50,6 @@ export const CONFIG_SEED = Buffer.from('relayer_config')
 export const RELAYER_SEED = Buffer.from('relayer')
 export const FLOW_INBOUND_SEED = Buffer.from('inflight')
 export const FLOW_OUTBOUND_SEED = Buffer.from('outflight')
-export const REDEMPTION_TRACKER_SEED = Buffer.from('redemption_tracker')
 export const NTT_SESSION_AUTHORITY_SEED = Buffer.from('session_authority')
 /** Per-user inbox PDA seed under the relayer program. */
 export const USER_INBOX_SEED = Buffer.from('user_inbox')

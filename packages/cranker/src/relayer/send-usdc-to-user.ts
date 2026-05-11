@@ -37,20 +37,15 @@ const SESSION_AUTH_TOPUP = 2_000_000n
  * (rent → `flow.payer`). Status: `Swapped` → flow closed; surfaced as
  * `WithdrawSwapped` → `WithdrawClosed`.
  *
- * Mirror of `lockOnyc` on the USDC mint with a critical extra
- * pre-flight: the on-chain handler declares
- * `redemption_tracker: SystemAccount<'info>`, which means the singleton
- * tracker MUST be closed (system-owned, zero data) for this to land.
- * That ordering invariant — claim_redemption_usdc closes the tracker
- * BEFORE send_usdc_to_user can run — is what guarantees the
- * pre-balance delta math in claim_redemption stays sound: a concurrent
- * outflow during an open redemption would poison the snapshot.
+ * The previous step (`swap_onyc_to_usdc`) writes the net USDC into
+ * `flow.amount` and flips status to `Swapped`, and that per-flow state
+ * is the only ordering guarantee `send_usdc_to_user` needs.
  *
  * Sender material: `flow.fogo_sender` (32 bytes, parsed from the VAA's
  * VTM by `unlock_onyc`) is the destination on FOGO. We pass it through
  * to the SDK's `sendUsdcToUser` builder which feeds it into the NTT
  * `transfer_lock` args along with `flow.amount` (the NET USDC amount
- * delivered by OnRe, set by `claim_redemption_usdc`).
+ * delivered by the swap, set by `swap_onyc_to_usdc`).
  */
 export async function sendUsdcToUser(
   ctx: AdvanceContext,
@@ -89,25 +84,7 @@ export async function sendUsdcToUser(
       }
     }
 
-    // Pre-flight 2: tracker MUST be closed. The on-chain
-    // `SystemAccount<'info>` constraint enforces it; mirror it
-    // pre-flight to avoid a wasted submit. If the tracker is still
-    // open, claim_redemption_usdc hasn't run for *some* flow — could
-    // be ours (status check would have caught), or could be a
-    // sibling withdraw blocking us. Either way: noop.
-    const trackerInfo = await withTimeout(
-      connection.getAccountInfo(client.redemptionTrackerPda),
-      ctx.rpcTimeoutMs,
-      'getAccountInfo(RedemptionTracker)',
-    ).catch(() => null)
-    if (trackerInfo && trackerInfo.lamports > 0) {
-      return {
-        kind: 'noop',
-        reason: `RedemptionTracker ${client.redemptionTrackerPda.toBase58()} still open — claim_redemption_usdc must close it first`,
-      }
-    }
-
-    // Pre-flight 3: USDC NTT manager FOGO peer must be registered.
+    // Pre-flight 2: USDC NTT manager FOGO peer must be registered.
     // Symmetric with `lockOnyc` for the ONyc manager. Without it the
     // outbound transfer_lock account constraints fail, never reaching
     // the handler body. USDC manager is in production today (depositors
@@ -126,7 +103,7 @@ export async function sendUsdcToUser(
       }
     }
 
-    // Pre-flight 4: USDC NTT registered_transceiver PDA must exist.
+    // Pre-flight 3: USDC NTT registered_transceiver PDA must exist.
     // NTT v3 `release_wormhole_outbound` reads it; missing PDA fails
     // with AccountNotInitialized. (Production-ready for USDC, but
     // mirror lockOnyc's defensive check.)

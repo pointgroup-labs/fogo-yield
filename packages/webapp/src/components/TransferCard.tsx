@@ -263,7 +263,9 @@ export default function TransferCard({ kind }: TransferCardProps) {
 function DownConnector() {
   return (
     <div className="pointer-events-none relative z-10 -my-3 flex h-0 items-center justify-center">
-      <div className="flex h-9 w-9 items-center justify-center rounded-full border border-border bg-background text-muted-foreground shadow-sm">
+      <div
+        className="flex h-9 w-9 items-center justify-center rounded-full border border-border bg-background text-muted-foreground shadow-sm"
+      >
         <ArrowDown className="h-4 w-4" strokeWidth={2} aria-hidden="true" />
       </div>
     </div>
@@ -276,7 +278,7 @@ function BridgeFeeRow({ fee }: { fee: ReturnType<typeof useBridgeFee> }) {
     : `${formatAmount(fee.feeRaw, fee.feeDecimals)} ${fee.feeSymbol}`
   return (
     <div className="flex items-center justify-between px-1 text-xs">
-      <span className="text-muted-foreground">Bridge fee</span>
+      <span className="text-muted-foreground">Fee</span>
       <span className={fee.error ? 'text-amber-500/80' : 'text-foreground/80 tabular-nums'}>
         {fee.error ? 'unavailable' : display}
       </span>
@@ -295,7 +297,16 @@ interface ReceiveProps {
   protocol: ReturnType<typeof useProtocolState>
 }
 
-function Receive({ kind, parsed, destSymbol, destDecimals, destBalance, destLoading, sessionEstablished, protocol }: ReceiveProps) {
+function Receive({
+  kind,
+  parsed,
+  destSymbol,
+  destDecimals,
+  destBalance,
+  destLoading,
+  sessionEstablished,
+  protocol,
+}: ReceiveProps) {
   const haveAmount = parsed !== null && parsed > 0n
   const depositQuote = haveAmount && kind === 'deposit'
     ? safeQuoteDeposit({
@@ -373,7 +384,9 @@ interface AmountPanelProps {
 
 function AmountPanel({ label, symbol, placeholder, disabled, field, balanceChip }: AmountPanelProps) {
   return (
-    <div className="rounded-xl border border-border bg-card/60 px-4 py-3.5 transition-colors focus-within:border-foreground/40">
+    <div
+      className="rounded-xl border border-border bg-card/60 px-4 py-3.5 transition-colors focus-within:border-foreground/40"
+    >
       <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
         <span>{label}</span>
         <span className="shrink-0">{balanceChip}</span>
@@ -428,7 +441,17 @@ function BalanceChip({ sessionEstablished, loading, maxAmountStr, maxRaw, onMax 
 
 function WalletIcon() {
   return (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg
+      width="12"
+      height="12"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
       <path d="M21 12V7a2 2 0 0 0-2-2H5a2 2 0 0 0 0 4h16v4" />
       <path d="M21 12v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7" />
       <circle cx="17" cy="14" r="1" />

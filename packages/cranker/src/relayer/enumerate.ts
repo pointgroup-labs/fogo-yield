@@ -197,7 +197,7 @@ async function scanWormholescanVaa(
  * alone cannot pick a handler — the deposit-leg `Claimed` means
  * "USDC swept" and routes to `swap_usdc_to_onyc`, while the
  * withdraw-leg `Claimed` means "ONyc unlocked" and routes to
- * `request_redemption_onyc`. Synthesizing leg-prefixed strings here
+ * `swap_onyc_to_usdc`. Synthesizing leg-prefixed strings here
  * lets `pickAdvanceForStatus` stay a flat switch.
  *
  * `null` flow ⇒ "no Flow PDA exists yet" — the entry-point status for
@@ -217,9 +217,9 @@ function synthesizeStatus(
     if (status === 'Swapped') {
       return 'Swapped'
     }
-    // RedemptionPending or Unknown on a deposit-leg Flow shouldn't
-    // happen — pass through verbatim so the dispatcher's default
-    // skip + skip-counter labels it for triage.
+    // Unknown on a deposit-leg Flow shouldn't happen — pass through
+    // verbatim so the dispatcher's default skip + skip-counter labels
+    // it for triage.
     return status as FlowStatus
   }
   // withdraw
@@ -231,9 +231,6 @@ function synthesizeStatus(
   }
   if (status === 'Swapped') {
     return 'WithdrawSwapped'
-  }
-  if (status === 'RedemptionPending') {
-    return 'RedemptionPending'
   }
   return status as FlowStatus
 }

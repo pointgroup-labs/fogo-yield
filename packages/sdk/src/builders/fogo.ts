@@ -122,9 +122,8 @@ export function buildFogoNttDepositIx(
 /**
  * FOGO NTT `transfer_burn` initiating a withdraw (ONyc burned on FOGO →
  * Solana ONyc custody released to the relayer authority PDA). The relayer
- * cranks `unlock_onyc` → `request_redemption_onyc` →
- * `claim_redemption_usdc` → `send_usdc_to_user`, returning USDC.s to
- * `payer` on FOGO.
+ * cranks `unlock_onyc` → `swap_onyc_to_usdc` → `send_usdc_to_user`,
+ * returning USDC.s to `payer` on FOGO.
  */
 export function buildFogoNttWithdrawIx(
   params: BuildFogoNttTransferParams,

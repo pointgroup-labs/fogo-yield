@@ -1,7 +1,8 @@
 import type { Provider } from '@anchor-lang/core'
-import type { PublicKey } from '@solana/web3.js'
+import type { AccountMeta, PublicKey } from '@solana/web3.js'
 import type { NttRedeemContext, OnreDeployment, OnreSwapContext } from './builders'
 import type { FogoOnreRelayer } from './types/fogo_onre_relayer'
+import { Buffer } from 'node:buffer'
 import { BN, Program } from '@anchor-lang/core'
 
 import {
@@ -14,8 +15,6 @@ import {
   buildNttRedeemReleaseAccounts,
   buildNttReleaseWormholeOutboundAccountList,
   buildNttTransferLockAccountList,
-  buildOnreCancelRedemptionRequestRemainingAccounts,
-  buildOnreCreateRedemptionRequestRemainingAccounts,
   buildOnreSwapRemainingAccounts,
   NTT_TRANSFER_LOCK_ACCOUNT_COUNT,
 } from './builders'
@@ -26,7 +25,6 @@ import {
   findConfigPda,
   findInflightFlowPda,
   findOutflightFlowPda,
-  findRedemptionTrackerPda,
   findUserInboxAuthorityPda,
 } from './pda'
 
@@ -39,13 +37,11 @@ export class RelayerClient {
   readonly program: Program<FogoOnreRelayer>
   readonly configPda: PublicKey
   readonly authorityPda: PublicKey
-  readonly redemptionTrackerPda: PublicKey
 
   constructor(provider: Provider) {
     this.program = new Program<FogoOnreRelayer>(IDL as unknown as FogoOnreRelayer, provider)
     ;[this.configPda] = findConfigPda(this.program.programId)
     ;[this.authorityPda] = findAuthorityPda(this.program.programId)
-    ;[this.redemptionTrackerPda] = findRedemptionTrackerPda(this.program.programId)
   }
 
   /**
@@ -157,7 +153,7 @@ export class RelayerClient {
     ntt?: NttRedeemContext
     redeemAccountsLen?: number
   }) {
-    const { inflightFlow, redemptionTracker } = this.flowPdas(params.nttInboxItem)
+    const { inflightFlow } = this.flowPdas(params.nttInboxItem)
     const { userInboxAuthority, userInboxAta } = this.userInboxBindings(
       params.userWallet,
       params.usdcMint,
@@ -191,7 +187,6 @@ export class RelayerClient {
         nttInboxItem: params.nttInboxItem,
         nttTransceiverMessage: params.nttTransceiverMessage,
         inflightFlow,
-        redemptionTracker,
         tokenProgram: TOKEN_PROGRAM_ID,
         systemProgram: SystemProgram.programId,
       })
@@ -203,11 +198,11 @@ export class RelayerClient {
    * Swap USDC to ONyc via OnRe (deposit leg). The SDK assembles OnRe's
    * 22-entry `remainingAccounts` list when `onre` is supplied.
    *
-   * `feeVault` and `redemptionTracker` are explicit even though Anchor's
-   * relation resolver could derive them from `relayerConfig.has_one` and
-   * the singleton tracker PDA respectively — silent resolution depends
-   * on Anchor version + IDL metadata staying intact across regenerations.
-   * Pass them in to make instruction construction stable across upgrades.
+   * `feeVault` is explicit even though Anchor's relation resolver
+   * could derive it from `relayerConfig.has_one` — silent resolution
+   * depends on Anchor version + IDL metadata staying intact across
+   * regenerations. Pass it in to make instruction construction stable
+   * across upgrades.
    */
   swapUsdcToOnyc(params: {
     usdcMint: PublicKey
@@ -216,7 +211,7 @@ export class RelayerClient {
     feeVault: PublicKey
     onre?: OnreSwapContext
   }) {
-    const { inflightFlow, redemptionTracker } = this.flowPdas(params.nttInboxItem)
+    const { inflightFlow } = this.flowPdas(params.nttInboxItem)
     const builder = this.program.methods
       .swapUsdcToOnyc()
       .accountsPartial({
@@ -229,7 +224,6 @@ export class RelayerClient {
         feeVault: params.feeVault,
         nttInboxItem: params.nttInboxItem,
         inflightFlow,
-        redemptionTracker,
         tokenProgram: TOKEN_PROGRAM_ID,
       })
 
@@ -404,7 +398,7 @@ export class RelayerClient {
     flowFogoSender?: Uint8Array
     outboxItem?: PublicKey
   }) {
-    const { outflightFlow, redemptionTracker } = this.flowPdas(params.nttInboxItem)
+    const { outflightFlow } = this.flowPdas(params.nttInboxItem)
     const builder = this.program.methods
       .sendUsdcToUser()
       .accountsPartial({
@@ -416,7 +410,6 @@ export class RelayerClient {
         nttInboxItem: params.nttInboxItem,
         outflightFlow,
         rentDestination: params.rentDestination,
-        redemptionTracker,
         tokenProgram: TOKEN_PROGRAM_ID,
       })
 
@@ -435,123 +428,66 @@ export class RelayerClient {
     )
   }
 
-  requestRedemptionOnyc(params: {
-    payer: PublicKey
-    usdcMint: PublicKey
+  /**
+   * Permissionless ONyc → USDC swap for the outbound (withdraw) leg.
+   * Cranker fetches a quote from any swap program and the on-chain
+   * handler:
+   *   1. deducts the withdraw fee in ONyc to `feeVaultOnycAta` (PDA-signed),
+   *   2. derives the slippage floor from OnRe's deposit-side `Offer`
+   *      pricing vector (no caller-supplied `minOut`),
+   *   3. PDA-signs an SPL `Approve` granting `swapDelegate` exactly
+   *      `flow.amount - fee` over `onycAta`,
+   *   4. invokes the swap program under plain `invoke` (no PDA-signer
+   *      propagation),
+   *   5. asserts post-balances clear the floor and exactly consume the
+   *      delegated amount,
+   *   6. transitions the flow `Claimed → Swapped` and writes the USDC
+   *      received into `flow.amount` for `send_usdc_to_user` to consume.
+   *
+   * `feeVaultOnycAta` is derived as the ATA of `onycMint` owned by
+   * `feeVault`. Caller is responsible for ensuring it exists (relayer
+   * authority can create it via the standard ATA program or operators
+   * can pre-fund out of band).
+   *
+   * `onreOffer`, `swapProgram`, `swapDelegate` semantics: `onreOffer` is
+   * OnRe's deposit-side Offer PDA (its `token_in_mint == usdc_mint` and
+   * `token_out_mint == onyc_mint` are re-validated on-chain).
+   * `swapDelegate` is the SPL delegate the swap program spends from
+   * `onyc_ata`. For Jupiter `shared_accounts_route` this is the
+   * program-authority PDA (account index 1 of the route); other routers
+   * differ. The SPL Approve auto-clears when `net_onyc` is consumed.
+   */
+  swapOnycToUsdc(params: {
     onycMint: PublicKey
+    usdcMint: PublicKey
     nttInboxItem: PublicKey
     feeVault: PublicKey
-    onre?: {
-      redemptionRequest: PublicKey
-      tokenProgram?: PublicKey
-      deployment?: OnreDeployment
-    }
+    onreOffer: PublicKey
+    swapProgram: PublicKey
+    swapDelegate: PublicKey
+    swapIxData: Uint8Array
+    swapAccounts: AccountMeta[]
   }) {
-    const { outflightFlow, redemptionTracker } = this.flowPdas(params.nttInboxItem)
-    const builder = this.program.methods
-      .requestRedemptionOnyc()
-      .accountsPartial({
-        payer: params.payer,
-        relayerConfig: this.configPda,
-        relayerAuthority: this.authorityPda,
-        usdcMint: params.usdcMint,
-        onycMint: params.onycMint,
-        usdcAta: this.relayerAta(params.usdcMint),
-        onycAta: this.relayerAta(params.onycMint),
-        feeVault: params.feeVault,
-        nttInboxItem: params.nttInboxItem,
-        outflightFlow,
-        redemptionTracker,
-        tokenProgram: TOKEN_PROGRAM_ID,
-        systemProgram: SystemProgram.programId,
-      })
-
-    if (!params.onre) {
-      return builder
-    }
-    return builder.remainingAccounts(
-      buildOnreCreateRedemptionRequestRemainingAccounts({
-        tokenInMint: params.onycMint,
-        tokenOutMint: params.usdcMint,
-        redeemer: this.authorityPda,
-        redeemerTokenAccount: this.relayerAta(params.onycMint),
-        redemptionRequest: params.onre.redemptionRequest,
-        tokenProgram: params.onre.tokenProgram,
-        deployment: params.onre.deployment,
-      }),
-    )
-  }
-
-  claimRedemptionUsdc(params: {
-    cranker: PublicKey
-    usdcMint: PublicKey
-    nttInboxItem: PublicKey
-    redemptionRequest: PublicKey
-    payerForClose: PublicKey
-  }) {
-    const { outflightFlow, redemptionTracker } = this.flowPdas(params.nttInboxItem)
+    const { outflightFlow } = this.flowPdas(params.nttInboxItem)
     return this.program.methods
-      .claimRedemptionUsdc()
+      .swapOnycToUsdc(Buffer.from(params.swapIxData))
       .accountsPartial({
-        cranker: params.cranker,
-        relayerConfig: this.configPda,
-        relayerAuthority: this.authorityPda,
-        usdcMint: params.usdcMint,
-        usdcAta: this.relayerAta(params.usdcMint),
-        nttInboxItem: params.nttInboxItem,
-        outflightFlow,
-        redemptionTracker,
-        payerForClose: params.payerForClose,
-        redemptionRequest: params.redemptionRequest,
-        tokenProgram: TOKEN_PROGRAM_ID,
-      })
-  }
-
-  cancelRedemptionOnyc(params: {
-    authority: PublicKey
-    onycMint: PublicKey
-    nttInboxItem: PublicKey
-    payerForClose: PublicKey
-    onre?: {
-      redemptionRequest: PublicKey
-      redemptionAdmin: PublicKey
-      usdcMint: PublicKey
-      tokenProgram?: PublicKey
-      deployment?: OnreDeployment
-    }
-  }) {
-    const { outflightFlow, redemptionTracker } = this.flowPdas(params.nttInboxItem)
-    const builder = this.program.methods
-      .cancelRedemptionOnyc()
-      .accountsPartial({
-        authority: params.authority,
         relayerConfig: this.configPda,
         relayerAuthority: this.authorityPda,
         onycMint: params.onycMint,
+        usdcMint: params.usdcMint,
         onycAta: this.relayerAta(params.onycMint),
+        usdcAta: this.relayerAta(params.usdcMint),
+        feeVault: params.feeVault,
+        feeVaultOnycAta: getAssociatedTokenAddressSync(params.onycMint, params.feeVault, true),
         nttInboxItem: params.nttInboxItem,
         outflightFlow,
-        redemptionTracker,
-        payerForClose: params.payerForClose,
+        onreOffer: params.onreOffer,
+        swapProgram: params.swapProgram,
+        swapDelegate: params.swapDelegate,
         tokenProgram: TOKEN_PROGRAM_ID,
       })
-
-    if (!params.onre) {
-      return builder
-    }
-    return builder.remainingAccounts(
-      buildOnreCancelRedemptionRequestRemainingAccounts({
-        tokenInMint: params.onycMint,
-        tokenOutMint: params.onre.usdcMint,
-        signer: this.authorityPda,
-        redeemer: this.authorityPda,
-        redeemerTokenAccount: this.relayerAta(params.onycMint),
-        redemptionAdmin: params.onre.redemptionAdmin,
-        redemptionRequest: params.onre.redemptionRequest,
-        tokenProgram: params.onre.tokenProgram,
-        deployment: params.onre.deployment,
-      }),
-    )
+      .remainingAccounts(params.swapAccounts)
   }
 
   async fetchConfig() {
@@ -573,13 +509,13 @@ export class RelayerClient {
   }
 
   /**
-   * Derive the three flow-tracking PDAs keyed off a single `nttInboxItem`.
+   * Derive the two flow-tracking PDAs keyed off a single `nttInboxItem`.
    *
-   * Every flow-driving instruction (claim/swap/request/claim-redemption/
-   * cancel/lock/unlock/send) needs some subset of `{inflightFlow,
-   * outflightFlow, redemptionTracker}`. Centralising the derivation
-   * here keeps method bodies focused on which accounts an instruction
-   * actually consumes — callers destructure only what they need.
+   * Every flow-driving instruction (claim/swap/lock/unlock/send) needs
+   * some subset of `{inflightFlow, outflightFlow}`. Centralising the
+   * derivation here keeps method bodies focused on which accounts an
+   * instruction actually consumes — callers destructure only what they
+   * need.
    */
   /**
    * Shape the 14-account NTT `transfer_lock` argument list. Both
@@ -611,11 +547,10 @@ export class RelayerClient {
   private flowPdas(nttInboxItem: PublicKey): {
     inflightFlow: PublicKey
     outflightFlow: PublicKey
-    redemptionTracker: PublicKey
   } {
     const [inflightFlow] = findInflightFlowPda(nttInboxItem, this.program.programId)
     const [outflightFlow] = findOutflightFlowPda(nttInboxItem, this.program.programId)
-    return { inflightFlow, outflightFlow, redemptionTracker: this.redemptionTrackerPda }
+    return { inflightFlow, outflightFlow }
   }
 
   /**

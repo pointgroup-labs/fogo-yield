@@ -13,9 +13,10 @@
  */
 
 const RACE_TABLE: Record<number, string> = {
-  // Relayer InsufficientInboxBalance: claim_usdc raced against a prior
-  // claim_usdc + swap_usdc_to_onyc cycle that drained user_inbox_ata.
-  6026: 'lost race — another cranker drained user_inbox_ata before our claim_usdc landed (InsufficientInboxBalance, code 6026)',
+  // Relayer InsufficientInboxBalance (ordinal 22 in error.rs): claim_usdc
+  // raced against a prior claim_usdc + swap_usdc_to_onyc cycle that drained
+  // user_inbox_ata.
+  6022: 'lost race — another cranker drained user_inbox_ata before our claim_usdc landed (InsufficientInboxBalance, code 6022)',
 }
 
 type AnchorErrorShape = {

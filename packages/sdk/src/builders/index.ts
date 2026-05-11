@@ -1,6 +1,7 @@
 export * from './fogo'
 export * from './fogo-redeem'
 export * from './intent-transfer'
+export * from './jupiter'
 export * from './ntt'
 export * from './ntt-state'
 export * from './onre'

@@ -110,7 +110,10 @@ function BridgeRow({ row, nowMs }: { row: TimelineRow, nowMs: number }) {
   return (
     <Card className="py-0">
       <CardContent className="flex items-center gap-3 px-3 py-2.5">
-        <span aria-hidden className="flex size-7 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
+        <span
+          aria-hidden
+          className="flex size-7 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground"
+        >
           <DirectionIcon className="size-3.5" />
         </span>
         <div className="flex min-w-0 flex-1 flex-col leading-tight">
@@ -121,7 +124,9 @@ function BridgeRow({ row, nowMs }: { row: TimelineRow, nowMs: number }) {
               <span className="font-medium tabular-nums">
                 {row.amountIsApproximate
                   ? (
-                      <span title="Approximate — reconstructed from on-chain data, may differ slightly from your typed amount">
+                      <span
+                        title="Approximate — reconstructed from on-chain data, may differ slightly from your typed amount"
+                      >
                         ~
                         {amount}
                       </span>
@@ -173,9 +178,9 @@ function StatusBadge({ row }: { row: TimelineRow }) {
   }
   if (row.status === 'pending') {
     return (
-      <Badge variant="secondary" aria-label="status: bridging" className="gap-1">
+      <Badge variant="secondary" aria-label="status: pending" className="gap-1">
         <Loader2 aria-hidden className="size-3 animate-spin" />
-        Bridging
+        Pending
       </Badge>
     )
   }
