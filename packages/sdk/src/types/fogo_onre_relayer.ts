@@ -8,7 +8,7 @@ export type FogoOnreRelayer = {
   "address": "onrenRKgX54qtWeK3cuaTBE71xx7dWMXn82ubH61vAp",
   "metadata": {
     "name": "fogoOnreRelayer",
-    "version": "0.1.2",
+    "version": "0.1.4",
     "spec": "0.1.0",
     "description": "Fogo OnRe relayer — stateless PDA-custody bridge between OnRe and Wormhole NTT on Solana",
     "repository": "https://github.com/pointgroup-labs/fogo-onre"
@@ -914,6 +914,12 @@ export type FogoOnreRelayer = {
     },
     {
       "name": "sendUsdcToUser",
+      "docs": [
+        "Lock USDC via NTT and atomically emit the outbound VAA back to",
+        "`flow.fogo_sender`. `transfer_lock_account_count` splits",
+        "`remaining_accounts` between `transfer_lock` and",
+        "`release_wormhole_outbound` (mirrors `lock_onyc`)."
+      ],
       "discriminator": [
         34,
         19,
@@ -1075,7 +1081,12 @@ export type FogoOnreRelayer = {
           "name": "tokenProgram"
         }
       ],
-      "args": []
+      "args": [
+        {
+          "name": "transferLockAccountCount",
+          "type": "u8"
+        }
+      ]
     },
     {
       "name": "swapOnycToUsdc",
@@ -1277,68 +1288,14 @@ export type FogoOnreRelayer = {
         {
           "name": "feeVault",
           "docs": [
-            "authority is the fee_vault wallet (off-chain key, configurable)."
+            "Fee destination — the ONyc token account configured at",
+            "`initialize` / `configure` time (pinned via `has_one`). Receives",
+            "the withdraw-fee transfer directly; no derived child ATA."
           ],
+          "writable": true,
           "relations": [
             "relayerConfig"
           ]
-        },
-        {
-          "name": "feeVaultOnycAta",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "account",
-                "path": "feeVault"
-              },
-              {
-                "kind": "account",
-                "path": "tokenProgram"
-              },
-              {
-                "kind": "account",
-                "path": "onycMint"
-              }
-            ],
-            "program": {
-              "kind": "const",
-              "value": [
-                140,
-                151,
-                37,
-                143,
-                78,
-                36,
-                137,
-                241,
-                187,
-                61,
-                16,
-                41,
-                20,
-                142,
-                13,
-                131,
-                11,
-                90,
-                19,
-                153,
-                218,
-                255,
-                16,
-                132,
-                4,
-                142,
-                123,
-                216,
-                219,
-                233,
-                248,
-                89
-              ]
-            }
-          }
         },
         {
           "name": "nttInboxItem"
@@ -2215,7 +2172,7 @@ export type FogoOnreRelayer = {
           {
             "name": "feeOnyc",
             "docs": [
-              "Withdraw fee in ONyc, transferred to `fee_vault_onyc_ata`."
+              "Withdraw fee in ONyc, transferred to `fee_vault`."
             ],
             "type": "u64"
           },

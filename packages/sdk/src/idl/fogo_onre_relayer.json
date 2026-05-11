@@ -2,7 +2,7 @@
   "address": "onrenRKgX54qtWeK3cuaTBE71xx7dWMXn82ubH61vAp",
   "metadata": {
     "name": "fogo_onre_relayer",
-    "version": "0.1.2",
+    "version": "0.1.4",
     "spec": "0.1.0",
     "description": "Fogo OnRe relayer — stateless PDA-custody bridge between OnRe and Wormhole NTT on Solana",
     "repository": "https://github.com/pointgroup-labs/fogo-onre"
@@ -908,6 +908,12 @@
     },
     {
       "name": "send_usdc_to_user",
+      "docs": [
+        "Lock USDC via NTT and atomically emit the outbound VAA back to",
+        "`flow.fogo_sender`. `transfer_lock_account_count` splits",
+        "`remaining_accounts` between `transfer_lock` and",
+        "`release_wormhole_outbound` (mirrors `lock_onyc`)."
+      ],
       "discriminator": [
         34,
         19,
@@ -1069,7 +1075,12 @@
           "name": "token_program"
         }
       ],
-      "args": []
+      "args": [
+        {
+          "name": "transfer_lock_account_count",
+          "type": "u8"
+        }
+      ]
     },
     {
       "name": "swap_onyc_to_usdc",
@@ -1271,68 +1282,14 @@
         {
           "name": "fee_vault",
           "docs": [
-            "authority is the fee_vault wallet (off-chain key, configurable)."
+            "Fee destination — the ONyc token account configured at",
+            "`initialize` / `configure` time (pinned via `has_one`). Receives",
+            "the withdraw-fee transfer directly; no derived child ATA."
           ],
+          "writable": true,
           "relations": [
             "relayer_config"
           ]
-        },
-        {
-          "name": "fee_vault_onyc_ata",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "account",
-                "path": "fee_vault"
-              },
-              {
-                "kind": "account",
-                "path": "token_program"
-              },
-              {
-                "kind": "account",
-                "path": "onyc_mint"
-              }
-            ],
-            "program": {
-              "kind": "const",
-              "value": [
-                140,
-                151,
-                37,
-                143,
-                78,
-                36,
-                137,
-                241,
-                187,
-                61,
-                16,
-                41,
-                20,
-                142,
-                13,
-                131,
-                11,
-                90,
-                19,
-                153,
-                218,
-                255,
-                16,
-                132,
-                4,
-                142,
-                123,
-                216,
-                219,
-                233,
-                248,
-                89
-              ]
-            }
-          }
         },
         {
           "name": "ntt_inbox_item"
@@ -2209,7 +2166,7 @@
           {
             "name": "fee_onyc",
             "docs": [
-              "Withdraw fee in ONyc, transferred to `fee_vault_onyc_ata`."
+              "Withdraw fee in ONyc, transferred to `fee_vault`."
             ],
             "type": "u64"
           },

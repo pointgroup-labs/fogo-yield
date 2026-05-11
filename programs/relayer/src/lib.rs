@@ -57,8 +57,15 @@ pub mod fogo_onre_relayer {
         unlock_onyc::handler(ctx, redeem_accounts_len)
     }
 
-    pub fn send_usdc_to_user<'info>(ctx: Context<'info, SendUsdcToUser<'info>>) -> Result<()> {
-        send_usdc_to_user::handler(ctx)
+    /// Lock USDC via NTT and atomically emit the outbound VAA back to
+    /// `flow.fogo_sender`. `transfer_lock_account_count` splits
+    /// `remaining_accounts` between `transfer_lock` and
+    /// `release_wormhole_outbound` (mirrors `lock_onyc`).
+    pub fn send_usdc_to_user<'info>(
+        ctx: Context<'info, SendUsdcToUser<'info>>,
+        transfer_lock_account_count: u8,
+    ) -> Result<()> {
+        send_usdc_to_user::handler(ctx, transfer_lock_account_count)
     }
 
     pub fn swap_usdc_to_onyc<'info>(ctx: Context<'info, SwapUsdcToOnyc<'info>>) -> Result<()> {

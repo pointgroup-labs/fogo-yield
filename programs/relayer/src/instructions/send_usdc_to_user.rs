@@ -2,18 +2,29 @@ use anchor_lang::prelude::*;
 use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
 
 use crate::constants::{
-    CONFIG_SEED, FLOW_OUTBOUND_SEED, FOGO_WORMHOLE_CHAIN_ID, NTT_TRANSFER_LOCK_IX,
-    NTT_USDC_PROGRAM_ID, RELAYER_SEED,
+    CONFIG_SEED, FLOW_OUTBOUND_SEED, FOGO_WORMHOLE_CHAIN_ID,
+    NTT_RELEASE_WORMHOLE_OUTBOUND_IX, NTT_TRANSFER_LOCK_IX, NTT_USDC_PROGRAM_ID, RELAYER_SEED,
 };
 use crate::cpi::{approve_ntt_session_authority, invoke_relayer_signed};
 use crate::error::RelayerError;
 use crate::events::UsdcSentToUser;
-use crate::ntt::{derive_session_authority, NttTransferArgs};
+use crate::ntt::{derive_session_authority, NttReleaseOutboundArgs, NttTransferArgs};
 use crate::state::{Flow, FlowStatus, RelayerConfig};
 
-/// Lock USDC via NTT, sending USDC.s back to `flow.fogo_sender`.
-/// Permissionless; PDA close returns rent and blocks replay.
-pub fn handler<'info>(ctx: Context<'info, SendUsdcToUser<'info>>) -> Result<()> {
+/// Lock USDC via NTT and atomically publish the outbound VAA to
+/// `flow.fogo_sender`. Permissionless; PDA close returns rent and
+/// blocks replay.
+///
+/// `transfer_lock_account_count` partitions `remaining_accounts`:
+///   `[..N]` → NTT `transfer_lock`
+///   `[N..]` → NTT `release_wormhole_outbound` (atomic VAA emission;
+///             without it the OutboxItem queues without a VAA and the
+///             user's USDC.s never lands on FOGO — mirrors
+///             `lock_onyc.rs`'s atomic-emission pattern).
+pub fn handler<'info>(
+    ctx: Context<'info, SendUsdcToUser<'info>>,
+    transfer_lock_account_count: u8,
+) -> Result<()> {
     let flow = &mut ctx.accounts.outflight_flow;
     require!(
         flow.status == FlowStatus::Swapped,
@@ -52,12 +63,35 @@ pub fn handler<'info>(ctx: Context<'info, SendUsdcToUser<'info>>) -> Result<()> 
     )?;
 
     let authority = ctx.accounts.relayer_authority.to_account_info();
+
+    // Split AFTER pre-CPI checks so failure-path tests with stub
+    // remaining_accounts trip those errors first. Mirrors lock_onyc.rs.
+    let split = transfer_lock_account_count as usize;
+    require!(
+        ctx.remaining_accounts.len() > split,
+        RelayerError::InvalidAccountSplit,
+    );
+    let (transfer_lock_accs, release_accs) = ctx.remaining_accounts.split_at(split);
+
     invoke_relayer_signed(
         NTT_USDC_PROGRAM_ID,
         &NTT_TRANSFER_LOCK_IX,
         &transfer_args,
-        ctx.remaining_accounts,
+        transfer_lock_accs,
         Some(&authority),
+        bump,
+    )?;
+
+    // Atomic VAA emission. Without this the OutboxItem queues without
+    // a Wormhole message, leaving the user's USDC stranded in NTT
+    // custody on Solana with no VAA for FOGO to redeem against.
+    // Passthrough: release CPI doesn't reserve a relayer-authority signer slot.
+    invoke_relayer_signed(
+        NTT_USDC_PROGRAM_ID,
+        &NTT_RELEASE_WORMHOLE_OUTBOUND_IX,
+        &NttReleaseOutboundArgs { revert_on_delay: false },
+        release_accs,
+        None,
         bump,
     )?;
 

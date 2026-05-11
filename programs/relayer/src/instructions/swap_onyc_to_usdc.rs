@@ -15,7 +15,7 @@
 
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::instruction::{AccountMeta, Instruction};
-use anchor_lang::solana_program::program::invoke;
+use anchor_lang::solana_program::program::invoke_signed;
 use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
 
 use crate::constants::{
@@ -56,7 +56,7 @@ pub fn handler<'info>(
             &ctx.accounts.token_program.to_account_info(),
             &ctx.accounts.onyc_ata.to_account_info(),
             &ctx.accounts.onyc_mint.to_account_info(),
-            &ctx.accounts.fee_vault_onyc_ata.to_account_info(),
+            &ctx.accounts.fee_vault.to_account_info(),
             &ctx.accounts.relayer_authority,
             authority_bump,
             fee_onyc,
@@ -137,25 +137,37 @@ pub fn handler<'info>(
         net_onyc,
     )?;
 
-    // 5. Plain `invoke` (NEVER invoke_signed) — operator cannot launder
-    //    relayer_authority into the swap as a signer; account-meta signer
-    //    flags are forwarded verbatim.
+    // 5. CPI into the router with `invoke_signed` so the relayer
+    //    authority PDA can sign for Jupiter's `userTransferAuthority`
+    //    slot (and any future router that follows the standard
+    //    "user signs" model). Force `is_signer=true` on the relayer
+    //    authority meta — `ctx.remaining_accounts` arrives with
+    //    `is_signer=false` for the PDA (no outer-tx signature exists for
+    //    a PDA), but `invoke_signed` will only honor the provided seeds
+    //    for accounts whose meta explicitly says `is_signer=true`.
+    //    Security is unchanged: the only token spending surface
+    //    PDA-signing unlocks is `onyc_ata`, and that is already bounded
+    //    by the SPL `Approve` to exactly `net_onyc` above. Post-CPI
+    //    invariants below (exact-consume on ONyc, NAV-floor on USDC)
+    //    close the loop.
+    let auth_key = ctx.accounts.relayer_authority.key();
     let metas: Vec<AccountMeta> = ctx
         .remaining_accounts
         .iter()
         .map(|a| AccountMeta {
             pubkey: *a.key,
-            is_signer: a.is_signer,
+            is_signer: a.is_signer || *a.key == auth_key,
             is_writable: a.is_writable,
         })
         .collect();
-    invoke(
+    invoke_signed(
         &Instruction {
             program_id: *ctx.accounts.swap_program.key,
             accounts: metas,
             data: swap_ix_data,
         },
         ctx.remaining_accounts,
+        &[&[RELAYER_SEED, &[authority_bump]]],
     )?;
 
     // 6. Exact-consume on ONyc, floor-check on USDC.
@@ -235,17 +247,15 @@ pub struct SwapOnycToUsdc<'info> {
     )]
     pub usdc_ata: Box<InterfaceAccount<'info, TokenAccount>>,
 
-    /// CHECK: pinned to relayer_config.fee_vault via has_one. ATA's
-    /// authority is the fee_vault wallet (off-chain key, configurable).
-    pub fee_vault: UncheckedAccount<'info>,
-
+    /// Fee destination — the ONyc token account configured at
+    /// `initialize` / `configure` time (pinned via `has_one`). Receives
+    /// the withdraw-fee transfer directly; no derived child ATA.
     #[account(
         mut,
-        associated_token::mint = onyc_mint,
-        associated_token::authority = fee_vault,
-        associated_token::token_program = token_program,
+        token::mint = onyc_mint,
+        token::token_program = token_program,
     )]
-    pub fee_vault_onyc_ata: Box<InterfaceAccount<'info, TokenAccount>>,
+    pub fee_vault: Box<InterfaceAccount<'info, TokenAccount>>,
 
     /// CHECK: validated transitively via the flow PDA seed binding.
     pub ntt_inbox_item: UncheckedAccount<'info>,

@@ -2,8 +2,15 @@ import type { AccountMeta } from '@solana/web3.js'
 import { Buffer } from 'node:buffer'
 import { PublicKey } from '@solana/web3.js'
 
-const JUP_QUOTE = 'https://quote-api.jup.ag/v6/quote'
-const JUP_SWAP_IX = 'https://quote-api.jup.ag/v6/swap-instructions'
+// Jupiter deprecated `quote-api.jup.ag/v6` in favor of host-prefixed
+// `swap/v1` endpoints: `lite-api.jup.ag` (free, rate-limited) and
+// `api.jup.ag` (keyed). Override via `JUPITER_API_BASE` for self-hosted
+// or paid deployments. Response shapes are wire-compatible with v6 for
+// the fields this builder reads (`swapInstruction`, ALT list).
+const JUP_API_BASE = (typeof process !== 'undefined' && process.env?.JUPITER_API_BASE)
+  || 'https://lite-api.jup.ag'
+const JUP_QUOTE = `${JUP_API_BASE}/swap/v1/quote`
+const JUP_SWAP_IX = `${JUP_API_BASE}/swap/v1/swap-instructions`
 
 export const JUPITER_V6_PROGRAM_ID = new PublicKey(
   'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4',

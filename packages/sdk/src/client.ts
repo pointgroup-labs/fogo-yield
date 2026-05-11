@@ -384,10 +384,11 @@ export class RelayerClient {
   }
 
   /**
-   * Send USDC.s back to `flow.fogo_sender` via NTT `transfer_lock`. Closes
-   * the outflight Flow PDA. Mirrors `lockOnyc` on the USDC mint — the NTT
-   * remaining-accounts list is appended automatically when `flowAmount`,
-   * `flowFogoSender`, and `outboxItem` are all supplied.
+   * Send USDC.s back to `flow.fogo_sender` via NTT `transfer_lock` +
+   * `release_wormhole_outbound` (atomic). Closes the outflight Flow PDA.
+   * Mirrors `lockOnyc` on the USDC mint — the on-chain handler now CPIs
+   * into both NTT ix's, so `release` is required whenever `flowAmount` /
+   * `flowFogoSender` / `outboxItem` are supplied.
    */
   sendUsdcToUser(params: {
     payer: PublicKey
@@ -397,10 +398,25 @@ export class RelayerClient {
     flowAmount?: BN | bigint
     flowFogoSender?: Uint8Array
     outboxItem?: PublicKey
+    /**
+     * NTT v3 release-publish accounts. REQUIRED whenever `flowAmount` /
+     * `flowFogoSender` / `outboxItem` are all supplied — there is no
+     * "lock-only" code path post-merge.
+     */
+    release?: {
+      wormholeProgram: PublicKey
+      wormholeBridge: PublicKey
+      wormholeFeeCollector: PublicKey
+      wormholeSequence: PublicKey
+      outboxItemSigner: PublicKey
+      /** Optional override; defaults to the manager-as-transceiver PDA. */
+      wormholeMessage?: PublicKey
+      emitter?: PublicKey
+    }
   }) {
     const { outflightFlow } = this.flowPdas(params.nttInboxItem)
     const builder = this.program.methods
-      .sendUsdcToUser()
+      .sendUsdcToUser(NTT_TRANSFER_LOCK_ACCOUNT_COUNT)
       .accountsPartial({
         payer: params.payer,
         relayerConfig: this.configPda,
@@ -417,22 +433,43 @@ export class RelayerClient {
       return builder
     }
 
-    return builder.remainingAccounts(
-      this.transferLockAccounts({
-        mint: params.usdcMint,
-        nttProgramId: NTT_USDC_PROGRAM_ID,
-        outboxItem: params.outboxItem,
-        recipientAddress: params.flowFogoSender,
-        amount: toBigInt(params.flowAmount),
-      }),
-    )
+    if (!params.release) {
+      throw new Error(
+        'sendUsdcToUser: `release` is required whenever flowAmount/flowFogoSender/outboxItem '
+        + 'are supplied. The on-chain handler now CPIs into NTT release_wormhole_outbound '
+        + 'in the same ix as transfer_lock — there is no lock-only path.',
+      )
+    }
+
+    const transferLock = this.transferLockAccounts({
+      mint: params.usdcMint,
+      nttProgramId: NTT_USDC_PROGRAM_ID,
+      outboxItem: params.outboxItem,
+      recipientAddress: params.flowFogoSender,
+      amount: toBigInt(params.flowAmount),
+    })
+
+    const releaseAccts = buildNttReleaseWormholeOutboundAccountList({
+      payer: params.payer,
+      nttProgramId: NTT_USDC_PROGRAM_ID,
+      outboxItem: params.outboxItem,
+      wormholeProgram: params.release.wormholeProgram,
+      wormholeBridge: params.release.wormholeBridge,
+      wormholeFeeCollector: params.release.wormholeFeeCollector,
+      wormholeSequence: params.release.wormholeSequence,
+      outboxItemSigner: params.release.outboxItemSigner,
+      wormholeMessage: params.release.wormholeMessage,
+      emitter: params.release.emitter,
+    })
+
+    return builder.remainingAccounts([...transferLock, ...releaseAccts])
   }
 
   /**
    * Permissionless ONyc → USDC swap for the outbound (withdraw) leg.
    * Cranker fetches a quote from any swap program and the on-chain
    * handler:
-   *   1. deducts the withdraw fee in ONyc to `feeVaultOnycAta` (PDA-signed),
+   *   1. deducts the withdraw fee in ONyc to `feeVault` directly (PDA-signed),
    *   2. derives the slippage floor from OnRe's deposit-side `Offer`
    *      pricing vector (no caller-supplied `minOut`),
    *   3. PDA-signs an SPL `Approve` granting `swapDelegate` exactly
@@ -444,10 +481,9 @@ export class RelayerClient {
    *   6. transitions the flow `Claimed → Swapped` and writes the USDC
    *      received into `flow.amount` for `send_usdc_to_user` to consume.
    *
-   * `feeVaultOnycAta` is derived as the ATA of `onycMint` owned by
-   * `feeVault`. Caller is responsible for ensuring it exists (relayer
-   * authority can create it via the standard ATA program or operators
-   * can pre-fund out of band).
+   * `feeVault` is the ONyc token account configured at `initialize` /
+   * `configure` time (pinned via `has_one` on `relayer_config`) and
+   * receives the fee transfer directly.
    *
    * `onreOffer`, `swapProgram`, `swapDelegate` semantics: `onreOffer` is
    * OnRe's deposit-side Offer PDA (its `token_in_mint == usdc_mint` and
@@ -479,7 +515,6 @@ export class RelayerClient {
         onycAta: this.relayerAta(params.onycMint),
         usdcAta: this.relayerAta(params.usdcMint),
         feeVault: params.feeVault,
-        feeVaultOnycAta: getAssociatedTokenAddressSync(params.onycMint, params.feeVault, true),
         nttInboxItem: params.nttInboxItem,
         outflightFlow,
         onreOffer: params.onreOffer,

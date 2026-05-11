@@ -45,7 +45,7 @@ pub struct OnycSwappedToUsdc {
     pub flow: Pubkey,
     /// Pre-fee ONyc unlocked by `unlock_onyc` (== `flow.amount` at entry).
     pub gross_onyc: u64,
-    /// Withdraw fee in ONyc, transferred to `fee_vault_onyc_ata`.
+    /// Withdraw fee in ONyc, transferred to `fee_vault`.
     pub fee_onyc: u64,
     /// Post-fee ONyc spent in the swap (== gross_onyc - fee_onyc).
     pub net_onyc: u64,
