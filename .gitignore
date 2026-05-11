@@ -64,3 +64,5 @@ tmp
 # and silently skip historical VAAs.
 cranker-checkpoint.json
 *-checkpoint.json
+
+./docs/superpowers
