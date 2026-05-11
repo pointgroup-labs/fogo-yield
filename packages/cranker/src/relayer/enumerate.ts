@@ -141,18 +141,27 @@ async function scanWormholescanVaa(
     // uninteresting — recording lets the floor advance past it.
     return { sequence: item.sequence, flow: null, recordable: true }
   }
-  // Distinguish three Flow PDA fetch outcomes. Anchor's `fetch` throws
-  // a recognizable "Account does not exist" message when the PDA isn't
-  // initialized — that's the routine "Pending, never claimed" signal
-  // and is recordable. Anything else is a transient RPC error that
-  // must NOT advance the watermark.
+  // Distinguish four Flow PDA fetch outcomes:
+  //   - `resolved`    — PDA exists and decoded cleanly under the current IDL.
+  //   - `missing`     — Anchor's `fetch` threw "Account does not exist".
+  //                     Routine "Pending, never claimed" signal; recordable.
+  //   - `undecodable` — PDA exists but Borsh decode failed because the
+  //                     on-chain bytes were written by an older relayer
+  //                     version with `FlowStatus` variants the new IDL no
+  //                     longer knows (typically post-upgrade pre-existing
+  //                     flows). Structural, not transient — looping on it
+  //                     wedges the scanner forever. Advance the watermark,
+  //                     log loudly, bump `flowSkipped{reason="undecodable"}`
+  //                     so the operator can triage the named PDA out-of-band.
+  //   - `rpc-error`   — anything else: real transient RPC error. Watermark
+  //                     stays put so the next poll retries.
   //
   // Leg-aware: deposit flows live under `findInflightFlowPda`,
   // withdraw flows under `findOutflightFlowPda` — different seed
   // prefix, different PDA. Fetching the wrong one for a withdraw
   // would always 404 and stamp the VAA as `Pending` forever, even
   // after `unlock_onyc` initialized the outflight PDA.
-  let fetchOutcome: 'resolved' | 'missing' | 'rpc-error' = 'rpc-error'
+  let fetchOutcome: 'resolved' | 'missing' | 'undecodable' | 'rpc-error' = 'rpc-error'
   const fetchFlow = leg === 'withdraw'
     ? ctx.client.fetchOutflightFlow.bind(ctx.client)
     : ctx.client.fetchInflightFlow.bind(ctx.client)
@@ -166,6 +175,16 @@ async function scanWormholescanVaa(
         fetchOutcome = 'missing'
         return null
       }
+      if (isUndecodableAccountError(err)) {
+        ctx.log.warn('Flow PDA exists but is undecodable under current IDL — likely written by an older relayer version; advancing watermark, operator triage required', {
+          leg,
+          nttInboxItem: resolved.nttInboxItem.toBase58(),
+          ...errorFieldsCompact(err),
+        })
+        ctx.metrics.flowSkipped.inc({ reason: 'undecodable' })
+        fetchOutcome = 'undecodable'
+        return null
+      }
       ctx.log.warn('fetchFlow failed (transient — watermark NOT advanced)', {
         leg,
         nttInboxItem: resolved.nttInboxItem.toBase58(),
@@ -176,6 +195,23 @@ async function scanWormholescanVaa(
     })
   if (fetchOutcome === 'rpc-error') {
     return { sequence: item.sequence, flow: null, recordable: false }
+  }
+  if (fetchOutcome === 'undecodable') {
+    // Synthesize a leg-prefixed sentinel status so the FSM's
+    // `pickAdvanceForStatus` default-skips it (no handler will ever
+    // match an `*Undecodable` status). The VAA is recordable — we've
+    // logged + emitted metric — so the watermark moves past it and
+    // the scanner stops re-fetching the same stuck PDA on every poll.
+    return {
+      sequence: item.sequence,
+      flow: {
+        pubkey: resolved.nttInboxItem,
+        status: leg === 'withdraw' ? 'WithdrawUndecodable' : 'DepositUndecodable',
+        fogoTx: item.txHash ?? '',
+        vaaHex: Buffer.from(item.vaa).toString('hex'),
+      },
+      recordable: true,
+    }
   }
   return {
     sequence: item.sequence,
@@ -238,6 +274,36 @@ function synthesizeStatus(
 function isAccountMissingError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err)
   return msg.includes('Account does not exist or has no data')
+}
+
+/**
+ * Recognise the failure mode where a `Flow` PDA exists on-chain but its
+ * bytes don't match the IDL the cranker was built against. The canonical
+ * stack is:
+ *
+ *   TypeError: Cannot read properties of null (reading 'property')
+ *     at Union.decode (anchor's BorshAccountsCoder)
+ *     at Structure.decode
+ *     at BorshAccountsCoder.decode
+ *
+ * Trigger: a relayer upgrade removed `FlowStatus` enum variants that
+ * pre-existing on-chain `Flow` PDAs still carry as their `status` tag
+ * byte. Anchor's union decoder returns `null` for the unknown variant
+ * and the next field-access crashes. This is permanent for that PDA —
+ * no amount of retrying will change the on-chain bytes — so the scanner
+ * must advance past it rather than wedge.
+ *
+ * Conservative match: require both a `TypeError` instance and an Anchor
+ * Borsh-coder frame in the stack, so unrelated `TypeError`s from
+ * elsewhere in the call graph aren't silently swept into "advance the
+ * watermark".
+ */
+export function isUndecodableAccountError(err: unknown): boolean {
+  if (!(err instanceof TypeError)) {
+    return false
+  }
+  const stack = err.stack ?? ''
+  return /BorshAccountsCoder|Union\.decode|Structure\.decode/.test(stack)
 }
 
 function resolveVaaForLeg(ctx: AdvanceContext, vaaBytes: Uint8Array, leg: VaaLeg): ResolvedNttVaa | null {
