@@ -12,6 +12,10 @@ const DEFAULT_ONYC_EMITTER_HEX = Buffer.from(DEFAULT_ONYC_EMITTER.toBytes()).toS
 // emitter for outbound Solana → FOGO ONyc VAAs derives from the same
 // `NTT_ONYC_PROGRAM_ID` constant.
 const DEFAULT_SOLANA_ONYC_EMITTER_HEX = DEFAULT_ONYC_EMITTER_HEX
+// Same bytecode/program id on Solana and FOGO USDC.s legs, so the
+// outbound source emitter for redeem VAAs derives from the SDK's
+// `NTT_USDC_PROGRAM_ID` constant.
+const DEFAULT_SOLANA_USDC_EMITTER_HEX = DEFAULT_USDC_EMITTER_HEX
 
 const schema = z.object({
   SOLANA_RPC_URL: z.string().url().refine(
@@ -35,6 +39,12 @@ const schema = z.object({
    *  Defaults to PDA derived from SDK's NTT_ONYC_PROGRAM_ID (same bytecode as FOGO side).
    */
   SOLANA_ONYC_EMITTER_HEX: z.string().regex(/^[0-9a-f]{64}$/i).default(DEFAULT_SOLANA_ONYC_EMITTER_HEX),
+  /**
+   * Hex emitter for the Solana USDC.s NTT manager. Outbound source for
+   * the redeem-completion leg of the bridge pipeline. Defaults to PDA
+   * derived from SDK's `NTT_USDC_PROGRAM_ID`.
+   */
+  SOLANA_USDC_EMITTER_HEX: z.string().regex(/^[0-9a-f]{64}$/i).default(DEFAULT_SOLANA_USDC_EMITTER_HEX),
   /** Set to "false" to disable the Solana → FOGO ONyc bridge pipeline (e.g. during incident triage). */
   BRIDGE_PIPELINE_ENABLED: z.enum(['true', 'false']).default('true'),
   /** Bridge-side concurrency budget — separate from MAX_CONCURRENT_ADVANCES so a Wormholescan backfill can't starve normal Flow advances. */
@@ -79,6 +89,7 @@ export type CrankerConfig = {
   fogoUsdcEmitterHex: string
   fogoOnycEmitterHex: string
   solanaOnycEmitterHex: string
+  solanaUsdcEmitterHex: string
   bridgePipelineEnabled: boolean
   bridgeMaxConcurrent: number
   metricsPort: number
@@ -110,6 +121,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     fogoUsdcEmitterHex: parsed.FOGO_USDC_EMITTER_HEX,
     fogoOnycEmitterHex: parsed.FOGO_ONYC_EMITTER_HEX,
     solanaOnycEmitterHex: parsed.SOLANA_ONYC_EMITTER_HEX,
+    solanaUsdcEmitterHex: parsed.SOLANA_USDC_EMITTER_HEX,
     bridgePipelineEnabled: parsed.BRIDGE_PIPELINE_ENABLED === 'true',
     bridgeMaxConcurrent: parsed.BRIDGE_MAX_CONCURRENT,
     metricsPort: parsed.METRICS_PORT,

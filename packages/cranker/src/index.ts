@@ -1,14 +1,14 @@
-import type { AdvanceContext, EnumerateFlowsFn } from './relayer'
 import type { BridgeRedeemTarget } from './bridge'
 import type { CrankerConfig } from './config'
-import type { Logger } from './utils/log'
 import type { Metrics } from './metrics'
+import type { AdvanceContext, EnumerateFlowsFn } from './relayer'
 import type { WatermarkStore } from './state'
+import type { Logger } from './utils/log'
 import { readFileSync } from 'node:fs'
 import { AnchorProvider, Wallet } from '@anchor-lang/core'
 import { RelayerClient } from '@fogo-onre/sdk'
 import { Connection, Keypair, LAMPORTS_PER_SOL, PublicKey } from '@solana/web3.js'
-import { buildSolanaOnycToFogoTarget, scanAndRedeemBridge } from './bridge'
+import { buildSolanaOnycToFogoTarget, buildSolanaUsdcToFogoTarget, scanAndRedeemBridge } from './bridge'
 import { loadConfig } from './config'
 import { runDaemon } from './daemon'
 import { createMetrics } from './metrics'
@@ -128,7 +128,7 @@ function loadKeypair(path: string): Keypair {
 
 type ScanDeps = {
   advanceCtxBase: Omit<AdvanceContext, 'abortSignal'>
-  bridgeTarget: BridgeRedeemTarget | undefined
+  bridgeTargets: BridgeRedeemTarget[]
   cfg: CrankerConfig
   metrics: Metrics
   log: Logger
@@ -153,7 +153,7 @@ type ScanDeps = {
  * scan itself threw — surface it but don't drag the other leg down.
  */
 async function runScanIteration(deps: ScanDeps, signal: AbortSignal): Promise<void> {
-  const { advanceCtxBase, bridgeTarget, cfg, metrics, log, enumerateFlows, seenAdvanceErrors, seenBridgeErrors, flowState, watermarks, wakeup } = deps
+  const { advanceCtxBase, bridgeTargets, cfg, metrics, log, enumerateFlows, seenAdvanceErrors, seenBridgeErrors, flowState, watermarks, wakeup } = deps
   const advanceCtx = { ...advanceCtxBase, abortSignal: signal }
   // Coalesce the wake signal: a tick that advances 12 flows shouldn't
   // signal 12 separate wakes. The scan*-side `progress` boolean does the
@@ -173,57 +173,69 @@ async function runScanIteration(deps: ScanDeps, signal: AbortSignal): Promise<vo
     flowState,
     onProgress,
   })
-  const bridgeScan = bridgeTarget
-    ? scanAndRedeemBridge(
-        {
-          log,
-          metrics: {
-            redeemed: metrics.bridgeRedeemed,
-            txSent: metrics.txSent,
-            rpcErrors: metrics.rpcErrors,
-          },
-          abortSignal: signal,
-          wormholescanUrl: cfg.wormholescanUrl,
-          wormholescanTimeoutMs: cfg.wormholescanTimeoutMs,
-          rpcTimeoutMs: cfg.rpcTimeoutMs,
-          txConfirmTimeoutMs: cfg.txConfirmTimeoutMs,
+  // One scan invocation per registered bridge target. Each runs against
+  // its own source emitter + dest manager, so they're independent — a
+  // Wormholescan blip on the ONyc emitter must not stall the USDC.s
+  // redeem leg and vice versa. `Promise.allSettled` below isolates a
+  // sick target without dragging the healthy ones (or the relayer flow
+  // scanner) down.
+  const bridgeScans = bridgeTargets.map(target =>
+    scanAndRedeemBridge(
+      {
+        log,
+        metrics: {
+          redeemed: metrics.bridgeRedeemed,
+          txSent: metrics.txSent,
+          rpcErrors: metrics.rpcErrors,
         },
-        bridgeTarget,
-        {
-          pageSize: cfg.wormholescanPageSize,
-          maxPages: cfg.wormholescanMaxPages,
-          maxConcurrentRedeems: cfg.bridgeMaxConcurrent,
-          seenRedeemErrors: seenBridgeErrors,
-          watermarks,
-          onProgress,
-        },
-      )
-    : Promise.resolve()
+        abortSignal: signal,
+        wormholescanUrl: cfg.wormholescanUrl,
+        wormholescanTimeoutMs: cfg.wormholescanTimeoutMs,
+        rpcTimeoutMs: cfg.rpcTimeoutMs,
+        txConfirmTimeoutMs: cfg.txConfirmTimeoutMs,
+      },
+      target,
+      {
+        pageSize: cfg.wormholescanPageSize,
+        maxPages: cfg.wormholescanMaxPages,
+        maxConcurrentRedeems: cfg.bridgeMaxConcurrent,
+        seenRedeemErrors: seenBridgeErrors,
+        watermarks,
+        onProgress,
+      },
+    ),
+  )
 
-  const [flowResult, bridgeResult] = await Promise.allSettled([flowScan, bridgeScan])
-  const bridgeLabel = bridgeTarget?.name ?? 'bridge'
+  const settled = await Promise.allSettled([flowScan, ...bridgeScans])
+  const flowResult = settled[0]
+  const bridgeResults = settled.slice(1)
 
   if (flowResult.status === 'rejected') {
     metrics.bridgeScanIterations.inc({ target: 'flow', result: 'error' })
   }
-  if (bridgeResult.status === 'rejected') {
-    metrics.bridgeScanIterations.inc({ target: bridgeLabel, result: 'error' })
-  } else if (bridgeTarget) {
-    metrics.bridgeScanIterations.inc({ target: bridgeLabel, result: 'ok' })
-  }
+  bridgeResults.forEach((br, i) => {
+    const targetName = bridgeTargets[i]?.name ?? 'bridge'
+    if (br.status === 'rejected') {
+      metrics.bridgeScanIterations.inc({ target: targetName, result: 'error' })
+      log.warn('bridge scan leg failed', { target: targetName, ...errorFields(br.reason) })
+    } else {
+      metrics.bridgeScanIterations.inc({ target: targetName, result: 'ok' })
+    }
+  })
 
-  // Re-throw only if BOTH failed: a single-leg failure shouldn't trip
-  // runDaemon's backoff if the other leg is healthy.
-  if (flowResult.status === 'rejected' && bridgeResult.status === 'rejected') {
+  // Re-throw only if EVERY leg (flow + all bridges) failed: a single
+  // sick leg shouldn't trip the daemon backoff while the rest are
+  // healthy. Mirrors the prior single-bridge behavior — a "total
+  // outage" signal, not a "any failure" signal.
+  const allFailed = flowResult.status === 'rejected'
+    && bridgeResults.every(br => br.status === 'rejected')
+  if (allFailed) {
     throw flowResult.reason instanceof Error
       ? flowResult.reason
       : new Error(String(flowResult.reason))
   }
   if (flowResult.status === 'rejected') {
-    log.warn('flow scan leg failed (bridge ok)', errorFields(flowResult.reason))
-  }
-  if (bridgeResult.status === 'rejected') {
-    log.warn('bridge scan leg failed (flow ok)', errorFields(bridgeResult.reason))
+    log.warn('flow scan leg failed (bridges ok)', errorFields(flowResult.reason))
   }
 }
 
@@ -263,6 +275,8 @@ async function main(): Promise<void> {
     metricsPort: metrics.actualPort(),
     fogoUsdcEmitterConfigured: Boolean(cfg.fogoUsdcEmitterHex),
     fogoOnycEmitterConfigured: Boolean(cfg.fogoOnycEmitterHex),
+    solanaOnycEmitterConfigured: Boolean(cfg.solanaOnycEmitterHex),
+    solanaUsdcEmitterConfigured: Boolean(cfg.solanaUsdcEmitterHex),
     bridgePipelineEnabled: cfg.bridgePipelineEnabled,
     logLevel: cfg.logLevel,
   })
@@ -369,49 +383,75 @@ async function main(): Promise<void> {
       checkpointTimer.unref()
     }
 
-    // Probe the FOGO ONyc Config once at startup (not per VAA). Mode is
-    // a deploy-time invariant — flipping it requires NTT governance — so
-    // a fresh decode + assert is sufficient. Failure to probe is fatal:
-    // a bridge that picks the wrong release variant will emit a
-    // confusing on-chain error every scan, which is worse than not
-    // running.
-    let bridgeTarget: BridgeRedeemTarget | undefined
+    // Build every bridge target this cranker should drive. Each target
+    // is independent (own source emitter, own dest manager) and is
+    // dispatched in parallel inside `runScanIteration`. A failure to
+    // build *one* target is loud-but-non-fatal — we keep the rest of
+    // the daemon (flow scanner + any healthy targets) running so a
+    // misconfigured leg can't block deposits or redeems on the healthy
+    // legs.
+    //
+    // Targets:
+    //   - `solana-onyc-to-fogo`: inbound (deposit completion). Delivers
+    //     ONyc to the user on FOGO after a deposit lands on Solana.
+    //   - `solana-usdc-to-fogo`: outbound (redeem completion). Delivers
+    //     USDC.s back to the user on FOGO after `send_usdc_to_user`
+    //     emits the outbound VAA. Without this leg, redeems strand
+    //     at the guardian network and the user never sees their USDC.s.
+    const bridgeTargets: BridgeRedeemTarget[] = []
     if (cfg.bridgePipelineEnabled) {
-      try {
-        bridgeTarget = await buildSolanaOnycToFogoTarget({
-          fogoConnection,
-          destSigner: keypair,
-          solanaOnycEmitterHex: cfg.solanaOnycEmitterHex,
-          rpcTimeoutMs: cfg.rpcTimeoutMs,
-        })
-        log.info('bridge target initialized', {
-          target: bridgeTarget.name,
-          sourceChainId: bridgeTarget.sourceChainId,
-          destChainId: bridgeTarget.destChainId,
-          destNttManager: bridgeTarget.destNttManagerProgramId.toBase58(),
-          destMint: bridgeTarget.destMint.toBase58(),
-          destReleaseMode: bridgeTarget.destReleaseMode,
-          configReady: bridgeTarget.configReady,
-        })
-        if (!bridgeTarget.configReady) {
-          // Loud warn (not fatal) — the rest of the daemon (including
-          // the relayer Flow scanner) should keep running. The bridge
-          // pipeline will noop every VAA with a precise reason until
-          // governance lands the missing peer / transceiver / rate-limit.
-          log.warn('bridge target NOT redeem-ready — VAAs will be skipped until NTT governance lands missing state', {
-            target: bridgeTarget.name,
-            configError: bridgeTarget.configError,
+      const builders: { label: string, build: () => Promise<BridgeRedeemTarget> }[] = [
+        {
+          label: 'solana-onyc-to-fogo',
+          build: () => buildSolanaOnycToFogoTarget({
+            fogoConnection,
+            destSigner: keypair,
+            solanaOnycEmitterHex: cfg.solanaOnycEmitterHex,
+            rpcTimeoutMs: cfg.rpcTimeoutMs,
+          }),
+        },
+        {
+          label: 'solana-usdc-to-fogo',
+          build: () => buildSolanaUsdcToFogoTarget({
+            fogoConnection,
+            destSigner: keypair,
+            solanaUsdcEmitterHex: cfg.solanaUsdcEmitterHex,
+            rpcTimeoutMs: cfg.rpcTimeoutMs,
+          }),
+        },
+      ]
+      for (const { label, build } of builders) {
+        try {
+          const target = await build()
+          bridgeTargets.push(target)
+          log.info('bridge target initialized', {
+            target: target.name,
+            sourceChainId: target.sourceChainId,
+            destChainId: target.destChainId,
+            destNttManager: target.destNttManagerProgramId.toBase58(),
+            destMint: target.destMint.toBase58(),
+            destReleaseMode: target.destReleaseMode,
+            configReady: target.configReady,
+          })
+          if (!target.configReady) {
+            log.warn('bridge target NOT redeem-ready — VAAs will be skipped until NTT governance lands missing state', {
+              target: target.name,
+              configError: target.configError,
+            })
+          }
+        } catch (err) {
+          log.warn('bridge target init failed — skipping this target, other legs continue', {
+            target: label,
+            ...errorFields(err),
           })
         }
-      } catch (err) {
-        log.warn('bridge target init failed — continuing with relayer Flow scanner only', errorFields(err))
       }
     }
 
     await runDaemon({
       scan: signal => runScanIteration({
         advanceCtxBase,
-        bridgeTarget,
+        bridgeTargets,
         cfg,
         metrics,
         log,
