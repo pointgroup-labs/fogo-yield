@@ -16,15 +16,10 @@ WORKDIR /repo
 
 # Layer 1: lockfile + workspace manifests only. This layer changes on
 # any dep bump but not on source edits, so the install layer hits
-# cache on every source-only push. We include `packages/cli/package.json`
-# even though we don't build cli, because root `package.json` declares
-# `@fogo-onre/cli: workspace:*` and `pnpm deploy` later resolves the
-# root manifest unfiltered — without the cli manifest in the workspace
-# map, deploy errors with ERR_PNPM_WORKSPACE_PKG_NOT_FOUND.
+# cache on every source-only push.
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
 COPY packages/sdk/package.json packages/sdk/
 COPY packages/cranker/package.json packages/cranker/
-COPY packages/cli/package.json packages/cli/
 
 # Filter install to cranker's dep closure (`...` includes transitive
 # workspace deps, i.e. @fogo-onre/sdk). Skips webapp and cli entirely
