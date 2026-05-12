@@ -16,7 +16,7 @@
     "src"
   ],
   "scripts": {
-    "prebuild": "mkdir -p src/idl src/types && cp ../../target/idl/fogo_onre_relayer.json src/idl/fogo_onre_relayer.json && cp ../../target/types/fogo_onre_relayer.ts src/types/fogo_onre_relayer.ts",
+    "prebuild": "mkdir -p src/idl src/types && { [ -f ../../target/idl/fogo_onre_relayer.json ] && cp ../../target/idl/fogo_onre_relayer.json src/idl/fogo_onre_relayer.json || echo 'skip idl copy: anchor target not built (using checked-in copy)'; } && { [ -f ../../target/types/fogo_onre_relayer.ts ] && cp ../../target/types/fogo_onre_relayer.ts src/types/fogo_onre_relayer.ts || echo 'skip types copy: anchor target not built (using checked-in copy)'; }",
     "build": "tsc",
     "clean": "rm -rf dist src/idl/fogo_onre_relayer.json src/types/fogo_onre_relayer.ts"
   },
