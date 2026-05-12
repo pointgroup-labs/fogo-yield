@@ -36,9 +36,17 @@ export function findJournalEntryBySignature(
  *
  * Amount precedence:
  *   1. Journal principal (exact — what the user typed).
- *   2. Deposit + on-chain bridge fee known: `gross - fee` (approximate).
- *   3. Otherwise: on-chain burn delta as-is (withdraws never deduct;
- *      gross IS principal, so non-approximate).
+ *   2. Deposit + on-chain bridge fee known: `gross - fee`. Treated as
+ *      exact for display: the burn's gross amount is committed on-chain,
+ *      and even if the live fee tier has shifted between sign time and
+ *      now, the move would have to exceed the 2-decimal display
+ *      threshold (~$0.01 on a sub-dollar fee) to change the rendered
+ *      number. Marking these rows approximate produced "~1 USDC.s" for
+ *      a deposit that landed at exactly 1.00, which read as a fudge
+ *      factor instead of a precise reconstruction.
+ *   3. Otherwise: on-chain burn delta as-is. Approximate for deposits
+ *      (gross is wrong by an unknown fee), exact for withdraws (no fee
+ *      deduction in the redeem leg).
  *
  * `feeRaw` is the live `FeeConfig.bridge_transfer_fee` for USDC.s,
  * `null` while still loading or if RPC failed.
@@ -63,11 +71,11 @@ export function mergeRow(
     amountIsApproximate = false
   } else if (isDeposit && feeRaw !== null && burn.amountRaw > feeRaw) {
     amountRaw = burn.amountRaw - feeRaw
-    amountIsApproximate = true
+    amountIsApproximate = false
   } else {
-    // Withdraw without journal: no fee deduction, gross IS principal.
     // Deposit without journal AND without known fee: best we can do is
-    // gross; flag approximate so the UI prefixes `~`.
+    // gross; flag approximate so the UI prefixes `~`. Withdraw without
+    // journal: no fee deduction, gross IS principal — exact.
     amountRaw = burn.amountRaw
     amountIsApproximate = isDeposit
   }
