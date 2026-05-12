@@ -32,6 +32,18 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      # QEMU lets a single amd64 runner emit arm64 layers via emulation.
+      # Cranker is Node-only — no native compile in the critical path —
+      # so the emulation tax is limited to running pnpm/tsup under
+      # qemu-aarch64 during install/build (a few extra minutes, not
+      # multiplicative). If that ever becomes painful, switch to a
+      # matrix with `runs-on: ubuntu-24.04-arm` per arch and merge
+      # manifests via docker/manifest-action — faster but more
+      # workflow surface to maintain.
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
       - uses: docker/setup-buildx-action@v3
 
       - name: Log in to ghcr.io
@@ -46,8 +58,17 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository_owner }}/fogo-onre-cranker
+          # Tag matrix:
+          #   - `:edge`              — moving pointer at default branch tip
+          #   - `:<branch>`          — sanitized branch name (e.g. `:main`,
+          #                            `:feature-foo`); lets ops pin to a
+          #                            specific branch's latest build
+          #                            without chasing a sha
+          #   - `:sha-<full-sha>`    — immutable per-commit identifier
+          #   - `:vX.Y.Z` / `:vX.Y`  — semver tags from `v*` git tags
           tags: |
             type=raw,value=edge,enable={{is_default_branch}}
+            type=ref,event=branch
             type=sha,format=long
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
@@ -58,6 +79,11 @@ jobs:
         with:
           context: .
           file: deploy/cranker/Dockerfile
+          # Multi-arch: amd64 for typical cloud servers, arm64 for
+          # Apple-silicon dev workstations and Graviton/Ampere hosts.
+          # Single tag, multi-arch manifest — `docker pull` picks the
+          # matching arch automatically.
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
