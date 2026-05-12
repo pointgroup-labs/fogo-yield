@@ -8,7 +8,6 @@
  */
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { describe, expect, it } from 'vitest'
 import {
   applySlippageFloor,
   calculateStepPrice,
@@ -21,6 +20,7 @@ import {
   redemptionExpectedOut,
   synthOfferBuffer,
 } from '@fogo-onre/sdk'
+import { describe, expect, it } from 'vitest'
 
 describe('applySlippageFloor', () => {
   it('zero bps is identity', () => {

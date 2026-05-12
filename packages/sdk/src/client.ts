@@ -1,6 +1,6 @@
 import type { Provider } from '@anchor-lang/core'
 import type { AccountMeta, PublicKey } from '@solana/web3.js'
-import type { NttRedeemContext, OnreDeployment, OnreSwapContext } from './builders'
+import type { NttRedeemContext, OnreSwapContext } from './builders'
 import type { FogoOnreRelayer } from './types/fogo_onre_relayer'
 import { Buffer } from 'node:buffer'
 import { BN, Program } from '@anchor-lang/core'
