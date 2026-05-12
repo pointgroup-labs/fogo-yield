@@ -25,6 +25,7 @@
  * keep the two in lockstep on any NTT IDL bump.
  */
 import { readFileSync } from 'node:fs'
+import { sha256 } from '@noble/hashes/sha2.js'
 import {
   Connection,
   Keypair,
@@ -36,7 +37,6 @@ import {
   TransactionMessage,
   VersionedTransaction,
 } from '@solana/web3.js'
-import { sha256 } from '@noble/hashes/sha2.js'
 
 const FOGO_RPC_DEFAULT = 'https://mainnet.fogo.io'
 const NTT_ONYC_PROGRAM_ID = new PublicKey('nttpna5vXW7BN2Aa4AfTbkCncJWTEoBsnWvjS87Xgsd')
@@ -58,11 +58,15 @@ function parseArgs(argv) {
   const out = { dryRun: false }
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
-    if (a === '--outbox-item') out.outboxItem = argv[++i]
-    else if (a === '--keypair') out.keypair = argv[++i]
-    else if (a === '--fogo-rpc') out.fogoRpc = argv[++i]
-    else if (a === '--dry-run') out.dryRun = true
-    else if (a === '-h' || a === '--help') { out.help = true }
+    if (a === '--outbox-item') {
+      out.outboxItem = argv[++i]
+    } else if (a === '--keypair') {
+      out.keypair = argv[++i]
+    } else if (a === '--fogo-rpc') {
+      out.fogoRpc = argv[++i]
+    } else if (a === '--dry-run') {
+      out.dryRun = true
+    } else if (a === '-h' || a === '--help') { out.help = true }
   }
   return out
 }
@@ -180,7 +184,7 @@ async function main() {
     const sim = await conn.simulateTransaction(tx, { commitment: 'confirmed' })
     console.log(`  err: ${JSON.stringify(sim.value.err)}`)
     console.log(`  logs (last 30):`)
-    for (const l of (sim.value.logs ?? []).slice(-30)) console.log(`    ${l}`)
+    for (const l of (sim.value.logs ?? []).slice(-30)) { console.log(`    ${l}`) }
     return
   }
 

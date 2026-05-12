@@ -31,10 +31,11 @@ function chainIdBeBuf(chainId) {
 }
 
 const findConfigPda = () => PublicKey.findProgramAddressSync([CONFIG_SEED], NTT_ONYC_PROGRAM_ID)
-const findPeerPda = (c) => PublicKey.findProgramAddressSync([PEER_SEED, chainIdBeBuf(c)], NTT_ONYC_PROGRAM_ID)
+const findPeerPda = c => PublicKey.findProgramAddressSync([PEER_SEED, chainIdBeBuf(c)], NTT_ONYC_PROGRAM_ID)
 const findOutboxRateLimitPda = () => PublicKey.findProgramAddressSync([OUTBOX_RATE_LIMIT_SEED], NTT_ONYC_PROGRAM_ID)
-const findRegisteredTransceiverPda = (xcvr) =>
-  PublicKey.findProgramAddressSync([REGISTERED_TRANSCEIVER_SEED, xcvr.toBuffer()], NTT_ONYC_PROGRAM_ID)
+function findRegisteredTransceiverPda(xcvr) {
+  return PublicKey.findProgramAddressSync([REGISTERED_TRANSCEIVER_SEED, xcvr.toBuffer()], NTT_ONYC_PROGRAM_ID)
+}
 const findEmitterPda = () => PublicKey.findProgramAddressSync([EMITTER_SEED], WH_TRANSCEIVER_PROGRAM_ID)
 
 function decodeConfig(data) {

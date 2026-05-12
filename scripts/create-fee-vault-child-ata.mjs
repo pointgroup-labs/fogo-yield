@@ -23,19 +23,18 @@
 
 import fs from 'node:fs'
 import {
+  ASSOCIATED_TOKEN_PROGRAM_ID,
+  createAssociatedTokenAccountInstruction,
+  getAssociatedTokenAddress,
+  TOKEN_PROGRAM_ID,
+} from '@solana/spl-token'
+import {
   Connection,
   Keypair,
   PublicKey,
-  SystemProgram,
-  Transaction,
   sendAndConfirmTransaction,
+  Transaction,
 } from '@solana/web3.js'
-import {
-  ASSOCIATED_TOKEN_PROGRAM_ID,
-  TOKEN_PROGRAM_ID,
-  createAssociatedTokenAccountInstruction,
-  getAssociatedTokenAddress,
-} from '@solana/spl-token'
 
 const RPC = process.env.SOLANA_RPC_URL ?? 'https://api.mainnet-beta.solana.com'
 const KEYPAIR_PATH = process.env.SOLANA_KEYPAIR

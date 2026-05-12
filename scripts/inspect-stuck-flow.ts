@@ -33,14 +33,14 @@ import { Connection, PublicKey } from '@solana/web3.js'
 const DISC = 8
 
 // `Flow` layout (state.rs:177) — byte-stable across relayer versions.
-const FLOW_FOGO_SENDER_OFFSET = DISC + 0          //  8 .. 40
-const FLOW_STATUS_TAG_OFFSET = DISC + 32          //       40
-const FLOW_AMOUNT_OFFSET = DISC + 33              // 41 .. 49
-const FLOW_PAYER_OFFSET = DISC + 41               // 49 .. 81
+const FLOW_FOGO_SENDER_OFFSET = DISC + 0 //  8 .. 40
+const FLOW_STATUS_TAG_OFFSET = DISC + 32 //       40
+const FLOW_AMOUNT_OFFSET = DISC + 33 // 41 .. 49
+const FLOW_PAYER_OFFSET = DISC + 41 // 49 .. 81
 
 // `RelayerConfig` mint offsets (state.rs:9) — also byte-stable.
-const CONFIG_USDC_MINT_OFFSET = DISC + 0          //  8 .. 40
-const CONFIG_ONYC_MINT_OFFSET = DISC + 32         // 40 .. 72
+const CONFIG_USDC_MINT_OFFSET = DISC + 0 //  8 .. 40
+const CONFIG_ONYC_MINT_OFFSET = DISC + 32 // 40 .. 72
 
 async function main() {
   const [inboxItemArg, rpcArg] = process.argv.slice(2)
