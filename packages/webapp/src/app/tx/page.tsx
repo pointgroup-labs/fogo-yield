@@ -1,6 +1,7 @@
 'use client'
 
-import { use, useEffect, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { Actions } from '@/components/tx-detail/Actions'
 import { Help } from '@/components/tx-detail/Help'
 import { HeroSummary } from '@/components/tx-detail/HeroSummary'
@@ -10,9 +11,16 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Skeleton } from '@/components/ui/skeleton'
 
 /**
- * Per-tx detail page. The URL carries the source FOGO signature; we
- * try to resolve a rich detail object via `useTxDetail` and degrade
- * gracefully when we can't.
+ * Per-tx detail page. Reached via `/tx?signature=<sig>`.
+ *
+ * **Why a query param instead of a dynamic segment?**
+ * The webapp ships under `output: 'export'` (static export) for cheap
+ * CDN-only hosting. Static export needs every URL known at build time
+ * — dynamic-segment routes (`/tx/[signature]`) require enumerating
+ * every possible signature in `generateStaticParams`, which is
+ * fundamentally impossible for a sig-keyed route. A query-param route
+ * is a single static page that reads the param at runtime, preserving
+ * shareable per-tx URLs without breaking static export.
  *
  * **Loading state machine (resolved in this exact order):**
  *
@@ -24,37 +32,54 @@ import { Skeleton } from '@/components/ui/skeleton'
  *      flashed Connect-wallet for ~100–500 ms while the SDK booted.
  *
  *   2. Session is established AND history is loading AND we don't
- *      have a journal entry to render against → skeleton. We *could*
- *      render the Hero on a journal alone, but mid-flight journals
- *      with a stale `startedAt` cause the slow-amber flash before
- *      `flow` resolves; gating on `journal !== null || !historyLoading`
- *      keeps us in the skeleton until at least one trustworthy data
- *      source has landed.
+ *      have a journal entry to render against → skeleton.
  *
  *   3. notFound (no row, no journal, history settled OR no session to
  *      load it with) → 404-style empty state with Wormholescan
- *      deep-link. Replaces the old "connect wallet" prompt: on a
- *      cold-share link, connecting a wallet wouldn't surface someone
- *      else's tx — the only useful action is to follow the bridge on
- *      Wormholescan, which is exactly what this view offers.
+ *      deep-link.
  *
  *   4. Otherwise → full detail layout.
- *
- * The `nowMs` ticker drives relative-time labels in the hero. We
- * thread it through props (not context) so the children stay pure
- * and easy to test in isolation.
  */
-export default function TxDetailPage({ params }: { params: Promise<{ signature: string }> }) {
-  // Next 15: route params are a Promise; `use()` unwraps it sync. This
-  // is the documented pattern for client-component pages.
-  const { signature } = use(params)
+export default function TxDetailPage() {
+  // `useSearchParams` requires a Suspense boundary at the page level
+  // (it suspends during static-export prerender so the placeholder
+  // shell can be emitted without `?signature=` resolved). Wrapping
+  // here colocates the boundary with its consumer; the inner
+  // component does the actual work.
+  return (
+    <Suspense fallback={<DetailSkeleton />}>
+      <TxDetailInner />
+    </Suspense>
+  )
+}
+
+function TxDetailInner() {
+  const searchParams = useSearchParams()
+  const signature = searchParams.get('signature') ?? ''
   const detail = useTxDetail(signature)
   const nowMs = useNowTicker(15_000)
 
+  // Empty signature means the user hit `/tx` with no query param —
+  // either a malformed share link or a stray click. Treat it as a
+  // dedicated empty state rather than running data fetches against
+  // an invalid signature.
+  if (signature === '') {
+    return (
+      <Alert>
+        <AlertTitle>No transaction selected</AlertTitle>
+        <AlertDescription>
+          This page expects a
+          {' '}
+          <code>?signature=</code>
+          {' '}
+          query parameter. Open a row from your bridge history to view its details.
+        </AlertDescription>
+      </Alert>
+    )
+  }
+
   // Gate 1+2: any "we don't yet know enough to render correctly" state
-  // funnels into a single skeleton. One render path = one transition,
-  // which kills the connect-wallet → yellow-flash → data → skeleton
-  // cascade caused by branching on each independent loading flag.
+  // funnels into a single skeleton.
   const isSettling
     = detail.sessionInitializing
       || (detail.sessionEstablished && detail.historyLoading && detail.journal === null)
@@ -66,7 +91,7 @@ export default function TxDetailPage({ params }: { params: Promise<{ signature: 
   // Gate 3: definitively absent — covers both "connected but signature
   // isn't yours" and "cold-share link with no local data". Both paths
   // get the Wormholescan deep-link, which is the only useful action in
-  // either case (a wallet connect wouldn't surface someone else's tx).
+  // either case.
   if (detail.notFound) {
     return (
       <Alert>
@@ -94,8 +119,6 @@ export default function TxDetailPage({ params }: { params: Promise<{ signature: 
 }
 
 function DetailSkeleton() {
-  // Mirror the rough shape of the loaded page so the layout doesn't
-  // jump on hydration: tall hero, medium timeline, two short cards.
   return (
     <div className="flex flex-col gap-4">
       <Skeleton className="h-[220px] rounded-xl" />

@@ -172,14 +172,18 @@ function BridgeRow({ row, nowMs }: { row: TimelineRow, nowMs: number }) {
   // the existing FogoScan anchor inside the row would create invalid
   // nested-<a> markup. Inner interactives (source link, Mark delivered
   // button) stopPropagation so they don't double-trigger the navigation.
+  // Route is `/tx?signature=<sig>` (query param, not dynamic segment)
+  // because the webapp ships under `output: 'export'` — see the JSDoc
+  // on `/tx/page.tsx` for the rationale.
   const router = useRouter()
+  const txHref = `/tx?signature=${row.signature}`
   const onRowClick = () => {
-    router.push(`/tx/${row.signature}`)
+    router.push(txHref)
   }
   const onRowKey = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault()
-      router.push(`/tx/${row.signature}`)
+      router.push(txHref)
     }
   }
 

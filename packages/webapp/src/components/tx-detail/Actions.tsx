@@ -51,7 +51,7 @@ function CopyLinkAction({ signature }: { signature: string }) {
     // window.location.origin keeps the share URL on whatever host the
     // user is currently on (mainnet / staging / localhost). No env
     // lookup needed; this is always correct.
-    const url = `${window.location.origin}/tx/${signature}`
+    const url = `${window.location.origin}/tx?signature=${signature}`
     try {
       await navigator.clipboard.writeText(url)
       setCopied(true)

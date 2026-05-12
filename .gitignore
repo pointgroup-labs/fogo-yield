@@ -55,6 +55,8 @@ tmp
 
 # Next.js build output
 **/.next/
+# Static-export output (`output: 'export'` in next.config.ts)
+**/out/
 
 /deploy/**/*.env
 
