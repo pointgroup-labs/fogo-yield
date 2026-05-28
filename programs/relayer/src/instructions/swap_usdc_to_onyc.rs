@@ -2,36 +2,92 @@ use anchor_lang::prelude::*;
 use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
 
 use crate::constants::{
-    CONFIG_SEED, FLOW_INBOUND_SEED, ONRE_PROGRAM_ID, ONRE_TAKE_OFFER_IX,
-    RELAYER_SEED,
+    CONFIG_SEED, FLOW_INBOUND_SEED, ONRE_DEPOSIT_OFFER_SEED, ONRE_OFFER_ACCOUNT_SIZE,
+    ONRE_PROGRAM_ID, ONRE_TAKE_OFFER_IX, RELAYER_SEED,
 };
 use crate::cpi::{invoke_relayer_signed, relayer_signed_transfer_checked};
 use crate::error::RelayerError;
 use crate::events::OnycSwapped;
-use crate::onre::OnreTakeOfferArgs;
+use crate::onre::{
+    apply_slippage_floor, calculate_step_price, deposit_expected_out, parse_active_offer_vector,
+    OnreTakeOfferArgs,
+};
 use crate::state::{Flow, FlowStatus, RelayerConfig};
 
 /// Permissionless. Swaps `flow.amount` USDC into ONyc via OnRe, then
 /// skims the deposit-leg fee from the ONyc output to `fee_vault`.
 pub fn handler<'info>(ctx: Context<'info, SwapUsdcToOnyc<'info>>) -> Result<()> {
     let flow_key = ctx.accounts.inflight_flow.key();
+    let now_unix = u64::try_from(Clock::get()?.unix_timestamp)
+        .map_err(|_| error!(RelayerError::OnreNavOverflow))?;
 
     require!(
         ctx.accounts.inflight_flow.status == FlowStatus::Claimed,
         RelayerError::FlowStatusMismatch
     );
-    require!(
-        ctx.accounts.inflight_flow.amount > 0,
-        RelayerError::ZeroAmountFlow
+    let usdc_in = ctx.accounts.inflight_flow.amount;
+    require!(usdc_in > 0, RelayerError::ZeroAmountFlow);
+
+    // NAV floor — pin onre_offer to (owner == ONRE_PROGRAM_ID) AND
+    // (key == deposit Offer PDA for the bound mints) before reading bytes.
+    require_keys_eq!(
+        *ctx.accounts.onre_offer.owner,
+        ONRE_PROGRAM_ID,
+        RelayerError::OnreOfferOwnerMismatch
+    );
+    let (expected_offer_pda, _bump) = Pubkey::find_program_address(
+        &[
+            ONRE_DEPOSIT_OFFER_SEED,
+            ctx.accounts.relayer_config.usdc_mint.as_ref(),
+            ctx.accounts.relayer_config.onyc_mint.as_ref(),
+        ],
+        &ONRE_PROGRAM_ID,
+    );
+    require_keys_eq!(
+        ctx.accounts.onre_offer.key(),
+        expected_offer_pda,
+        RelayerError::OnreOfferAddressMismatch
     );
 
+    let onyc_floor: u64 = {
+        let offer_data = ctx.accounts.onre_offer.try_borrow_data()?;
+        require!(
+            offer_data.len() >= ONRE_OFFER_ACCOUNT_SIZE,
+            RelayerError::OnreOfferTooShort
+        );
+        let in_mint = Pubkey::try_from(&offer_data[8..40])
+            .map_err(|_| error!(RelayerError::OnreOfferTooShort))?;
+        let out_mint = Pubkey::try_from(&offer_data[40..72])
+            .map_err(|_| error!(RelayerError::OnreOfferTooShort))?;
+        require_keys_eq!(
+            in_mint,
+            ctx.accounts.relayer_config.usdc_mint,
+            RelayerError::OnreOfferTokenInMintMismatch
+        );
+        require_keys_eq!(
+            out_mint,
+            ctx.accounts.relayer_config.onyc_mint,
+            RelayerError::OnreOfferTokenOutMintMismatch
+        );
+        let active = parse_active_offer_vector(&offer_data, now_unix)?;
+        let price = calculate_step_price(&active, now_unix)?;
+        let gross_expected = deposit_expected_out(
+            usdc_in,
+            price,
+            ctx.accounts.usdc_mint.decimals,
+            ctx.accounts.onyc_mint.decimals,
+        )?;
+        apply_slippage_floor(gross_expected, ctx.accounts.relayer_config.slippage_bps)?
+    };
+
     let onyc_pre = ctx.accounts.onyc_ata.amount;
+    let usdc_pre = ctx.accounts.usdc_ata.amount;
 
     invoke_relayer_signed(
         ONRE_PROGRAM_ID,
         &ONRE_TAKE_OFFER_IX,
         &OnreTakeOfferArgs {
-            amount: ctx.accounts.inflight_flow.amount,
+            amount: usdc_in,
             approval_message: None,
         },
         ctx.remaining_accounts,
@@ -40,13 +96,19 @@ pub fn handler<'info>(ctx: Context<'info, SwapUsdcToOnyc<'info>>) -> Result<()> 
     )?;
 
     ctx.accounts.onyc_ata.reload()?;
+    ctx.accounts.usdc_ata.reload()?;
     let gross = ctx
         .accounts
         .onyc_ata
         .amount
         .checked_sub(onyc_pre)
         .ok_or(RelayerError::BalanceUnderflow)?;
+    let usdc_consumed = usdc_pre
+        .checked_sub(ctx.accounts.usdc_ata.amount)
+        .ok_or(RelayerError::BalanceUnderflow)?;
     require!(gross > 0, RelayerError::ZeroAmountFlow);
+    require!(usdc_consumed == usdc_in, RelayerError::UsdcConsumedMismatch);
+    require!(gross >= onyc_floor, RelayerError::DepositSlippageBelowFloor);
 
     // `configure`'s asymmetric timelock prevents retroactive raises.
     let (net, fee) = ctx.accounts.relayer_config.apply_deposit_fee(gross)?;
@@ -119,6 +181,12 @@ pub struct SwapUsdcToOnyc<'info> {
 
     /// CHECK: validated transitively via the flow PDA seeds.
     pub ntt_inbox_item: UncheckedAccount<'info>,
+
+    /// CHECK: handler enforces (owner == ONRE_PROGRAM_ID) AND
+    /// (key == PDA([b"offer", usdc_mint, onyc_mint], ONRE_PROGRAM_ID)).
+    /// Read-only pricing oracle for the deposit-leg NAV floor; the same
+    /// account is also forwarded inside `remaining_accounts` to take_offer.
+    pub onre_offer: UncheckedAccount<'info>,
 
     #[account(
         mut,

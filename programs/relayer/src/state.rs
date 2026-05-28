@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 
-use crate::constants::{CONFIG_SEED, FEE_TIMELOCK_SLOTS, MAX_FEE_BPS};
+use crate::constants::{CONFIG_SEED, FEE_TIMELOCK_SLOTS, MAX_FEE_BPS, MAX_SLIPPAGE_BPS};
 use crate::error::RelayerError;
 
 /// `authority` gates governance only; flow instructions are permissionless.
@@ -15,6 +15,10 @@ pub struct RelayerConfig {
 
     pub deposit_fee_bps: u16,
     pub withdraw_fee_bps: u16,
+
+    /// Authority-tunable NAV slippage tolerance applied on both swap legs.
+    /// Hard-capped at `MAX_SLIPPAGE_BPS` by `validate`.
+    pub slippage_bps: u16,
 
     pub relayer_authority_bump: u8,
     pub bump: u8,
@@ -54,6 +58,10 @@ impl RelayerConfig {
         require!(
             self.withdraw_fee_bps <= MAX_FEE_BPS,
             RelayerError::FeeBpsTooHigh
+        );
+        require!(
+            self.slippage_bps <= MAX_SLIPPAGE_BPS,
+            RelayerError::SlippageBpsTooHigh
         );
         if let Some(p) = &self.pending_fee {
             require!(!p.is_empty(), RelayerError::EmptyPendingFee);

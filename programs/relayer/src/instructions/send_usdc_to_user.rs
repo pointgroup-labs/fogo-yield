@@ -2,8 +2,8 @@ use anchor_lang::prelude::*;
 use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
 
 use crate::constants::{
-    CONFIG_SEED, FLOW_OUTBOUND_SEED, FOGO_WORMHOLE_CHAIN_ID,
-    NTT_RELEASE_WORMHOLE_OUTBOUND_IX, NTT_TRANSFER_LOCK_IX, NTT_USDC_PROGRAM_ID, RELAYER_SEED,
+    CONFIG_SEED, FLOW_OUTBOUND_SEED, FOGO_WORMHOLE_CHAIN_ID, NTT_RELEASE_WORMHOLE_OUTBOUND_IX,
+    NTT_TRANSFER_LOCK_IX, NTT_USDC_PROGRAM_ID, RELAYER_SEED,
 };
 use crate::cpi::{approve_ntt_session_authority, invoke_relayer_signed};
 use crate::error::RelayerError;
@@ -89,7 +89,9 @@ pub fn handler<'info>(
     invoke_relayer_signed(
         NTT_USDC_PROGRAM_ID,
         &NTT_RELEASE_WORMHOLE_OUTBOUND_IX,
-        &NttReleaseOutboundArgs { revert_on_delay: false },
+        &NttReleaseOutboundArgs {
+            revert_on_delay: false,
+        },
         release_accs,
         None,
         bump,

@@ -75,10 +75,11 @@ pub mod fogo_onre_relayer {
     /// Permissionless: convert outbound flow's ONyc → USDC via any swap
     /// program under NAV-anchored slippage protection. Withdraw fee is
     /// taken in ONyc up front, the post-fee remainder swapped under a
-    /// bounded SPL `Approve` to `swap_delegate`. The swap CPI runs under
-    /// plain `invoke` — PDA-signer privilege does not propagate. Replaces
-    /// the OnRe redemption-request chain (KYC-gated, never executes for
-    /// the relayer PDA).
+    /// bounded SPL `Approve` to `swap_delegate`. The swap CPI is signed by
+    /// the relayer authority; post-CPI assertions require the relayer ATAs'
+    /// authority/delegate/close state to be pristine, so PDA-signer
+    /// privilege cannot persist. Replaces the OnRe redemption-request chain
+    /// (KYC-gated, never executes for the relayer PDA).
     pub fn swap_onyc_to_usdc<'info>(
         ctx: Context<'info, SwapOnycToUsdc<'info>>,
         swap_ix_data: Vec<u8>,
@@ -89,13 +90,22 @@ pub mod fogo_onre_relayer {
     /// Authority-only. `None` args leave fields unchanged. Fee decreases
     /// apply instantly; increases stage for `FEE_TIMELOCK_SLOTS` (~2 days)
     /// then auto-promote on the next `configure` after the window.
+    /// `slippage_bps` (capped at `MAX_SLIPPAGE_BPS` via `validate`) applies
+    /// immediately to both swap legs' NAV floor.
     pub fn configure(
         ctx: Context<Configure>,
         deposit_fee_bps: Option<u16>,
         withdraw_fee_bps: Option<u16>,
         new_authority: Option<Pubkey>,
+        slippage_bps: Option<u16>,
     ) -> Result<()> {
-        configure::handler(ctx, deposit_fee_bps, withdraw_fee_bps, new_authority)
+        configure::handler(
+            ctx,
+            deposit_fee_bps,
+            withdraw_fee_bps,
+            new_authority,
+            slippage_bps,
+        )
     }
 
     /// Two-step rotation, step 2. Signer must equal `pending_authority`;

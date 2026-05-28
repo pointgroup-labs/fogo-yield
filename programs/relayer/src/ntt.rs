@@ -149,8 +149,7 @@ pub fn validate_ntt_redeem_release_accounts<'info>(
     // registration would let foreign-chain VAAs create Flow PDAs that
     // outbound legs blindly bridge back to FOGO.
     let (expected_peer, _) = derive_ntt_peer(ntt_program, FOGO_WORMHOLE_CHAIN_ID);
-    let (expected_inbox_rl, _) =
-        derive_ntt_inbox_rate_limit(ntt_program, FOGO_WORMHOLE_CHAIN_ID);
+    let (expected_inbox_rl, _) = derive_ntt_inbox_rate_limit(ntt_program, FOGO_WORMHOLE_CHAIN_ID);
     require_keys_eq!(
         redeem_accs[REDEEM_IDX_PEER].key(),
         expected_peer,
@@ -210,7 +209,8 @@ pub fn derive_inbox_item_pda_from_vtm(
     let from_chain_be = from_chain_le.to_be_bytes();
 
     let id = &vtm_data[TRANSCEIVER_MESSAGE_ID_OFFSET..TRANSCEIVER_MESSAGE_ID_OFFSET + 32];
-    let sender = &vtm_data[TRANSCEIVER_MESSAGE_SENDER_OFFSET..TRANSCEIVER_MESSAGE_SENDER_OFFSET + 32];
+    let sender =
+        &vtm_data[TRANSCEIVER_MESSAGE_SENDER_OFFSET..TRANSCEIVER_MESSAGE_SENDER_OFFSET + 32];
 
     let trimmed_amount_le = u64::from_le_bytes(
         vtm_data[TRANSCEIVER_MESSAGE_TRIMMED_AMOUNT_OFFSET
@@ -221,8 +221,8 @@ pub fn derive_inbox_item_pda_from_vtm(
     let trimmed_amount_be = trimmed_amount_le.to_be_bytes();
     let trimmed_decimals = vtm_data[TRANSCEIVER_MESSAGE_TRIMMED_DECIMALS_OFFSET];
 
-    let source_token =
-        &vtm_data[TRANSCEIVER_MESSAGE_SOURCE_TOKEN_OFFSET..TRANSCEIVER_MESSAGE_SOURCE_TOKEN_OFFSET + 32];
+    let source_token = &vtm_data
+        [TRANSCEIVER_MESSAGE_SOURCE_TOKEN_OFFSET..TRANSCEIVER_MESSAGE_SOURCE_TOKEN_OFFSET + 32];
 
     let to_chain_le = u16::from_le_bytes([
         vtm_data[TRANSCEIVER_MESSAGE_TO_CHAIN_OFFSET],

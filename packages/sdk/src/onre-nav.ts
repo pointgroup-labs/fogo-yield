@@ -33,12 +33,17 @@ export const ONRE_SECONDS_IN_YEAR = 31_536_000n
 
 /**
  * Mirror of the on-chain `MAX_SLIPPAGE_BPS` compile-time constant
- * (`programs/relayer/src/constants.rs`). Consumers use this to compute
- * the same NAV floor `swap_onyc_to_usdc` will enforce. If the on-chain
- * constant ever changes, this mirror MUST move in lockstep — otherwise
- * preview "quote clears floor" verdicts that the chain will reject.
+ * (`programs/relayer/src/constants.rs`) — the hard ceiling on the
+ * authority-configurable `RelayerConfig.slippage_bps`. Drift tripwire
+ * only; the floor preview uses the *configured* slippage, not this cap.
  */
-export const MAX_SLIPPAGE_BPS = 10
+export const MAX_SLIPPAGE_BPS = 200
+
+/**
+ * Mirror of the on-chain `DEFAULT_SLIPPAGE_BPS` (seeded at `initialize`).
+ * Use as the floor-preview slippage when the live config is unavailable.
+ */
+export const DEFAULT_SLIPPAGE_BPS = 10
 
 const U64_MAX = (1n << 64n) - 1n
 

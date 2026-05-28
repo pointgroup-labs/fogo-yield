@@ -361,7 +361,9 @@ export type FogoOnreRelayer = {
       "docs": [
         "Authority-only. `None` args leave fields unchanged. Fee decreases",
         "apply instantly; increases stage for `FEE_TIMELOCK_SLOTS` (~2 days)",
-        "then auto-promote on the next `configure` after the window."
+        "then auto-promote on the next `configure` after the window.",
+        "`slippage_bps` (capped at `MAX_SLIPPAGE_BPS` via `validate`) applies",
+        "immediately to both swap legs' NAV floor."
       ],
       "discriminator": [
         245,
@@ -517,6 +519,12 @@ export type FogoOnreRelayer = {
           "name": "newAuthority",
           "type": {
             "option": "pubkey"
+          }
+        },
+        {
+          "name": "slippageBps",
+          "type": {
+            "option": "u16"
           }
         }
       ]
@@ -1094,10 +1102,11 @@ export type FogoOnreRelayer = {
         "Permissionless: convert outbound flow's ONyc → USDC via any swap",
         "program under NAV-anchored slippage protection. Withdraw fee is",
         "taken in ONyc up front, the post-fee remainder swapped under a",
-        "bounded SPL `Approve` to `swap_delegate`. The swap CPI runs under",
-        "plain `invoke` — PDA-signer privilege does not propagate. Replaces",
-        "the OnRe redemption-request chain (KYC-gated, never executes for",
-        "the relayer PDA)."
+        "bounded SPL `Approve` to `swap_delegate`. The swap CPI is signed by",
+        "the relayer authority; post-CPI assertions require the relayer ATAs'",
+        "authority/delegate/close state to be pristine, so PDA-signer",
+        "privilege cannot persist. Replaces the OnRe redemption-request chain",
+        "(KYC-gated, never executes for the relayer PDA)."
       ],
       "discriminator": [
         113,
@@ -1112,7 +1121,6 @@ export type FogoOnreRelayer = {
       "accounts": [
         {
           "name": "relayerConfig",
-          "writable": true,
           "pda": {
             "seeds": [
               {
@@ -1140,7 +1148,8 @@ export type FogoOnreRelayer = {
         {
           "name": "relayerAuthority",
           "docs": [
-            "uses plain `invoke`, so PDA-signer privilege does not propagate."
+            "swap's reach is bounded by the bounded Approve and re-checked by the",
+            "post-CPI authority assertions in the handler."
           ],
           "pda": {
             "seeds": [
@@ -1551,6 +1560,14 @@ export type FogoOnreRelayer = {
         },
         {
           "name": "nttInboxItem"
+        },
+        {
+          "name": "onreOffer",
+          "docs": [
+            "(key == PDA([b\"offer\", usdc_mint, onyc_mint], ONRE_PROGRAM_ID)).",
+            "Read-only pricing oracle for the deposit-leg NAV floor; the same",
+            "account is also forwarded inside `remaining_accounts` to take_offer."
+          ]
         },
         {
           "name": "inflightFlow",
@@ -2038,6 +2055,26 @@ export type FogoOnreRelayer = {
       "code": 6033,
       "name": "onreInvalidSlippageBps",
       "msg": "MAX_SLIPPAGE_BPS is misconfigured (> 10_000) — refusing to compute a zero floor"
+    },
+    {
+      "code": 6034,
+      "name": "slippageBpsTooHigh",
+      "msg": "Configured slippage_bps exceeds MAX_SLIPPAGE_BPS ceiling"
+    },
+    {
+      "code": 6035,
+      "name": "depositSlippageBelowFloor",
+      "msg": "Post-swap ONyc delta is below the NAV-derived deposit floor"
+    },
+    {
+      "code": 6036,
+      "name": "usdcConsumedMismatch",
+      "msg": "Post-CPI USDC consumed does not equal the flow's input amount"
+    },
+    {
+      "code": 6037,
+      "name": "ataAuthorityTampered",
+      "msg": "Relayer ATA authority/delegate/close_authority was mutated by the swap CPI"
     }
   ],
   "types": [
@@ -2300,6 +2337,14 @@ export type FogoOnreRelayer = {
           },
           {
             "name": "withdrawFeeBps",
+            "type": "u16"
+          },
+          {
+            "name": "slippageBps",
+            "docs": [
+              "Authority-tunable NAV slippage tolerance applied on both swap legs.",
+              "Hard-capped at `MAX_SLIPPAGE_BPS` by `validate`."
+            ],
             "type": "u16"
           },
           {

@@ -45,11 +45,12 @@ pub struct OnreOfferVector {
 /// largest `start_time`. Returns `OnreNoActiveVector` if none qualify
 /// (e.g. all slots zeroed, or all vectors are in the future).
 ///
-/// Defense-in-depth: iterates exactly `ONRE_OFFER_MAX_VECTORS` slots.
-/// If upstream ever expands the array, we'll silently miss new slots —
-/// safe-fail mode (older vector → lower price → lower NAV floor, never
-/// enables extraction). The compensating drift tripwire is
-/// `offer_layout_matches_fixture` in the tests below.
+/// Reads exactly `ONRE_OFFER_MAX_VECTORS` slots — the full pinned layout.
+/// If upstream ever *grows* the array, the `ONRE_OFFER_ACCOUNT_SIZE` length
+/// check above and `offer_layout_matches_fixture` would fire first; absent
+/// that, missing a newer (higher-price) vector would select an older,
+/// lower-price one and *under*-state the NAV floor — i.e. weaken
+/// protection, not fail safe. The size pin + fixture tripwire are the guard.
 pub fn parse_active_offer_vector(data: &[u8], now: u64) -> Result<OnreOfferVector> {
     require!(
         data.len() >= ONRE_OFFER_ACCOUNT_SIZE,
@@ -150,6 +151,44 @@ pub fn redemption_expected_out(
         .ok_or(RelayerError::OnreNavOverflow)?;
     let den = pow_in
         .checked_mul(ONRE_PRICE_DENOMINATOR)
+        .ok_or(RelayerError::OnreNavOverflow)?;
+
+    u64::try_from(num / den).map_err(|_| error!(RelayerError::OnreNavOverflow))
+}
+
+/// Algebraic inverse of `redemption_expected_out` for the deposit leg
+/// (USDC in → ONyc out), mirroring OnRe's `process_take_offer` pricing
+/// under the assumption both directions clear at the same step `price`:
+///
+/// ```text
+/// out = usdc_in * 10^onyc_decimals * 10^9
+///       / (price * 10^usdc_decimals)
+/// ```
+///
+/// Returns the **gross** (pre-fee) ONyc the relayer should receive. The
+/// caller applies the slippage floor for rounding headroom; OnRe's own
+/// deposit fee (if any) is taken inside `take_offer`, so the floor is set
+/// off the post-fee delta the caller observes.
+pub fn deposit_expected_out(
+    usdc_in_amount: u64,
+    price: u64,
+    usdc_decimals: u8,
+    onyc_decimals: u8,
+) -> Result<u64> {
+    require!(price > 0, RelayerError::OnreNoActiveVector);
+    let pow_out = 10u128
+        .checked_pow(onyc_decimals as u32)
+        .ok_or(RelayerError::OnreNavOverflow)?;
+    let pow_in = 10u128
+        .checked_pow(usdc_decimals as u32)
+        .ok_or(RelayerError::OnreNavOverflow)?;
+
+    let num = (usdc_in_amount as u128)
+        .checked_mul(pow_out)
+        .and_then(|x| x.checked_mul(ONRE_PRICE_DENOMINATOR))
+        .ok_or(RelayerError::OnreNavOverflow)?;
+    let den = (price as u128)
+        .checked_mul(pow_in)
         .ok_or(RelayerError::OnreNavOverflow)?;
 
     u64::try_from(num / den).map_err(|_| error!(RelayerError::OnreNavOverflow))

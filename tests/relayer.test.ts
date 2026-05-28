@@ -787,7 +787,7 @@ describe('relayer', () => {
       )
     })
 
-    it('swap_usdc_to_onyc with Claimed flow attempts OnRe CPI', async () => {
+    it('swap_usdc_to_onyc rejects an offer account not owned by OnRe', async () => {
       const nttInboxItem = Keypair.generate()
       const [inflightPda, bump] = findInflightFlowPda(nttInboxItem.publicKey, client.program.programId)
 
@@ -804,10 +804,10 @@ describe('relayer', () => {
       const [authorityPda] = findAuthorityPda(client.program.programId)
       mintTo(svm, authority, usdcMint.publicKey, authorityPda, 500_000)
 
-      // OnRe is stubbed only by program ID — no offer state, no vault ATAs.
-      // The CPI must therefore fail INSIDE OnRe, proving the relayer's own
-      // status check + balance snapshot passed up to the CPI boundary.
-      await expectFailure(
+      // OnRe is stubbed only by program ID — the derived deposit Offer PDA
+      // doesn't exist, so its owner is the system program. The NAV-floor
+      // offer pin must reject it before any CPI is attempted.
+      await expectError(
         () =>
           client
             .swapUsdcToOnyc({
@@ -821,8 +821,7 @@ describe('relayer', () => {
               { pubkey: client.authorityPda, isSigner: false, isWritable: false },
             ])
             .rpc(),
-        failedInProgram(ONRE_PROGRAM_ID),
-        'OnRe CPI should be reached and fail (relayer validations passed)',
+        'OnreOfferOwnerMismatch',
       )
     })
 

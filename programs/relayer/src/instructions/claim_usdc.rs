@@ -4,8 +4,8 @@ use anchor_spl::token_interface::{
 };
 
 use crate::constants::{
-    CONFIG_SEED, FLOW_INBOUND_SEED, INTENT_TRANSFER_PROGRAM_ID, INTENT_TRANSFER_SETTER_SEED,
-    NTT_REDEEM_IX, NTT_RELEASE_INBOUND_UNLOCK_IX, NTT_USDC_PROGRAM_ID,
+    CONFIG_SEED, FLOW_INBOUND_SEED, FOGO_WORMHOLE_CHAIN_ID, INTENT_TRANSFER_PROGRAM_ID,
+    INTENT_TRANSFER_SETTER_SEED, NTT_REDEEM_IX, NTT_RELEASE_INBOUND_UNLOCK_IX, NTT_USDC_PROGRAM_ID,
     RELAYER_SEED, USER_INBOX_SEED,
 };
 use crate::cpi::invoke_relayer_signed;
@@ -14,7 +14,7 @@ use crate::events::UsdcClaimed;
 use crate::ntt::{
     derive_inbox_item_pda_from_vtm, parse_fogo_sender_from_vtm,
     validate_ntt_redeem_release_accounts, InboxItem, NttRedeemArgs, NttReleaseInboundArgs,
-    ReleaseStatus,
+    ReleaseStatus, TRANSCEIVER_MESSAGE_FROM_CHAIN_OFFSET,
 };
 use crate::state::{Flow, FlowStatus, RelayerConfig};
 
@@ -37,8 +37,24 @@ fn validate_skip_path_inbox_item(
     );
 
     let vtm_data = ntt_transceiver_message.try_borrow_data()?;
-    let (expected_inbox_item, _) =
-        derive_inbox_item_pda_from_vtm(&NTT_USDC_PROGRAM_ID, &vtm_data)?;
+
+    // The redeem CPI we skip would have pinned origin to the FOGO peer.
+    // Re-enforce it: `from_chain` (offset 8, u16 LE) must be FOGO, else a
+    // foreign-chain released InboxItem could be paired here.
+    require!(
+        vtm_data.len() >= TRANSCEIVER_MESSAGE_FROM_CHAIN_OFFSET + 2,
+        RelayerError::InvalidTransceiverMessage
+    );
+    let from_chain = u16::from_le_bytes([
+        vtm_data[TRANSCEIVER_MESSAGE_FROM_CHAIN_OFFSET],
+        vtm_data[TRANSCEIVER_MESSAGE_FROM_CHAIN_OFFSET + 1],
+    ]);
+    require!(
+        from_chain == FOGO_WORMHOLE_CHAIN_ID,
+        RelayerError::WrongOriginChain
+    );
+
+    let (expected_inbox_item, _) = derive_inbox_item_pda_from_vtm(&NTT_USDC_PROGRAM_ID, &vtm_data)?;
     drop(vtm_data);
     require_keys_eq!(
         ntt_inbox_item.key(),
@@ -71,10 +87,8 @@ pub fn handler<'info>(
 
     // Pin VAA's NTT sender to intent_transfer's singleton setter PDA.
     // Anything else is a non-intent path and must not deposit here.
-    let (expected_setter, _) = Pubkey::find_program_address(
-        &[INTENT_TRANSFER_SETTER_SEED],
-        &INTENT_TRANSFER_PROGRAM_ID,
-    );
+    let (expected_setter, _) =
+        Pubkey::find_program_address(&[INTENT_TRANSFER_SETTER_SEED], &INTENT_TRANSFER_PROGRAM_ID);
     require!(
         fogo_sender_raw == expected_setter.to_bytes(),
         RelayerError::UnexpectedFogoSender

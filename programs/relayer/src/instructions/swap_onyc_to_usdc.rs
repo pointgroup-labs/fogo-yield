@@ -5,22 +5,28 @@
 //! today; aggregator-agnostic in the account layout) to convert the
 //! unlocked ONyc into USDC for the user.
 //!
-//! Damage per call is bounded by three independent layers:
+//! Damage per call is bounded by independent layers:
 //!
 //! 1. NAV-anchored floor derived from OnRe's deposit-side `Offer` pricing
 //!    vector — on-chain oracle, not operator-supplied.
-//! 2. SPL `Approve` bounded to exactly `flow.amount - fee`; the swap CPI
-//!    runs under plain `invoke`, so PDA-signer privilege does not propagate.
-//! 3. `MAX_SLIPPAGE_BPS` is the security boundary — keep tight.
+//! 2. SPL `Approve` bounded to exactly `flow.amount - fee`; this is the
+//!    only token-spend surface the swap can reach.
+//! 3. The swap CPI is signed by `relayer_authority` (Jupiter's
+//!    `userTransferAuthority` model), so post-CPI we assert the ATAs'
+//!    `owner`/`delegate`/`delegated_amount`/`close_authority` are pristine
+//!    — any `SetAuthority`/`Approve` a malicious router smuggled in reverts
+//!    the whole tx atomically, defeating PDA-signer privilege extension.
+//! 4. `slippage_bps` (authority-tunable, capped at `MAX_SLIPPAGE_BPS`) is
+//!    the NAV-floor boundary — keep tight.
 
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::instruction::{AccountMeta, Instruction};
 use anchor_lang::solana_program::program::invoke_signed;
+use anchor_lang::solana_program::program_option::COption;
 use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
 
 use crate::constants::{
-    CONFIG_SEED, FLOW_OUTBOUND_SEED, MAX_SLIPPAGE_BPS, ONRE_DEPOSIT_OFFER_SEED, ONRE_PROGRAM_ID,
-    RELAYER_SEED,
+    CONFIG_SEED, FLOW_OUTBOUND_SEED, ONRE_DEPOSIT_OFFER_SEED, ONRE_PROGRAM_ID, RELAYER_SEED,
 };
 use crate::cpi::{approve_swap_delegate, relayer_signed_transfer_checked};
 use crate::error::RelayerError;
@@ -35,7 +41,8 @@ pub fn handler<'info>(
     swap_ix_data: Vec<u8>,
 ) -> Result<()> {
     let clock = Clock::get()?;
-    let now_unix = clock.unix_timestamp as u64;
+    let now_unix =
+        u64::try_from(clock.unix_timestamp).map_err(|_| error!(RelayerError::OnreNavOverflow))?;
 
     let flow_key = ctx.accounts.outflight_flow.key();
     let gross_onyc = ctx.accounts.outflight_flow.amount;
@@ -115,7 +122,7 @@ pub fn handler<'info>(
             ctx.accounts.onyc_mint.decimals,
             ctx.accounts.usdc_mint.decimals,
         )?;
-        apply_slippage_floor(gross_expected, MAX_SLIPPAGE_BPS)?
+        apply_slippage_floor(gross_expected, ctx.accounts.relayer_config.slippage_bps)?
     };
 
     // 3. Reload after fee transfer; assert sufficient post-fee balance.
@@ -137,19 +144,10 @@ pub fn handler<'info>(
         net_onyc,
     )?;
 
-    // 5. CPI into the router with `invoke_signed` so the relayer
-    //    authority PDA can sign for Jupiter's `userTransferAuthority`
-    //    slot (and any future router that follows the standard
-    //    "user signs" model). Force `is_signer=true` on the relayer
-    //    authority meta — `ctx.remaining_accounts` arrives with
-    //    `is_signer=false` for the PDA (no outer-tx signature exists for
-    //    a PDA), but `invoke_signed` will only honor the provided seeds
-    //    for accounts whose meta explicitly says `is_signer=true`.
-    //    Security is unchanged: the only token spending surface
-    //    PDA-signing unlocks is `onyc_ata`, and that is already bounded
-    //    by the SPL `Approve` to exactly `net_onyc` above. Post-CPI
-    //    invariants below (exact-consume on ONyc, NAV-floor on USDC)
-    //    close the loop.
+    // 5. CPI into the router under `invoke_signed` so relayer_authority
+    //    can sign Jupiter's `userTransferAuthority` slot. This extends the
+    //    PDA's signer privilege into the callee, so step 6b re-asserts the
+    //    ATAs were not re-authoritied/delegated/closed by a hostile router.
     let auth_key = ctx.accounts.relayer_authority.key();
     let metas: Vec<AccountMeta> = ctx
         .remaining_accounts
@@ -191,6 +189,15 @@ pub fn handler<'info>(
         RelayerError::RedeemSlippageBelowFloor
     );
 
+    // 6b. PDA-signer privilege defense: the signed swap CPI could have
+    //     smuggled an SPL SetAuthority/Approve on our ATAs. Require both
+    //     ATAs pristine — owner unchanged, no lingering delegate, no
+    //     close_authority. The exact-consume above forces the bounded
+    //     delegate to zero, so a leftover delegation here means the router
+    //     spent via the PDA signer instead and must revert.
+    assert_ata_untampered(&ctx.accounts.onyc_ata, &auth_key)?;
+    assert_ata_untampered(&ctx.accounts.usdc_ata, &auth_key)?;
+
     // 7. Flip status; overwrite flow.amount with usdc_received for
     //    `send_usdc_to_user` to consume.
     let flow = &mut ctx.accounts.outflight_flow;
@@ -211,10 +218,36 @@ pub fn handler<'info>(
     Ok(())
 }
 
+/// Reverts if a signed swap CPI re-authoritied, delegated, or armed
+/// close on a relayer ATA. Catches PDA-signer privilege extension within
+/// the same transaction.
+fn assert_ata_untampered(
+    ata: &InterfaceAccount<'_, TokenAccount>,
+    expected_owner: &Pubkey,
+) -> Result<()> {
+    require_keys_eq!(
+        ata.owner,
+        *expected_owner,
+        RelayerError::AtaAuthorityTampered
+    );
+    require!(
+        matches!(ata.delegate, COption::None),
+        RelayerError::AtaAuthorityTampered
+    );
+    require!(
+        ata.delegated_amount == 0,
+        RelayerError::AtaAuthorityTampered
+    );
+    require!(
+        matches!(ata.close_authority, COption::None),
+        RelayerError::AtaAuthorityTampered
+    );
+    Ok(())
+}
+
 #[derive(Accounts)]
 pub struct SwapOnycToUsdc<'info> {
     #[account(
-        mut,
         seeds = [CONFIG_SEED],
         bump = relayer_config.bump,
         has_one = onyc_mint,
@@ -223,8 +256,9 @@ pub struct SwapOnycToUsdc<'info> {
     )]
     pub relayer_config: Box<Account<'info, RelayerConfig>>,
 
-    /// CHECK: signs only the SPL Approve and the fee transfer; swap CPI
-    /// uses plain `invoke`, so PDA-signer privilege does not propagate.
+    /// CHECK: signs the SPL Approve, fee transfer, and the swap CPI; the
+    /// swap's reach is bounded by the bounded Approve and re-checked by the
+    /// post-CPI authority assertions in the handler.
     #[account(seeds = [RELAYER_SEED], bump = relayer_config.relayer_authority_bump)]
     pub relayer_authority: UncheckedAccount<'info>,
 

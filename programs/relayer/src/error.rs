@@ -103,4 +103,16 @@ pub enum RelayerError {
 
     #[msg("MAX_SLIPPAGE_BPS is misconfigured (> 10_000) — refusing to compute a zero floor")]
     OnreInvalidSlippageBps,
+
+    #[msg("Configured slippage_bps exceeds MAX_SLIPPAGE_BPS ceiling")]
+    SlippageBpsTooHigh,
+
+    #[msg("Post-swap ONyc delta is below the NAV-derived deposit floor")]
+    DepositSlippageBelowFloor,
+
+    #[msg("Post-CPI USDC consumed does not equal the flow's input amount")]
+    UsdcConsumedMismatch,
+
+    #[msg("Relayer ATA authority/delegate/close_authority was mutated by the swap CPI")]
+    AtaAuthorityTampered,
 }

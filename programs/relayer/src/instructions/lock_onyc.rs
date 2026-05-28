@@ -86,7 +86,9 @@ pub fn handler<'info>(
     invoke_relayer_signed(
         NTT_ONYC_PROGRAM_ID,
         &NTT_RELEASE_WORMHOLE_OUTBOUND_IX,
-        &NttReleaseOutboundArgs { revert_on_delay: false },
+        &NttReleaseOutboundArgs {
+            revert_on_delay: false,
+        },
         release_accs,
         None,
         bump,

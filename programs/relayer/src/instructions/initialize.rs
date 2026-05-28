@@ -23,6 +23,7 @@ pub fn handler(
     config.relayer_authority_bump = ctx.bumps.relayer_authority;
     config.deposit_fee_bps = deposit_fee_bps;
     config.withdraw_fee_bps = withdraw_fee_bps;
+    config.slippage_bps = crate::constants::DEFAULT_SLIPPAGE_BPS;
     // Explicit even though `init` zero-fills.
     config.pending_fee = None;
     config.validate()?;

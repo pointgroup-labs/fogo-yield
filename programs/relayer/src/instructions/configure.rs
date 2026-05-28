@@ -10,6 +10,7 @@ pub fn handler(
     deposit_fee_bps: Option<u16>,
     withdraw_fee_bps: Option<u16>,
     new_authority: Option<Pubkey>,
+    slippage_bps: Option<u16>,
 ) -> Result<()> {
     let config = &mut ctx.accounts.relayer_config;
     let now = Clock::get()?.slot;
@@ -23,6 +24,9 @@ pub fn handler(
     }
     if let Some(proposed) = withdraw_fee_bps {
         config.propose_withdraw_fee(proposed, now)?;
+    }
+    if let Some(bps) = slippage_bps {
+        config.slippage_bps = bps;
     }
 
     if let Some(vault) = &ctx.accounts.fee_vault {
@@ -48,9 +52,10 @@ pub fn handler(
     config.validate()?;
 
     msg!(
-        "Relayer reconfigured. deposit_fee_bps: {}, withdraw_fee_bps: {}, pending_fee: {:?}, fee_vault: {}, authority: {}, pending_authority: {:?}.",
+        "Relayer reconfigured. deposit_fee_bps: {}, withdraw_fee_bps: {}, slippage_bps: {}, pending_fee: {:?}, fee_vault: {}, authority: {}, pending_authority: {:?}.",
         config.deposit_fee_bps,
         config.withdraw_fee_bps,
+        config.slippage_bps,
         config.pending_fee,
         config.fee_vault,
         config.authority,

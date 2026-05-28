@@ -18,8 +18,7 @@ pub const NTT_RELEASE_INBOUND_UNLOCK_IX: [u8; 8] = [182, 162, 62, 206, 197, 137,
 /// Wormhole Core Bridge program id. Documentation pin only — release CPIs
 /// dispatch via `remaining_accounts`, no on-chain read site today.
 #[constant]
-pub const WORMHOLE_CORE_PROGRAM_ID: Pubkey =
-    pubkey!("worm2ZoG2kUd4vFXhvjh93UUH596ayRfgQ2MgjNMTth");
+pub const WORMHOLE_CORE_PROGRAM_ID: Pubkey = pubkey!("worm2ZoG2kUd4vFXhvjh93UUH596ayRfgQ2MgjNMTth");
 
 /// `release_wormhole_outbound` discriminator in the OnRe ONyc NTT manager
 /// (v3.0.0 IDL — transceiver compiled into manager binary).
@@ -85,15 +84,18 @@ pub const INTENT_TRANSFER_PROGRAM_ID: Pubkey =
 
 pub const INTENT_TRANSFER_SETTER_SEED: &[u8] = b"intent_transfer";
 
-/// Hard cap on slippage tolerance accepted by `swap_onyc_to_usdc`. Used as
-/// the haircut against OnRe's NAV-derived gross expected output:
-/// `floor = gross_expected * (10_000 - MAX_SLIPPAGE_BPS) / 10_000`.
-///
-/// Tightened to 10 bps under the swap-only withdraw design — this constant
-/// *is* the security boundary now (no cancel-path fallback to fall back on),
-/// and 10 bps is the operational floor we expect ONyc/USDC to clear at
-/// typical redemption sizes via Jupiter.
-pub const MAX_SLIPPAGE_BPS: u16 = 10;
+/// Hard ceiling on the authority-configurable slippage tolerance
+/// (`RelayerConfig.slippage_bps`). Bounds the worst-case haircut a
+/// compromised authority key can apply to the NAV floor on both swap
+/// legs: 200 bps (2%) per leg caps round-trip slippage damage while
+/// leaving operational headroom above the 10 bps default for thin-book
+/// redemptions. `configure` refuses any value above this.
+pub const MAX_SLIPPAGE_BPS: u16 = 200;
+
+/// Slippage tolerance seeded at `initialize`. 10 bps is the operational
+/// floor we expect ONyc/USDC to clear at typical sizes via Jupiter; the
+/// authority can tune within `[0, MAX_SLIPPAGE_BPS]` afterwards.
+pub const DEFAULT_SLIPPAGE_BPS: u16 = 10;
 
 /// OnRe `Offer` account layout (mirrored from
 /// `onre-finance/onre-sol/programs/onreapp/src/instructions/offer/offer_state.rs`).

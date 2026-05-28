@@ -16,9 +16,10 @@ import {
   buildNttReleaseWormholeOutboundAccountList,
   buildNttTransferLockAccountList,
   buildOnreSwapRemainingAccounts,
+  findOnreOfferPda,
   NTT_TRANSFER_LOCK_ACCOUNT_COUNT,
 } from './builders'
-import { FOGO_WORMHOLE_CHAIN_ID, NTT_ONYC_PROGRAM_ID, NTT_USDC_PROGRAM_ID } from './constants'
+import { FOGO_WORMHOLE_CHAIN_ID, NTT_ONYC_PROGRAM_ID, NTT_USDC_PROGRAM_ID, ONRE_PROGRAM_ID } from './constants'
 import IDL from './idl/fogo_onre_relayer.json' with { type: 'json' }
 import {
   findAuthorityPda,
@@ -88,6 +89,7 @@ export class RelayerClient {
     depositFeeBps?: number | null
     withdrawFeeBps?: number | null
     newAuthority?: PublicKey | null
+    slippageBps?: number | null
   } = {}) {
     const authority = params.authority ?? this.providerPublicKey()
     if (!authority) {
@@ -101,6 +103,7 @@ export class RelayerClient {
         params.depositFeeBps ?? null,
         params.withdrawFeeBps ?? null,
         params.newAuthority ?? null,
+        params.slippageBps ?? null,
       )
       .accountsPartial({
         authority,
@@ -212,6 +215,8 @@ export class RelayerClient {
     onre?: OnreSwapContext
   }) {
     const { inflightFlow } = this.flowPdas(params.nttInboxItem)
+    const onreProgramId = params.onre?.deployment?.programId ?? ONRE_PROGRAM_ID
+    const [onreOffer] = findOnreOfferPda(params.usdcMint, params.onycMint, onreProgramId)
     const builder = this.program.methods
       .swapUsdcToOnyc()
       .accountsPartial({
@@ -223,6 +228,7 @@ export class RelayerClient {
         onycAta: this.relayerAta(params.onycMint),
         feeVault: params.feeVault,
         nttInboxItem: params.nttInboxItem,
+        onreOffer,
         inflightFlow,
         tokenProgram: TOKEN_PROGRAM_ID,
       })
@@ -474,10 +480,11 @@ export class RelayerClient {
    *      pricing vector (no caller-supplied `minOut`),
    *   3. PDA-signs an SPL `Approve` granting `swapDelegate` exactly
    *      `flow.amount - fee` over `onycAta`,
-   *   4. invokes the swap program under plain `invoke` (no PDA-signer
-   *      propagation),
-   *   5. asserts post-balances clear the floor and exactly consume the
-   *      delegated amount,
+   *   4. invokes the swap program under `invoke_signed` (relayer authority
+   *      signs Jupiter's `userTransferAuthority` slot),
+   *   5. asserts post-balances clear the floor, exactly consume the
+   *      delegated amount, and that both relayer ATAs are left pristine
+   *      (owner/delegate/close untouched — defeats PDA-signer hijack),
    *   6. transitions the flow `Claimed → Swapped` and writes the USDC
    *      received into `flow.amount` for `send_usdc_to_user` to consume.
    *
