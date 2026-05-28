@@ -17,11 +17,11 @@ const REQUEST_TIMEOUT_MS = 8000
 /**
  * How far back to scan for a delivery leg matching an outbound burn.
  * Normal deliveries land in seconds, but manual relayer recoveries and
- * guardian-signing stalls can push the USDC return leg past a day. The
- * window is wide because mutual-nearest pairing (see
- * `classifyOpsIntoActions`) rejects mismatches — a distant delivery only
- * pairs when it is also the burn's nearest counterpart, so a wide window
- * can't silently cross-pair two unrelated flows.
+ * guardian-signing stalls can push the USDC return leg past a day; 7
+ * days covers the slow cases without paging across unrelated months.
+ * Pairing (see `classifyOpsIntoActions`) is greedy nearest-by-time and
+ * timestamp-only, so it can mis-assign when a burn has no delivery — an
+ * inherent ambiguity, not closeable without a deterministic pair pointer.
  */
 export const PAIRING_WINDOW_MS = 7 * 24 * 60 * 60 * 1_000
 /** Tolerated burn↔delivery clock skew on the "delivery before burn" side. */
