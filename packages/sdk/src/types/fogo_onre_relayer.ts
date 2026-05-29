@@ -921,67 +921,6 @@ export type FogoOnreRelayer = {
       ]
     },
     {
-      "name": "migrateConfig",
-      "docs": [
-        "One-shot, authority-only. Grows the launch `RelayerConfig` to the",
-        "`slippage_bps` layout and seeds it with `DEFAULT_SLIPPAGE_BPS`.",
-        "Reverts once already migrated."
-      ],
-      "discriminator": [
-        92,
-        131,
-        58,
-        105,
-        210,
-        154,
-        224,
-        193
-      ],
-      "accounts": [
-        {
-          "name": "authority",
-          "writable": true,
-          "signer": true
-        },
-        {
-          "name": "relayerConfig",
-          "docs": [
-            "layout, then realloc'd and rewritten. `authority == old.authority`",
-            "is enforced in the handler."
-          ],
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  114,
-                  101,
-                  108,
-                  97,
-                  121,
-                  101,
-                  114,
-                  95,
-                  99,
-                  111,
-                  110,
-                  102,
-                  105,
-                  103
-                ]
-              }
-            ]
-          }
-        },
-        {
-          "name": "systemProgram",
-          "address": "11111111111111111111111111111111"
-        }
-      ],
-      "args": []
-    },
-    {
       "name": "sendUsdcToUser",
       "docs": [
         "Lock USDC via NTT and atomically emit the outbound VAA back to",
@@ -2136,16 +2075,6 @@ export type FogoOnreRelayer = {
       "code": 6037,
       "name": "ataAuthorityTampered",
       "msg": "Relayer ATA authority/delegate/close_authority was mutated by the swap CPI"
-    },
-    {
-      "code": 6038,
-      "name": "configAlreadyMigrated",
-      "msg": "relayer_config is already at the current layout — nothing to migrate"
-    },
-    {
-      "code": 6039,
-      "name": "configMigrationFailed",
-      "msg": "relayer_config could not be read in the pre-slippage layout"
     }
   ],
   "types": [
@@ -2387,8 +2316,7 @@ export type FogoOnreRelayer = {
         "`reserved` block) come before the two variable-length `Option`s, which stay",
         "last. Future additive fields are carved out of `reserved` — same total size,",
         "so they need no realloc and no migration (old zero bytes read as the new",
-        "field's default). `RelayerConfigV0` is the frozen pre-`slippage_bps` mainnet",
-        "layout that `migrate_config` reads."
+        "field's default)."
       ],
       "type": {
         "kind": "struct",
@@ -2533,6 +2461,21 @@ export type FogoOnreRelayer = {
   "constants": [
     {
       "name": "intentTransferProgramId",
+      "docs": [
+        "SECURITY-CRITICAL CROSS-PROGRAM PIN (deposit flow trust chain):",
+        "1. webapp signs an intent → recipient = per-user inbox PDA on Solana",
+        "2. FOGO `intent_transfer.bridge_ntt_tokens` bridges via NTT;",
+        "the from-ATA owner is the singleton `[INTENT_TRANSFER_SETTER_SEED]`",
+        "PDA under `INTENT_TRANSFER_PROGRAM_ID`",
+        "3. that PDA surfaces as `NttManagerMessage.sender` on the VAA",
+        "4. `claim_usdc` requires `sender == intent_transfer setter PDA`,",
+        "rejecting any direct (non-intent) NTT bridge to the same recipient",
+        "",
+        "If `intent_transfer` rotates its setter seed OR redeploys at a new program",
+        "ID, this relayer must redeploy in lockstep. DO NOT make these",
+        "runtime-rotatable via `RelayerConfig` — a stolen authority key could",
+        "otherwise redirect the entire deposit flow."
+      ],
       "type": "pubkey",
       "value": "Xfry4dW9m42ncAqm8LyEnyS5V6xu5DSJTMRQLiGkARD"
     },
@@ -2550,15 +2493,6 @@ export type FogoOnreRelayer = {
       "name": "onreProgramId",
       "type": "pubkey",
       "value": "onreuGhHHgVzMWSkj2oQDLDtvvGvoepBPkqyaubFcwe"
-    },
-    {
-      "name": "wormholeCoreProgramId",
-      "docs": [
-        "Wormhole Core Bridge program id. Documentation pin only — release CPIs",
-        "dispatch via `remaining_accounts`, no on-chain read site today."
-      ],
-      "type": "pubkey",
-      "value": "worm2ZoG2kUd4vFXhvjh93UUH596ayRfgQ2MgjNMTth"
     }
   ]
 };

@@ -15,11 +15,6 @@ pub const NTT_TRANSFER_LOCK_IX: [u8; 8] = [179, 158, 146, 148, 151, 46, 176, 200
 pub const NTT_REDEEM_IX: [u8; 8] = [184, 12, 86, 149, 70, 196, 97, 225];
 pub const NTT_RELEASE_INBOUND_UNLOCK_IX: [u8; 8] = [182, 162, 62, 206, 197, 137, 83, 98];
 
-/// Wormhole Core Bridge program id. Documentation pin only — release CPIs
-/// dispatch via `remaining_accounts`, no on-chain read site today.
-#[constant]
-pub const WORMHOLE_CORE_PROGRAM_ID: Pubkey = pubkey!("worm2ZoG2kUd4vFXhvjh93UUH596ayRfgQ2MgjNMTth");
-
 /// `release_wormhole_outbound` discriminator in the OnRe ONyc NTT manager
 /// (v3.0.0 IDL — transceiver compiled into manager binary).
 /// = `sha256("global:release_wormhole_outbound")[..8]`.
@@ -64,20 +59,19 @@ pub const NTT_SESSION_AUTHORITY_SEED: &[u8] = b"session_authority";
 /// recording `user_wallet` as `flow.fogo_sender` for the return leg.
 pub const USER_INBOX_SEED: &[u8] = b"user_inbox";
 
-// SECURITY-CRITICAL CROSS-PROGRAM PIN (deposit flow trust chain):
-//   1. webapp signs an intent → recipient = per-user inbox PDA on Solana
-//   2. FOGO `intent_transfer.bridge_ntt_tokens` bridges via NTT;
-//      the from-ATA owner is the singleton `[INTENT_TRANSFER_SETTER_SEED]`
-//      PDA under `INTENT_TRANSFER_PROGRAM_ID`
-//   3. that PDA surfaces as `NttManagerMessage.sender` on the VAA
-//   4. `claim_usdc` requires `sender == intent_transfer setter PDA`,
-//      rejecting any direct (non-intent) NTT bridge to the same recipient
-//
-// If `intent_transfer` rotates its setter seed OR redeploys at a new program
-// ID, this relayer must redeploy in lockstep. DO NOT make these
-// runtime-rotatable via `RelayerConfig` — a stolen authority key could
-// otherwise redirect the entire deposit flow.
-
+/// SECURITY-CRITICAL CROSS-PROGRAM PIN (deposit flow trust chain):
+///   1. webapp signs an intent → recipient = per-user inbox PDA on Solana
+///   2. FOGO `intent_transfer.bridge_ntt_tokens` bridges via NTT;
+///      the from-ATA owner is the singleton `[INTENT_TRANSFER_SETTER_SEED]`
+///      PDA under `INTENT_TRANSFER_PROGRAM_ID`
+///   3. that PDA surfaces as `NttManagerMessage.sender` on the VAA
+///   4. `claim_usdc` requires `sender == intent_transfer setter PDA`,
+///      rejecting any direct (non-intent) NTT bridge to the same recipient
+///
+/// If `intent_transfer` rotates its setter seed OR redeploys at a new program
+/// ID, this relayer must redeploy in lockstep. DO NOT make these
+/// runtime-rotatable via `RelayerConfig` — a stolen authority key could
+/// otherwise redirect the entire deposit flow.
 #[constant]
 pub const INTENT_TRANSFER_PROGRAM_ID: Pubkey =
     pubkey!("Xfry4dW9m42ncAqm8LyEnyS5V6xu5DSJTMRQLiGkARD");
