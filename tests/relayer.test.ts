@@ -51,10 +51,6 @@ describe('relayer', () => {
     feeVault = createAta(svm, authority, onycMint.publicKey, authority.publicKey)
   })
 
-  // ---------------------------------------------------------------------------
-  // initialize
-  // ---------------------------------------------------------------------------
-
   describe('initialize', () => {
     it('creates config PDA and stores parameters', async () => {
       await client
@@ -77,9 +73,8 @@ describe('relayer', () => {
     })
 
     it('rejects fee bps above 10000', async () => {
-      // Asserts the specific `FeeBpsTooHigh` custom error from the program,
-      // not just "any throw" — guarantees we exercised the bps validator
-      // rather than tripping some unrelated constraint upstream.
+      // Assert the specific `FeeBpsTooHigh` error, proving we hit the bps
+      // validator rather than an unrelated upstream constraint.
       await expectError(
         () =>
           client
@@ -97,8 +92,8 @@ describe('relayer', () => {
     })
 
     it('rejects double initialization', async () => {
-      // First init: fees = 25/75. Distinctive values so we can later prove
-      // the second call did not silently overwrite config.
+      // First init uses distinctive fees (25/75) so a later read proves the
+      // second call never overwrote config.
       await client
         .initialize({
           authority: authority.publicKey,
@@ -110,10 +105,6 @@ describe('relayer', () => {
         })
         .rpc()
 
-      // Capture the SendTransactionError. Our `createProvider` wrapper
-      // (tests/utils/svm.ts) preloads `.logs` from the FailedTransactionMetadata,
-      // so we can assert directly against the program logs without an
-      // additional RPC roundtrip.
       let caught: any
       try {
         await client
@@ -122,7 +113,7 @@ describe('relayer', () => {
             usdcMint: usdcMint.publicKey,
             onycMint: onycMint.publicKey,
             feeVault,
-            depositFeeBps: 999, // would be visible if an overwrite slipped through
+            depositFeeBps: 999,
             withdrawFeeBps: 888,
           })
           .rpc()
@@ -131,29 +122,10 @@ describe('relayer', () => {
       }
       expect(caught).toBeDefined()
 
-      // Strong assertion #1 — the failure is the system-program rejecting the
-      // create_account CPI because the Config PDA already has lamports. This
-      // is what the Anchor `init` constraint emits, and it's distinct from
-      // any other failure mode (signer / seeds / mint mismatch / etc.).
+      // Anchor `init` on the existing Config PDA makes the system program
+      // emit `Allocate ... already in use` + custom error 0x0. Pinning the
+      // exact PDA address rules out an unrelated account collision.
       const logs: string[] = Array.isArray(caught.logs) ? caught.logs : []
-
-      // The unique fingerprint of "init constraint tripped on an existing
-      // Config PDA" is the SYSTEM PROGRAM (not the relayer, not Anchor's own
-      // checks) emitting `Allocate: account Address { address: <CONFIG_PDA>, ... } already in use`
-      // for the SPECIFIC Config PDA — followed by `custom program error: 0x0`
-      // returned from system program 11111111111111111111111111111111.
-      //
-      // Why this is specific to the claimed failure path:
-      //   - Wrong signer / missing sig → fails at signature verify, never reaches the system CPI.
-      //   - Wrong seeds / has_one      → Anchor emits its own `Constraint*` error and skips create_account.
-      //   - Insufficient lamports      → `InsufficientFundsForRent`, no `Allocate` log.
-      //   - "Allocate ... already in use" CAN ONLY be emitted by the system program
-      //     when create_account is invoked on an address that already has lamports,
-      //     and Anchor's `init` is the only thing in this instruction that issues
-      //     that CPI on the Config PDA.
-      //
-      // Pinning the address to the derived `findConfigPda` result rules out the
-      // remote possibility of an unrelated account collision being matched.
       const [configPda] = findConfigPda(client.program.programId)
       const allocateRegex = new RegExp(
         `Allocate: account Address \\{ address: ${configPda.toBase58()}[^}]*\\} already in use`,
@@ -163,9 +135,7 @@ describe('relayer', () => {
       expect(logs.some(l => allocateRegex.test(l))).toBe(true)
       expect(logs.some(l => sysProgramFailRegex.test(l))).toBe(true)
 
-      // Strong assertion #2 — original config is intact. Belt-and-suspenders:
-      // confirms not only that the second call threw, but that no field was
-      // mutated before the constraint fired.
+      // Original config must be intact — no field mutated before the constraint fired.
       const config = await client.fetchConfig()
       expect(config.depositFeeBps).toBe(25)
       expect(config.withdrawFeeBps).toBe(75)
@@ -189,10 +159,6 @@ describe('relayer', () => {
     })
   })
 
-  // ---------------------------------------------------------------------------
-  // configure
-  // ---------------------------------------------------------------------------
-
   describe('configure', () => {
     beforeEach(async () => {
       await client
@@ -208,10 +174,8 @@ describe('relayer', () => {
     })
 
     it('stages fee raises and leaves live values unchanged', async () => {
-      // 50→200 and 100→300 are both raises. Under the asymmetric timelock,
-      // raises land on `pending_fee` (with `ready_slot = now + DELAY`) and
-      // the live fields stay put until a future `configure` call (after
-      // `ready_slot`) auto-promotes them. fee_vault rotation is unchanged.
+      // Both are raises: under the asymmetric timelock they land on
+      // `pending_fee` while live fields stay put until a later promotion.
       await (await client.configure({
         depositFeeBps: 200,
         withdrawFeeBps: 300,
@@ -246,17 +210,11 @@ describe('relayer', () => {
     })
 
     it('stages fee raises with feeVault omitted (Optional account = null)', async () => {
-      // Snapshot current fee_vault — must remain unchanged after a
-      // fee-only update that omits the account entirely.
       const before = await client.fetchConfig()
       const beforeVault = before.feeVault.toBase58()
 
-      // Minimal-args fee-only update — SDK defaults authority to provider
-      // wallet, lazy-fetches onycMint from config, and sends `null` for the
-      // optional fee_vault account. The on-chain handler skips the rotation;
-      // mint + anti-aliasing checks don't run (account itself is absent).
-      // Both fee changes are raises (50→200, 100→250), so under the
-      // asymmetric timelock they land on `pending_fee`, not the live fields.
+      // Fee-only update sends `null` for the optional fee_vault, so the
+      // handler skips rotation. Both raises stage on `pending_fee`.
       await (await client.configure({
         depositFeeBps: 200,
         withdrawFeeBps: 250,
@@ -435,10 +393,6 @@ describe('relayer', () => {
     })
   })
 
-  // ---------------------------------------------------------------------------
-  // full admin flow: initialize → configure
-  // ---------------------------------------------------------------------------
-
   describe('full admin flow', () => {
     it('initialize → configure', async () => {
       // 1. Initialize with default fees + external fee vault
@@ -476,10 +430,6 @@ describe('relayer', () => {
       expect(config2.feeVault.toBase58()).toBe(newFeeVault.toBase58())
     })
   })
-
-  // ---------------------------------------------------------------------------
-  // deposit flow (claim_usdc → swap_usdc_to_onyc → lock_onyc)
-  // ---------------------------------------------------------------------------
 
   describe('deposit flow', () => {
     // Pinned by the relayer's claim_usdc — the VAA's NTT sender must be
@@ -636,14 +586,9 @@ describe('relayer', () => {
     })
 
     it('claim_usdc rejects forged system-owned inbox_item on the released-skip path', async () => {
-      // Forgery attack vector: a malicious cranker bypasses the FOGO
-      // intent_transfer fee path by self-funding their own inbox ATA
-      // and crafting a 75-byte system-program-owned account with the
-      // real InboxItem discriminator + Released release_status.
-      // Without the conditional owner check in claim_usdc's skip
-      // branch, the relayer would sweep that USDC into custody and
-      // mint phantom-attributed credit. With the check, this MUST
-      // fail with InvalidInboxItem before any balance moves.
+      // Attack: a cranker self-funds its own inbox ATA and forges a
+      // system-owned Released InboxItem to bypass the intent_transfer fee
+      // path. The skip-branch owner check must reject it before any sweep.
       const attackerWallet = Keypair.generate()
       const fakeInboxItem = Keypair.generate()
       const [attackerInbox] = findUserInboxAuthorityPda(
@@ -713,32 +658,13 @@ describe('relayer', () => {
     })
 
     it('claim_usdc rejects released-skip with valid setter VTM but unrelated InboxItem', async () => {
-      // Bypass attack vector caught in the deploy-readiness review:
-      //
-      //   1. Attacker bridges USDC.s from FOGO via NTT *directly*
-      //      (not through intent_transfer), targeting their own per-user
-      //      inbox PDA on Solana. Funds land in attacker_inbox_ata.
-      //      This skips intent_transfer's fee path.
-      //   2. Attacker borrows ANY real intent_transfer-originated VTM
-      //      (e.g. someone else's prior legitimate deposit) — its
-      //      `sender == intent_transfer_setter` check passes.
-      //   3. Attacker calls claim_usdc with their attacker-controlled
-      //      InboxItem + the borrowed VTM.
-      //
-      // The cryptographic link between VTM and InboxItem (NTT's own
-      // `inbox_item` PDA seed = keccak256(from_chain_BE || msg_wire))
-      // is bypassed on the released-skip path because the redeem CPI
-      // is skipped. Without an explicit re-derivation in the handler,
-      // the sender check passes (borrowed real VTM), the recipient
-      // check passes (attacker InboxItem really does target their PDA),
-      // and the sweep happens — minting ONyc on FOGO without paying
-      // intent_transfer fees.
-      //
-      // The fix re-derives the InboxItem PDA from the supplied VTM and
-      // requires equality with the supplied InboxItem account. This
-      // test injects a valid Released NTT-owned InboxItem at an
-      // *unrelated* keypair address and a valid setter VTM, then
-      // expects InboxItemMismatch.
+      // Attack: bridge USDC directly via NTT to the attacker's own inbox
+      // (skipping intent_transfer fees), then borrow a real setter-originated
+      // VTM. On the released-skip path the redeem CPI is skipped, so the
+      // VTM↔InboxItem crypto link (NTT's keccak256 inbox_item seed) is only
+      // enforced by the handler re-deriving the PDA. This test pairs a valid
+      // Released NTT-owned InboxItem at an unrelated address with a valid
+      // setter VTM and expects InboxItemMismatch.
       const attackerWallet = Keypair.generate()
       const unrelatedInboxItem = Keypair.generate()
       const [attackerInbox] = findUserInboxAuthorityPda(
@@ -749,11 +675,8 @@ describe('relayer', () => {
       mintTo(svm, authority, usdcMint.publicKey, attackerInboxAta, 1_000_000)
       createAta(svm, authority, usdcMint.publicKey, client.authorityPda)
 
-      // NTT-owned (passes the skip-path owner guard) Released InboxItem,
-      // recipient = attacker's per-user inbox PDA. Same 75-byte layout
-      // the prior forgery test uses — the only difference here is the
-      // owner is the real NTT manager program, so the owner check on
-      // its own can't catch this.
+      // NTT-owned Released InboxItem (passes the skip-path owner guard),
+      // recipient = attacker inbox. Same 75-byte layout as the prior test.
       const INBOX_ITEM_DISC = Buffer.from([0xED, 0x8D, 0xCC, 0x67, 0xBB, 0x7A, 0x39, 0x5C])
       const payload = Buffer.alloc(75)
       INBOX_ITEM_DISC.copy(payload, 0)
@@ -770,10 +693,8 @@ describe('relayer', () => {
         rentEpoch: 0,
       })
 
-      // Borrowed real intent_transfer-originated VTM. `sender` =
-      // intent_transfer_setter PDA, so the existing UnexpectedFogoSender
-      // check passes. The VTM's contents hash to *some* InboxItem PDA,
-      // but NOT to `unrelatedInboxItem.publicKey` (a fresh keypair).
+      // Borrowed real setter-originated VTM: passes UnexpectedFogoSender,
+      // but its contents hash to some other InboxItem, not unrelatedInboxItem.
       const messageId = new Uint8Array(32)
       crypto.getRandomValues(messageId)
       const [validatedMsgPda] = findValidatedTransceiverMessagePda(
@@ -983,10 +904,6 @@ describe('relayer', () => {
     })
   })
 
-  // ---------------------------------------------------------------------------
-  // withdrawal flow (unlock_onyc → swap_onyc_to_usdc → send_usdc_to_user)
-  // ---------------------------------------------------------------------------
-
   describe('withdrawal flow', () => {
     const fogoSender = new Uint8Array(32).fill(0xCD)
     // A real {OnRe, Fogo} setter PDA — passes the unlock_onyc allowlist
@@ -1168,12 +1085,9 @@ describe('relayer', () => {
     })
 
     // Position-binding negatives for unlock_onyc. NTT consumes its account
-    // lists positionally — `redeem` reads slot 3 (transceiver_message) and
-    // slot 6 (inbox_item); `release_inbound_unlock` reads slot 2 (inbox_item)
-    // and slot 3 (recipient_ata). The handler pins all four slots against
-    // the named accounts (unlock_onyc.rs:81-97). Each test below corrupts
-    // exactly ONE slot and arranges the other three so the under-test
-    // require! is the FIRST one to fire.
+    // lists positionally: `redeem` reads slots 3/6, `release_inbound_unlock`
+    // reads slots 2/3; the handler pins all four (unlock_onyc.rs:81-97). Each
+    // test corrupts one slot and arranges the rest so its require! fires first.
     function buildUnlockRemainingAccounts(slots: {
       redeem3: PublicKey
       redeem6: PublicKey

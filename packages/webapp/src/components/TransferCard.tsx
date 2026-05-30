@@ -15,8 +15,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Form, FormField, FormItem } from '@/components/ui/form'
 import {
   FOGO_ONYC_DECIMALS,
-  FOGO_ONYC_DEPLOYMENT_READY,
   FOGO_ONYC_MINT,
+  FOGO_ONYC_REDEEM_READY,
   USDC_DECIMALS,
   USDC_S_MINT,
 } from '@/constants'
@@ -25,6 +25,7 @@ import { useBridgeFee } from '@/hooks/useBridgeFee'
 import { useProtocolState } from '@/hooks/useProtocolState'
 import { useTransferMutation } from '@/hooks/useTransferMutation'
 import { createDepositBridgeContextProvider } from '@/lib/bridge/depositContext'
+import { createWithdrawBridgeContextProvider } from '@/lib/bridge/withdrawContext'
 import { makeTransferSchema } from '@/lib/forms/transfer-schema'
 import { safeQuoteDeposit, safeQuoteWithdraw } from '@/utils/quote'
 import { formatAmount, parseAmount } from '@/utils/transfer'
@@ -63,11 +64,9 @@ function configFor(kind: FlowKind, providerWired: boolean): KindConfig {
       unavailable: null,
     }
   }
-  // Withdraw rides the same intent `bridge_ntt_tokens` path as deposit,
-  // so it needs both the deployment gate AND a wired bridge-context
-  // provider. Until the ONyc redeem provider lands, withdraw stays
-  // "coming soon" rather than failing at submit.
-  const ready = FOGO_ONYC_DEPLOYMENT_READY && providerWired
+  // Withdraw rides the same intent path as deposit, so it needs the
+  // redeem readiness gate (deployment + LUT) AND a wired provider.
+  const ready = FOGO_ONYC_REDEEM_READY && providerWired
   return {
     srcMintB58: FOGO_ONYC_MINT.toBase58(),
     destMintB58: USDC_S_MINT.toBase58(),
@@ -90,7 +89,9 @@ function configFor(kind: FlowKind, providerWired: boolean): KindConfig {
 
 export default function TransferCard({ kind }: TransferCardProps) {
   const bridgeContextProvider = useMemo(
-    () => kind === 'deposit' ? createDepositBridgeContextProvider() : null,
+    () => kind === 'deposit'
+      ? createDepositBridgeContextProvider()
+      : createWithdrawBridgeContextProvider(),
     [kind],
   )
   const ui = configFor(kind, bridgeContextProvider !== null)
@@ -98,17 +99,16 @@ export default function TransferCard({ kind }: TransferCardProps) {
   const sessionEstablished = isEstablished(sessionState)
   const { snapshot: balances } = useBalances(sessionState)
   const protocol = useProtocolState()
-  const bridgeFee = useBridgeFee()
+  const bridgeFee = useBridgeFee(kind)
   const submit = useTransferMutation({ bridgeContextProvider })
 
-  // Deposit: fee_mint = USDC.s, intent_transfer pulls `amount + fee`
-  // from the same ATA, so the schema's max must net out the fee. For
-  // withdraw the fee is deducted Solana-side, so 0 there.
+  // Both legs pay their fee in the bridged token from the source ATA, so
+  // intent_transfer pulls `amount + fee`; the schema max nets out the fee.
   const sourceBalance = kind === 'deposit' ? balances.usdc : balances.fogoOnyc
   const destBalance = kind === 'deposit' ? balances.fogoOnyc : balances.usdc
   const balanceLoading = sessionEstablished && sourceBalance === null
   const destBalanceLoading = sessionEstablished && destBalance === null
-  const feeForGate = kind === 'deposit' ? (bridgeFee.feeRaw ?? 0n) : 0n
+  const feeForGate = bridgeFee.feeRaw ?? 0n
   const maxRaw = sourceBalance !== null
     ? (sourceBalance > feeForGate ? sourceBalance - feeForGate : 0n)
     : 0n
@@ -156,10 +156,8 @@ export default function TransferCard({ kind }: TransferCardProps) {
         destMintB58: ui.destMintB58,
       },
       {
-        // Only clear the field once the bridge has actually been
-        // submitted on-chain. Resetting eagerly inside the click
-        // handler discards the user's input on wallet rejection,
-        // network error, or any pre-flight validation failure.
+        // Clear the field only after on-chain submission; resetting
+        // eagerly would discard input on rejection or pre-flight failure.
         onSuccess: () => {
           form.reset({ amount: '' })
         },
@@ -196,7 +194,7 @@ export default function TransferCard({ kind }: TransferCardProps) {
       || !sessionEstablished
       || !ui.ready
       || insufficient
-      || (kind === 'deposit' && bridgeFee.error !== null)
+      || bridgeFee.error !== null
 
   const buttonLabel = submitting
     ? ui.submittingLabel
@@ -247,11 +245,9 @@ export default function TransferCard({ kind }: TransferCardProps) {
               protocol={protocol}
             />
 
-            {kind === 'deposit' && (
-              <div className="-mt-1">
-                <BridgeFeeRow fee={bridgeFee} />
-              </div>
-            )}
+            <div className="-mt-1">
+              <BridgeFeeRow fee={bridgeFee} />
+            </div>
 
             <Button type="submit" size="lg" className="h-12 text-base" disabled={submitDisabled}>
               {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}

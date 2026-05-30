@@ -621,14 +621,14 @@ legs are still being validated.
 
 | Item                          | Value / tx sig |
 | ----------------------------- | -------------- |
-| Fork deploy sig               | `…`            |
-| Setter PDA init sig           | `…`            |
-| Fork upgrade-authority freeze | `…`            |
-| `register_ntt_config` USDC.s  | `…`            |
-| `register_fee_config` USDC.s  | `…`            |
-| `register_ntt_config` ONyc    | `…`            |
-| `register_fee_config` ONyc    | `…`            |
-| `OnReBridge` sponsor pubkey   | `…`            |
+| Fork deploy sig               | `5JyDPu7RD51AfHXkoWVJRWnXB8LS1i5rYhmtpK9vKGTwTvXZ6qAWBTZ9Qc1tXr1Uj8gkjx3s2Ak89mC4vmaJn3aJ` |
+| Setter PDA init sig           | n/a — signer-only PDA, no init instruction |
+| Fork upgrade-authority freeze | deferred — kept upgradeable until §8 passes |
+| `register_ntt_config` USDC.s  | `Rwh2e14SAAp7BL9u8wHUxYgbPCcMvAwBeLvyaHTtZwphpkTmUaMXD5UgngYsyGyHy5nUit9he8DKX17mNj6HGME` |
+| `register_fee_config` USDC.s  | `4JGrN3brzhNuA3UmfNWB1iv2eoVG986kwJLUJrDyJdeXWNq3xVFCA4p8UTJ7ECEquvk6GUn3v1YfSHnud4FNc3eR` (mirrors upstream: intrachain 10000, bridge 2000000) |
+| `register_ntt_config` ONyc    | `Y5NEsptawFYkNE1i2it2au8zRDtYYbG6gfb7UP97QAmampHjBWWNBquNRQ6QbAuKXbnknHZFqPLVqsnHmoxeweP` |
+| `register_fee_config` ONyc    | `2XbVpRoy7wfyh3fczcKTGCaduonbe1Uznus5VdLytFbxnZgg2T8eYBNsYWbFt9gSrWx8QNe6iQ4XcA4ngsWvpLW1` (same raw as USDC.s: intrachain 10000, bridge 2000000; ONyc is 9-decimals) |
+| `OnReBridge` sponsor pubkey   | `3AcB3szJnHeSiyLVLRS1a75vsYnYPMZCy5h1dzQV2n1G` (funded, 184.65 SOL) |
 
 ---
 

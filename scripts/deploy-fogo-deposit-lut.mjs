@@ -33,8 +33,6 @@ import {
   Transaction,
 } from '@solana/web3.js'
 
-// ---------- config ----------
-
 const RPC = process.env.FOGO_RPC_URL ?? 'https://mainnet.fogo.io'
 const KEYPAIR_PATH = process.env.AUTHORITY_KEYPAIR
 if (!KEYPAIR_PATH) {
@@ -62,8 +60,6 @@ const EXTRA_KEYS = [
 // to stay under the 1232-byte tx limit. 28 is comfortable.
 const EXTEND_CHUNK = 28
 
-// ---------- helpers ----------
-
 function loadKeypair(path) {
   const raw = JSON.parse(fs.readFileSync(path, 'utf8'))
   return Keypair.fromSecretKey(Uint8Array.from(raw))
@@ -88,14 +84,14 @@ function dedupe(keys) {
   const out = []
   for (const k of keys) {
     const s = k.toBase58()
-    if (seen.has(s)) { continue }
+    if (seen.has(s)) {
+      continue
+    }
     seen.add(s)
     out.push(k)
   }
   return out
 }
-
-// ---------- main ----------
 
 async function main() {
   const connection = new Connection(RPC, 'confirmed')
@@ -108,7 +104,6 @@ async function main() {
     console.warn('WARNING: balance is low — LUT rent + multiple extends may run out.')
   }
 
-  // 1. Fetch bridging LUT contents.
   const bridgingResp = await connection.getAddressLookupTable(BRIDGING_LUT)
   if (!bridgingResp.value) {
     console.error('Failed to fetch bridging LUT', BRIDGING_LUT.toBase58())
@@ -117,11 +112,9 @@ async function main() {
   const bridgingAddresses = bridgingResp.value.state.addresses
   console.log(`Bridging LUT (${BRIDGING_LUT.toBase58()}) has ${bridgingAddresses.length} entries`)
 
-  // 2. Build full union list.
   const unionList = dedupe([...bridgingAddresses, ...EXTRA_KEYS])
   console.log(`Union list: ${unionList.length} entries (bridging=${bridgingAddresses.length} + extras=${EXTRA_KEYS.length}, after dedupe)`)
 
-  // 3. Create LUT.
   const slot = await connection.getSlot('confirmed')
   const [createIx, lutPubkey] = AddressLookupTableProgram.createLookupTable({
     authority: authority.publicKey,
@@ -132,7 +125,6 @@ async function main() {
   const createSig = await sendAndConfirm(connection, authority, [createIx])
   console.log('  created:', createSig)
 
-  // 4. Extend in chunks.
   for (let i = 0; i < unionList.length; i += EXTEND_CHUNK) {
     const chunk = unionList.slice(i, i + EXTEND_CHUNK)
     const extendIx = AddressLookupTableProgram.extendLookupTable({
@@ -145,8 +137,7 @@ async function main() {
     console.log(`  extended +${chunk.length} (${i + chunk.length}/${unionList.length}):`, sig)
   }
 
-  // 5. Verify on-chain contents match what we sent.
-  // LUTs need ~1 slot to be active; poll briefly.
+  // LUTs need ~1 slot to be active; poll briefly before verifying.
   for (let attempt = 0; attempt < 10; attempt++) {
     const resp = await connection.getAddressLookupTable(lutPubkey)
     if (resp.value && resp.value.state.addresses.length === unionList.length) {

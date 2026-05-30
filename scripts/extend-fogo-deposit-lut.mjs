@@ -42,23 +42,24 @@ if (!KEYPAIR_PATH) {
 
 const LUT_PUBKEY = new PublicKey('DDu9vk67v32ZzvUmD3knTByz3mFmdGyzD81h6vg9mUmD')
 
-// USDC.s-side fee accounts that escape compression today now that the
-// deposit fee_mint is USDC.s (not wFOGO). The previous extend round
-// added the sponsor's *wFOGO* ATA assuming our own paymaster (3AcB…);
-// after switching to Fogo Labs' generic `sessions` sponsor (47aX6R…)
-// + fee_mint=USDC.s, three new keys appear in every bridge tx and
-// none of them were in the LUT — bridge tx serializes to 1305 bytes
-// (73 over the 1232 paymaster limit). All three are globally
-// addressable (deterministic PDAs / ATA against fixed mints + fixed
-// sponsor), so safe to LUT.
+// Fork re-point round. The deposit `bridge_ntt_tokens` now targets the
+// OnRe fork (inTFf5S7…) instead of upstream Xfry4dW…, so every
+// program-derived fixed account changed pubkey. The LUT still holds the
+// upstream equivalents (left in place — harmless, and useful for the
+// {OnRe,Fogo} switch-back), but the four fork addresses below ride
+// uncompressed → bridge tx serializes to 1302 bytes (70 over the 1232
+// limit). All four are global (program id + deterministic PDAs against
+// fixed seeds/mints), so safe to LUT.
 //
-//   feeConfig    = PDA(["fee_config", USDC.s], Xfry4dW…)
-//   feeMetadata  = PDA(["metadata", metaplex, USDC.s], metaplex)
-//   feeDestination = ATA(USDC.s, 47aX6R…, allowOffCurve=true)
+//   fork program id        = inTFf5S7…
+//   fork setter            = PDA(["intent_transfer"], fork)
+//   fork ntt_config(USDC.s) = PDA(["expected_ntt_config", USDC.s], fork)
+//   fork fee_config(USDC.s) = PDA(["fee_config", USDC.s], fork)
 const NEW_KEYS = [
-  new PublicKey('DpwZLvKHR7ghrWFWBtms4tFte92B5MfnypeSw7oUrNs3'),
-  new PublicKey('EDGkGR5EoZHddgMDHutYcPMh368VzSmamfgUSDjRWVRN'),
-  new PublicKey('HPwMos9gkA9s35ZXJi5GfozxzQ2NoXHnf8zHMj9cP8AV'),
+  new PublicKey('inTFf5S7ZtYr8SkwGG85mjDwAyJwjqEPdH2p2nuyrL9'),
+  new PublicKey('E11HNeVDA7ZMemjezZaqfWTfdyL1PVkDfLY4xj762wKx'),
+  new PublicKey('6cZMFsFQ8deQmnkC2Frdb2x3wRym5pyJnJyWN1L5q4CF'),
+  new PublicKey('7i5UFAHZTKb8St5q4LkZAYmocYSajyd6cqd26CoMvXo6'),
 ]
 
 function loadKeypair(path) {
@@ -71,9 +72,8 @@ async function main() {
   const authority = loadKeypair(KEYPAIR_PATH)
   console.log('Authority/payer:', authority.publicKey.toBase58())
 
-  // Sanity: confirm the on-chain LUT authority matches the loaded key.
-  // If this mismatch fires, the extend will fail at runtime anyway —
-  // catching it client-side gives a clearer error.
+  // Catch an authority mismatch client-side for a clearer error than the
+  // runtime failure the extend would otherwise hit.
   const before = await connection.getAddressLookupTable(LUT_PUBKEY)
   if (!before.value) {
     console.error('LUT not found:', LUT_PUBKEY.toBase58())
@@ -88,9 +88,8 @@ async function main() {
   }
   console.log(`LUT currently has ${before.value.state.addresses.length} entries`)
 
-  // Skip keys that are already present — extend is not idempotent in
-  // the sense that duplicates cost rent + slot lookup overhead even
-  // though they don't change semantics.
+  // Skip keys already present — duplicates cost rent without changing
+  // semantics.
   const existing = new Set(before.value.state.addresses.map(a => a.toBase58()))
   const toAdd = NEW_KEYS.filter(k => !existing.has(k.toBase58()))
   if (toAdd.length === 0) {

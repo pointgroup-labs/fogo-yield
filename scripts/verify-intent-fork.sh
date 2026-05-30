@@ -44,10 +44,16 @@ fi
 echo "OK: only declare_id! ($UPSTREAM_PROGRAM_ID -> $FORK_PROGRAM_ID) differs from upstream $UPSTREAM_COMMIT"
 
 # Reproducible build (requires Docker; run at deploy/CI time).
+# Base image pinned to upstream's audited toolchain
+# (fogo-sessions build-and-upload-svm-programs.yaml @ intent-transfer/v0.1.2).
+# A newer platform-tools inflates BridgeNttTokens::try_accounts past SBF's
+# 4096-byte stack frame -> runtime access violation, so this pin is
+# load-bearing; do NOT drop it for a bare `solana-verify build`.
+VERIFY_BASE_IMAGE="solanafoundation/solana-verifiable-build:2.2.18"
 if [ "${SKIP_REPRODUCIBLE_BUILD:-0}" = "1" ]; then
   echo "SKIP: reproducible build (SKIP_REPRODUCIBLE_BUILD=1)"; exit 0
 fi
 ( cd programs/intent-transfer \
-  && solana-verify build --library-name intent_transfer \
+  && solana-verify build --library-name intent_transfer --base-image "$VERIFY_BASE_IMAGE" \
   && solana-verify get-executable-hash target/deploy/intent_transfer.so \
        | tee target/deploy/intent_transfer.sha256 )

@@ -13,42 +13,22 @@ import { readonly, signerWritable, writable } from '../utils/accountMeta'
 /**
  * Wire-format primitives for FOGO `intent_transfer.bridge_ntt_tokens`.
  *
- * Why this exists
- * ---------------
- * The off-the-shelf `bridgeOut` helper in `@fogo/sessions-sdk` hardcodes
- * `recipient_address: walletPublicKey.toBase58()` in the signed intent.
- * For OnRe deposits we need `recipient_address` to be the per-user inbox
- * PDA on Solana (`findUserInboxAuthorityPda(wallet)`), so the relayer
- * can sweep + record the originator. The SDK's `bridgeOut` cannot
- * accommodate that override, so we re-implement the wire format here.
+ * `@fogo/sessions-sdk`'s `bridgeOut` hardcodes `recipient_address` to the
+ * wallet pubkey and can't override it. OnRe deposits need it to be the
+ * per-user inbox PDA (`findUserInboxAuthorityPda(wallet)`) so the relayer
+ * can sweep + record the originator, hence this re-implementation.
  *
- * Format invariant
- * ----------------
- * The on-chain parser `programs/intent-transfer/src/bridge/message.rs`
- * accepts version `0.2` only and matches the exact prefix string +
- * key/value lines below. Any drift (whitespace, key order, version
- * bump) breaks the deposit path silently. `INTENT_BRIDGE_OUT_MESSAGE`
- * is the byte-identical contract surface — pin the upstream
- * `@fogo/sessions-idls` version when this SDK ships, and add an
- * integration test that round-trips this message through the on-chain
- * deserializer.
+ * Format invariant: the on-chain parser
+ * `programs/intent-transfer/src/bridge/message.rs` accepts version `0.2`
+ * only and matches the exact prefix + key/value lines below. Any drift
+ * (whitespace, key order, version bump) breaks deposit silently.
  *
- * What's NOT here
- * ---------------
- * - Wormhole executor quote fetch (`signedQuoteBytes`) — caller's job;
- *   webapp uses `@wormhole-foundation/sdk`'s NTT route helpers.
- * - NTT sub-context PDA derivation — caller-supplied via
- *   `NttBridgeSubAccounts`. Webapp computes via Wormhole SDK helpers
- *   that already exist in the prior `bridgeOut` flow.
- * - On-chain nonce fetch — caller passes the next `nonce`. Derive PDA:
- *   `["bridge_ntt_nonce", source_ata.owner]` under intent_transfer.
+ * Caller-supplied (not built here): the Wormhole executor quote
+ * (`signedQuoteBytes`), NTT sub-context PDAs (`NttBridgeSubAccounts`),
+ * and the `nonce` (PDA `["bridge_ntt_nonce", source_ata.owner]`).
  */
 
-/**
- * Single-byte instruction discriminator. Intent_transfer uses non-Anchor
- * 1-byte tags (NOT sha256 sighash). Confirmed against IDL `discriminator: [1]`
- * for `bridge_ntt_tokens`.
- */
+/** Non-Anchor 1-byte tag (IDL `discriminator: [1]`), not a sha256 sighash. */
 const BRIDGE_NTT_TOKENS_DISCRIMINATOR = 0x01
 
 /** Pinned by upstream parser `version: 0.2`. */

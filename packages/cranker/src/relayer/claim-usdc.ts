@@ -18,14 +18,11 @@ import { prepareTransceiverMessage } from './prepare-transceiver-message'
 import { isLostRace } from './race-classifier'
 import { flagDormantSetterReplay } from './replay-monitor'
 
-// NTT `Redeem` inits the `inbox_item` PDA via `invoke_signed` under the
-// relayer-authority PDA, debiting rent (~1.41M lamports observed) from
-// that PDA. If it's at the rent-exempt floor for its own data (~1.14M),
-// the inner system_program::transfer underflows and the whole tx
-// aborts with `Transfer: insufficient lamports … need …` (custom error
-// 0x1 from System Program). 3M lamports leaves comfortable headroom for
-// the rent debit plus any future NTT layout growth. Mirrors the
-// matching constant in `unlock-onyc.ts` — keep them in sync.
+// NTT `Redeem` inits `inbox_item` via `invoke_signed` under
+// relayer_authority, debiting rent (~1.41M) from that PDA. At its own
+// rent-exempt floor (~1.14M) the inner transfer underflows (`Transfer:
+// insufficient lamports`, System error 0x1). 3M leaves headroom. Mirrors
+// `unlock-onyc.ts` — keep in sync.
 const RELAYER_AUTH_TOPUP = 3_000_000n
 
 export type ClaimUsdcInput = {
@@ -153,23 +150,12 @@ export async function claimUsdc(
     const [userInboxAuthority] = findUserInboxAuthorityPda(userWallet, client.program.programId)
     const userInboxAta = getAssociatedTokenAddressSync(usdcMint, userInboxAuthority, true)
 
-    // Pre-flight 3: behavioural check for the on-chain InsufficientInboxBalance
-    // failure (claim_usdc.rs:280: `user_inbox_ata.amount >= inbox.amount`).
-    //
-    // Failure shape: a prior claim_usdc/lock_onyc cycle ran NTT redeem+release
-    // (creating the inbox-item, minting tokens to user_inbox_ata) and either
-    // closed the Flow PDA (full success → cranker shouldn't re-pick this VAA,
-    // but Wormholescan re-enumeration after Flow close still surfaces it) or
-    // left the ATA drained for any other reason. With no Flow PDA, Pre-flight 2
-    // doesn't catch it, NTT release is idempotent (skip path), and the
-    // amount check fails permanently.
-    //
-    // Layout-aware reads live in `account-layouts.ts` — the sha256 binary
-    // pins in `tests/utils/withdraw-scaffolding.ts` are the tripwire if
-    // upstream layout drifts. If the inbox-item doesn't exist yet, this
-    // is a fresh claim — proceed. If both exist and the ATA balance is
-    // insufficient for the recorded inbox amount, the on-chain check
-    // would always fail; noop instead.
+    // Pre-flight 3: pre-empt the on-chain InsufficientInboxBalance failure
+    // (claim_usdc.rs:280). If the inbox-item already exists with a recorded
+    // amount the ATA balance can't cover, a prior claim partially landed (or
+    // the VAA was re-enumerated after Flow close) — the check would fail
+    // permanently, so noop. Layout reads live in `account-layouts.ts` (sha256
+    // pinned in `withdraw-scaffolding.ts`). Missing inbox-item = fresh claim.
     const [inboxInfo, ataInfo] = await Promise.all([
       withTimeout(
         connection.getAccountInfo(resolved.nttInboxItem),
@@ -212,19 +198,11 @@ export async function claimUsdc(
     )
 
     // Pre-step: ensure the USDC NTT `transceiver_message` PDA exists on
-    // Solana, owned by the USDC NTT manager. Mirrors the same pattern
-    // `unlock_onyc` uses — the on-chain `claim_usdc` handler declares
-    // `ntt_transceiver_message` with `owner = NTT_USDC_PROGRAM_ID` and
-    // can't create it itself (its CPI does redeem + release_inbound_mint,
-    // both of which read the existing transceiver_message).
-    //
-    // Why this exists despite Wormhole's auto-relayer nominally
-    // subscribing to USDC.s: in practice the auto-relayer is unreliable
-    // — observed failures land as Anchor ConstraintOwner (2004) with
-    // `Left=11111…, Right=nttu74Cd…SdGk`, i.e. the PDA is still System-
-    // owned at submit time. Posting it ourselves is idempotent (probe
-    // first) so concurrent auto-relayer + cranker posts cost one
-    // redundant RPC.
+    // Solana, owned by the USDC NTT manager. The on-chain `claim_usdc`
+    // handler reads it during redeem + release_inbound_mint and can't
+    // create it. Wormhole's auto-relayer nominally posts it but is
+    // unreliable (observed ConstraintOwner 2004, PDA still System-owned),
+    // so we post it ourselves — idempotent (probe first).
     //
     // Bundled-mode NTT: `transceiver` and `expectedOwner` both equal
     // `nttProgram` because the manager program also serves as the
@@ -251,14 +229,9 @@ export async function claimUsdc(
       }
     }
 
-    // Lamport top-up: NTT `redeem` does `init` on `inbox_item` via
-    // `invoke_signed` under `relayer_authority`, debiting rent from
-    // that PDA. If relayer_authority is at its rent-exempt floor for
-    // its own data, the inbox_item rent debit underflows
-    // (`Transfer: insufficient lamports … need …`, custom error 0x1).
-    // Top up to RELAYER_AUTH_TOPUP only when below threshold —
-    // skipping the system_program transfer when not needed keeps the
-    // tx small. Mirrors `unlock-onyc.ts`; same constant family.
+    // Lamport top-up: NTT `redeem` inits `inbox_item` under
+    // relayer_authority, debiting rent. Top up to RELAYER_AUTH_TOPUP only
+    // when below threshold, keeping the tx small. Mirrors `unlock-onyc.ts`.
     const [relayerAuthorityPda] = findAuthorityPda(client.program.programId)
     const relayerAuthInfo = await connection.getAccountInfo(relayerAuthorityPda).catch(() => null)
     const relayerCurrentLamports = BigInt(relayerAuthInfo?.lamports ?? 0)

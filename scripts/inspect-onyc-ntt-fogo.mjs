@@ -1,3 +1,4 @@
+/* eslint-disable style/max-statements-per-line -- one-line decoder closures (`const v = data.readUInt8(off); off += 1; return v`) keep binary parsing compact */
 /**
  * Diagnostic: inspect the ONyc NTT manager state on FOGO and resolve
  * the cross-chain status of a specific FOGO burn tx.
@@ -115,7 +116,7 @@ async function main() {
   console.log(`ONyc NTT manager:     ${NTT_ONYC_PROGRAM_ID.toBase58()}`)
   console.log()
 
-  // --- B: manager-state PDAs --------------------------------------------------
+  // Manager-state PDAs.
   const [configPda] = findConfigPda()
   const [peerPda] = findPeerPda(SOLANA_WORMHOLE_CHAIN_ID)
   const [outboxPda] = findOutboxRateLimitPda()
@@ -158,7 +159,7 @@ async function main() {
   console.log(`  emitter (hex):      ${Buffer.from(emitterPda.toBytes()).toString('hex')}`)
   console.log()
 
-  // --- A: VAA resolution for a specific tx -----------------------------------
+  // VAA resolution for a specific tx.
   if (fogoSig === null) {
     console.log('(no FOGO tx signature provided — skipping VAA resolution; pass one as argv[2])')
     return

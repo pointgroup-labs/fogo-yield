@@ -20,12 +20,10 @@ import { prepareTransceiverMessage } from './prepare-transceiver-message'
 import { isLostRace } from './race-classifier'
 import { flagDormantSetterReplay } from './replay-monitor'
 
-// NTT `redeem` inits `inbox_item` PDA via invoke_signed under
-// `relayer_authority`, which means the PDA pays rent. Its current
-// balance is just rent-exempt for its own account; topping up to 3M
-// lamports leaves comfortable headroom for inbox_item rent
-// (~1.4M observed) plus any future NTT layout growth.
-// Same constant family as send-usdc-to-user.ts; keep in sync.
+// NTT `redeem` inits `inbox_item` via invoke_signed under
+// relayer_authority, so the PDA pays rent (~1.4M observed). Topping up to
+// 3M leaves headroom. Same constant family as send-usdc-to-user.ts; keep
+// in sync.
 const RELAYER_AUTH_TOPUP = 3_000_000n
 
 export type UnlockOnycInput = {
@@ -204,13 +202,10 @@ export async function unlockOnyc(
     )
 
     // Pre-step: ensure ntt_transceiver_message PDA exists on Solana,
-    // owned by the ONyc NTT manager. Wormhole's auto-relayer is not
-    // subscribed to the ONyc manager (only USDC.s), so inbound VAAs
-    // must be posted by us. The on-chain unlock_onyc handler declares
-    // ntt_transceiver_message with `owner = NTT_ONYC_PROGRAM_ID` and
-    // CANNOT create it (its CPI does redeem + release_inbound_unlock,
-    // both of which read the existing transceiver_message). Skipping
-    // this step yields ConstraintOwner (2004) at submit. Idempotent.
+    // owned by the ONyc NTT manager. Wormhole's auto-relayer isn't
+    // subscribed to that manager (only USDC.s), and the on-chain
+    // unlock_onyc handler reads it during redeem + release_inbound_unlock
+    // but can't create it (else ConstraintOwner 2004 at submit). Idempotent.
     const prep = await prepareTransceiverMessage({
       connection,
       payer: keypair,
@@ -233,14 +228,9 @@ export async function unlockOnyc(
       }
     }
 
-    // Lamport top-up: NTT `redeem` does `init` on `inbox_item` via
-    // `invoke_signed` under `relayer_authority`, debiting rent from
-    // that PDA. If relayer_authority is at its rent-exempt floor for
-    // its own data, the inbox_item rent debit underflows
-    // (`Transfer: insufficient lamports … need …`, custom error 0x1).
-    // Top up to RELAYER_AUTH_TOPUP only when below threshold —
-    // skipping the system_program transfer when not needed keeps the
-    // tx small.
+    // Lamport top-up: NTT `redeem` inits `inbox_item` under
+    // relayer_authority, debiting rent. Top up to RELAYER_AUTH_TOPUP only
+    // when below threshold, keeping the tx small.
     const [relayerAuthorityPda] = findAuthorityPda(client.program.programId)
     const relayerAuthInfo = await connection.getAccountInfo(relayerAuthorityPda).catch(() => null)
     const relayerCurrentLamports = BigInt(relayerAuthInfo?.lamports ?? 0)

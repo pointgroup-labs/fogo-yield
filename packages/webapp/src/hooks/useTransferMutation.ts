@@ -1,5 +1,6 @@
 'use client'
 
+import type { AddressLookupTableAccount, TransactionInstruction } from '@solana/web3.js'
 import type { BridgeContextProvider } from '@/lib/bridge/context'
 import type { FlowKind, PersistedFlowStatus } from '@/lib/flow-status/types'
 import {
@@ -11,7 +12,13 @@ import {
 } from '@fogo-onre/sdk'
 import { isEstablished, TransactionResultType, useSession } from '@fogo/sessions-sdk-react'
 import { getAssociatedTokenAddressSync } from '@solana/spl-token'
-import { ComputeBudgetProgram, Keypair, PublicKey } from '@solana/web3.js'
+import {
+  ComputeBudgetProgram,
+  Keypair,
+  PublicKey,
+  TransactionMessage,
+  VersionedTransaction,
+} from '@solana/web3.js'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import {
@@ -19,6 +26,7 @@ import {
   FOGO_BRIDGE_VARIATION,
 } from '@/constants'
 import { findFeeConfigPda, readBridgeTransferFee } from '@/lib/bridge/feeConfig'
+import { fetchBridgeSponsor } from '@/lib/bridge/intentBridgeShared'
 import { addFlow, pendingWithdrawExists } from '@/lib/flow-status/store'
 import { useSettings } from '@/store/settings'
 import { getFogoConnection } from '@/utils/connections'
@@ -71,11 +79,6 @@ export function useTransferMutation(options: UseTransferMutationOptions = {}) {
         throw new Error('Wallet not connected')
       }
       if (args.kind === 'withdraw' && pendingWithdrawExists(qc)) {
-        // Friendlier than "Withdraw already in flight" — explains *why*
-        // it's blocked and what the user can do (the journal is
-        // self-clearing past the 2h stuck-pending window in
-        // `pendingWithdrawExists`, but they shouldn't have to read
-        // source to figure that out).
         throw new Error(
           'A previous redeem is still in flight. Wait for it to finish or check Bridge history.',
         )
@@ -90,8 +93,8 @@ export function useTransferMutation(options: UseTransferMutationOptions = {}) {
       const destMint = new PublicKey(args.destMintB58)
       const baselineDestBalance = await readDestinationBalance(destOwner, destMint, fogoRpcUrl)
 
-      // Cache-warm the bridge-fee preview so the form's gate doesn't
-      // race the next refetch. Withdraw skipped: its fee row isn't shown.
+      // Cache-warm the bridge-fee preview so the form's gate doesn't race
+      // the next refetch. Withdraw skipped: its fee row isn't shown.
       if (args.kind === 'deposit') {
         await qc.fetchQuery({
           queryKey: ['bridge-fee', fogoRpcUrl] as const,
@@ -124,6 +127,15 @@ export function useTransferMutation(options: UseTransferMutationOptions = {}) {
       }
       const result = await sessionState.sendTransaction(built.ixs, sendOptions)
       if (result.type === TransactionResultType.Failed) {
+        // The paymaster strips logs from its response (the SDK's zod
+        // schema keeps only InstructionError), so re-simulate locally to
+        // surface the failing CPI's program logs in the console.
+        await logFailedTxSimulation({
+          ixs: built.ixs,
+          lut: built.addressLookupTable,
+          fogoRpcUrl,
+          error: result.error,
+        })
         const message = result.error instanceof Error
           ? result.error.message
           : typeof result.error === 'string'
@@ -133,9 +145,8 @@ export function useTransferMutation(options: UseTransferMutationOptions = {}) {
       }
       const signature = result.signature
 
-      // Signatures are unique per landed tx, so reusing the signature
-      // as flowId gives a deterministic key that survives reload
-      // without an additional derivation table.
+      // Signatures are unique per landed tx, so reusing one as flowId gives
+      // a deterministic, reload-safe key with no extra derivation table.
       const flowId = signature
       const persisted: PersistedFlowStatus = {
         flowId,
@@ -175,6 +186,43 @@ export function useTransferMutation(options: UseTransferMutationOptions = {}) {
       })
     },
   })
+}
+
+async function logFailedTxSimulation(args: {
+  ixs: TransactionInstruction[]
+  lut: PublicKey | undefined
+  fogoRpcUrl: string
+  error: unknown
+}): Promise<void> {
+  const { ixs, lut, fogoRpcUrl, error } = args
+  try {
+    const conn = getFogoConnection(fogoRpcUrl)
+    const sponsor = await fetchBridgeSponsor()
+    const luts: AddressLookupTableAccount[] = []
+    if (lut) {
+      const fetched = (await conn.getAddressLookupTable(lut)).value
+      if (fetched) {
+        luts.push(fetched)
+      }
+    }
+    const { blockhash } = await conn.getLatestBlockhash('confirmed')
+    const msg = new TransactionMessage({
+      payerKey: sponsor,
+      recentBlockhash: blockhash,
+      instructions: ixs,
+    }).compileToV0Message(luts)
+    const sim = await conn.simulateTransaction(new VersionedTransaction(msg), {
+      sigVerify: false,
+      replaceRecentBlockhash: true,
+      commitment: 'confirmed',
+    })
+    console.error('[bridge-debug] paymaster error:', JSON.stringify(error))
+    console.error('[bridge-debug] simulation err:', JSON.stringify(sim.value.err))
+    console.error('[bridge-debug] units consumed:', sim.value.unitsConsumed)
+    console.error(`[bridge-debug] simulation logs:\n${(sim.value.logs ?? []).join('\n')}`)
+  } catch (e) {
+    console.error('[bridge-debug] re-simulation failed:', e)
+  }
 }
 
 function parseAmountStrict(amountStr: string, decimals: number): bigint {
@@ -242,8 +290,8 @@ async function buildIntentBridgeIxs(args: {
 
   return {
     ixs: [
-      // ~700k CU empirically; runtime default of 200k * num_ixs is
-      // insufficient for the deep CPI chain.
+      // ~700k CU empirically; the runtime default (200k * num_ixs)
+      // is insufficient for the deep CPI chain.
       ComputeBudgetProgram.setComputeUnitLimit({ units: 1_400_000 }),
       buildIntentVerifierIx(sessionState.walletPublicKey, signature, message),
       buildBridgeNttTokensIx({

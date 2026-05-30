@@ -1,28 +1,20 @@
 /**
- * Wormhole-SDK orchestration for FOGO → Solana USDC.s NTT bridging.
+ * Wormhole-SDK orchestration for FOGO → Solana NTT bridging (both legs).
  *
- * Isolated in its own module so the (heavy) Wormhole bundle can be
- * dynamically imported on demand from `depositContext.ts` and stays
- * out of the initial page load.
+ * Isolated so the heavy Wormhole bundle can be dynamically imported on
+ * demand from `depositContext.ts` / `withdrawContext.ts`. Two exports —
+ * `fetchUsdcSDepositQuote()` and `fetchOnycRedeemQuote()` — wrap a shared
+ * `fetchNttIntentQuote()` core returning the signed executor quote, the
+ * full `NttBridgeSubAccounts` constellation, and the bridging LUT.
  *
- * Single export: `fetchUsdcSDepositQuote()` returns:
- *   - `signedQuoteBytes` — the 165-byte signed quote from the Wormhole
- *     executor service (`https://executor.labsapis.com/v0/quote`,
- *     baked-in by `@wormhole-foundation/sdk-route-ntt`).
- *   - `nttSubAccounts` — the full `NttBridgeSubAccounts` constellation
- *     (including `payeeNttWithExecutor` from the per-quote payee),
- *     derived via `NTT.pdas` / `NTT.transceiverPdas` /
- *     `utils.getWormholeDerivedAccounts`.
- *
- * Mirrors `buildWormholeTransfer + getNttPdas` from
- * `@fogo/sessions-sdk` (which we cannot reuse directly because its
- * `bridgeOut` hardcodes the recipient to the wallet pubkey — for
- * OnRe deposits we need the per-user inbox PDA on Solana). Every
- * non-trivial line below is a transcription of that source so the two
- * stay in lockstep on SDK bumps.
+ * Mirrors `buildWormholeTransfer + getNttPdas` from `@fogo/sessions-sdk`,
+ * which we can't reuse directly because its `bridgeOut` hardcodes the
+ * recipient to the wallet pubkey — OnRe needs the per-user inbox PDA.
+ * Keep this in lockstep with that source on SDK bumps.
  */
 
 import type { NttBridgeSubAccounts } from '@fogo-onre/sdk'
+import { NTT_ONYC_PROGRAM_ID, ONYC_DECIMALS, ONYC_MINT } from '@fogo-onre/sdk'
 import { Network } from '@fogo/sessions-sdk-react'
 import { PublicKey } from '@solana/web3.js'
 import { Wormhole, wormhole } from '@wormhole-foundation/sdk'
@@ -32,23 +24,25 @@ import { nttExecutorRoute } from '@wormhole-foundation/sdk-route-ntt'
 import { utils } from '@wormhole-foundation/sdk-solana-core'
 import { NTT, register as registerNttSolana } from '@wormhole-foundation/sdk-solana-ntt'
 import solanaSdk from '@wormhole-foundation/sdk/solana'
-import { FOGO_DEPOSIT_LUT_OVERRIDE, FOGO_NETWORK } from '@/constants'
+import {
+  FOGO_DEPOSIT_LUT_OVERRIDE,
+  FOGO_NETWORK,
+  FOGO_ONYC_MINT,
+  FOGO_ONYC_NTT_MANAGER_ID,
+  FOGO_REDEEM_LUT_OVERRIDE,
+} from '@/constants'
 import { formatBaseUnitsExact } from '@/utils/transfer'
 
-// `@wormhole-foundation/sdk-solana-ntt` exposes a `register()` that
-// installs the NTT protocol on the Solana platform. Idempotent — safe
-// to call from a top-level module load. Mirrors sessions-sdk
-// (`registerNtt()` at index.js:27).
+// Installs the NTT protocol on the Solana platform. Idempotent — safe at
+// module load. Mirrors sessions-sdk `registerNtt()`.
 registerNttSolana()
 
 /**
- * Bridging address-lookup-table per `(network, source-mint)`. Mirrors
- * `BRIDGING_ADDRESS_LOOKUP_TABLE` in `@fogo/sessions-sdk` (`index.js:532`).
- * This LUT is pre-populated by Fogo Labs with the union of intent_transfer
- * + NTT-manager accounts that `bridge_ntt_tokens` touches — using it in
- * place of the per-manager `["lut"]` wrapper PDA shrinks the tx enough to
- * fit Solana's 1232-byte legacy-tx limit. The wrapper PDA only covers
- * NTT-side accounts, leaving the intent_transfer side uncompressed.
+ * Bridging LUT per `(network, USDC.s mint)`. Mirrors
+ * `BRIDGING_ADDRESS_LOOKUP_TABLE` in `@fogo/sessions-sdk`: union of
+ * intent_transfer + NTT-manager accounts that `bridge_ntt_tokens` touches,
+ * shrinking the tx under the 1232-byte legacy limit (the per-manager
+ * `["lut"]` wrapper PDA only covers NTT-side accounts).
  */
 const BRIDGING_LUT_BY_USDC_S_MINT: Record<Network, string> = {
   [Network.Mainnet]: '7hmMz3nZDnPJfksLuPotKmUBAFDneM2D9wWg3R1VcKSv',
@@ -61,12 +55,9 @@ const NETWORK_TO_WORMHOLE_NETWORK = {
 } as const
 
 /**
- * Mirror of the `USDC` constant in `@fogo/sessions-sdk-react/wormhole-routes`.
- * The package's `exports` map only publishes the main entry, so we
- * inline the values here. They're stable on-chain identifiers — drift
- * would require a Wormhole NTT redeploy on either chain, which would
- * trigger a coordinated SDK bump anyway. Keep this in lockstep with the
- * upstream `wormhole-routes.js` on every `@fogo/sessions-sdk-react` bump.
+ * Mirror of the `USDC` constant in `@fogo/sessions-sdk-react/wormhole-routes`
+ * (its `exports` map doesn't publish that entry, so we inline it). Stable
+ * on-chain identifiers — keep in lockstep on `@fogo/sessions-sdk-react` bumps.
  */
 const WORMHOLE_USDC = {
   chains: {
@@ -102,12 +93,58 @@ const WORMHOLE_USDC = {
   decimals: 6,
 }
 
-export interface FetchUsdcSDepositQuoteParams {
+/**
+ * ONyc NTT token leg. Mainnet only — the OnRe ONyc deployment has no
+ * testnet peer, so a testnet redeem throws. Both chains run the same
+ * manager program in bundled-transceiver mode, so the transceiver is the
+ * manager itself.
+ */
+const WORMHOLE_ONYC = {
+  chains: {
+    [Network.Mainnet]: {
+      fogo: {
+        chain: 'Fogo' as const,
+        manager: FOGO_ONYC_NTT_MANAGER_ID,
+        mint: FOGO_ONYC_MINT,
+        transceiver: NTT_ONYC_PROGRAM_ID,
+      },
+      solana: {
+        chain: 'Solana' as const,
+        manager: NTT_ONYC_PROGRAM_ID,
+        mint: ONYC_MINT,
+        transceiver: NTT_ONYC_PROGRAM_ID,
+      },
+    },
+  },
+  decimals: ONYC_DECIMALS,
+}
+
+interface NttTokenEndpoint {
+  chain: 'Fogo' | 'Solana'
+  manager: PublicKey
+  mint: PublicKey
+  transceiver: PublicKey
+}
+
+/**
+ * One FOGO→Solana NTT route: source + destination token endpoints, the
+ * shared decimals, the route-config token key, and the bridging LUT (may
+ * be absent until an operator deploys one for this leg).
+ */
+interface NttLeg {
+  from: NttTokenEndpoint
+  to: NttTokenEndpoint
+  decimals: number
+  routeTokenKey: string
+  lut: PublicKey | null
+}
+
+export interface FetchNttIntentQuoteParams {
   /** The user's FOGO wallet pubkey. */
   walletPublicKey: PublicKey
-  /** Per-user inbox PDA on Solana — the deposit's true recipient. */
+  /** Per-user inbox PDA on Solana — the bridge's true recipient. */
   recipientOnSolana: PublicKey
-  /** Bridge amount in base units (USDC.s = 6 decimals). */
+  /** Bridge amount in base units (leg decimals). */
   amount: bigint
   /** Outbox-item keypair pubkey (caller adds the Keypair to extraSigners). */
   outboxItem: PublicKey
@@ -117,46 +154,84 @@ export interface FetchUsdcSDepositQuoteParams {
   intentTransferSetter: PublicKey
 }
 
-export interface FetchUsdcSDepositQuoteResult {
+export interface FetchNttIntentQuoteResult {
   signedQuoteBytes: Uint8Array
   ntt: NttBridgeSubAccounts
   /**
-   * The FOGO USDC.s NTT manager's published address-lookup table
-   * (`["lut"]` under the manager program). The unrolled `bridge_ntt_tokens`
-   * ix references ~30 distinct accounts and won't fit in a 1232-byte
-   * legacy tx — passing this LUT to `sendTransaction({ addressLookupTable })`
-   * gets the manager-side accounts (config, peer, custody, transceiver,
-   * wormhole bridge, etc.) into the LUT-indexed slots so only the
-   * intent_transfer-side accounts have to be in the tx body.
+   * Bridging LUT for `sendTransaction`. The unrolled `bridge_ntt_tokens`
+   * ix references ~30 accounts and won't fit a 1232-byte legacy tx.
+   * `undefined` when the leg has no LUT configured (redeem until deployed).
    */
-  addressLookupTable: PublicKey
+  addressLookupTable: PublicKey | undefined
+}
+
+/** USDC.s deposit: FOGO→Solana through the USDC NTT managers. */
+export async function fetchUsdcSDepositQuote(
+  params: FetchNttIntentQuoteParams,
+): Promise<FetchNttIntentQuoteResult> {
+  const usdc = WORMHOLE_USDC.chains[FOGO_NETWORK]
+  // Prefer our custom union LUT (bridging LUT + 7 globals it misses when
+  // fee_token = wFOGO); fall back to the Sessions-SDK bridging LUT.
+  const lut = FOGO_DEPOSIT_LUT_OVERRIDE ?? BRIDGING_LUT_BY_USDC_S_MINT[FOGO_NETWORK]
+  return fetchNttIntentQuote(
+    {
+      from: usdc.fogo,
+      to: usdc.solana,
+      decimals: WORMHOLE_USDC.decimals,
+      routeTokenKey: 'USDC',
+      lut: new PublicKey(lut),
+    },
+    params,
+  )
 }
 
 /**
- * One-shot helper: fetches the executor quote AND derives every NTT
- * sub-account the `bridge_ntt_tokens` ix needs, in a single call so the
- * caller doesn't have to sequence two async dances.
+ * ONyc redeem: FOGO→Solana through the ONyc NTT managers, a hard mirror
+ * of deposit. The bridging LUT is operator-supplied
+ * (`FOGO_REDEEM_LUT_OVERRIDE`); until one is deployed the redeem tx may
+ * exceed the legacy-tx size limit.
  */
-export async function fetchUsdcSDepositQuote(
-  params: FetchUsdcSDepositQuoteParams,
-): Promise<FetchUsdcSDepositQuoteResult> {
-  const { walletPublicKey, recipientOnSolana, amount, outboxItem, solanaRpcUrl, intentTransferSetter } = params
+export async function fetchOnycRedeemQuote(
+  params: FetchNttIntentQuoteParams,
+): Promise<FetchNttIntentQuoteResult> {
+  if (FOGO_NETWORK !== Network.Mainnet) {
+    throw new Error('ONyc redeem is only configured on mainnet (no testnet NTT peer registered).')
+  }
+  const onyc = WORMHOLE_ONYC.chains[Network.Mainnet]
+  return fetchNttIntentQuote(
+    {
+      from: onyc.fogo,
+      to: onyc.solana,
+      decimals: WORMHOLE_ONYC.decimals,
+      routeTokenKey: 'ONyc',
+      lut: FOGO_REDEEM_LUT_OVERRIDE === null ? null : new PublicKey(FOGO_REDEEM_LUT_OVERRIDE),
+    },
+    params,
+  )
+}
 
-  const fromToken = WORMHOLE_USDC.chains[FOGO_NETWORK].fogo
-  const toToken = WORMHOLE_USDC.chains[FOGO_NETWORK].solana
-  const decimals = WORMHOLE_USDC.decimals
+/**
+ * Shared core: fetches the executor quote AND derives every NTT
+ * sub-account the `bridge_ntt_tokens` ix needs for `leg`, in a single
+ * call so callers don't sequence two async dances.
+ */
+async function fetchNttIntentQuote(
+  leg: NttLeg,
+  params: FetchNttIntentQuoteParams,
+): Promise<FetchNttIntentQuoteResult> {
+  const { walletPublicKey, recipientOnSolana, amount, outboxItem, solanaRpcUrl, intentTransferSetter } = params
+  const { from: fromToken, to: toToken, decimals } = leg
 
   const wh = await wormhole(NETWORK_TO_WORMHOLE_NETWORK[FOGO_NETWORK], [solanaSdk], {
     chains: { Solana: { rpc: solanaRpcUrl } },
   })
 
-  // Build a single-token NTT route covering Fogo↔Solana USDC.s. The
-  // executor (`https://executor.labsapis.com`) is hardcoded inside the
-  // route module — no URL config to thread.
+  // Single-token NTT route covering Fogo↔Solana for this leg. The executor
+  // (`https://executor.labsapis.com`) is hardcoded inside the route module.
   const Route = nttExecutorRoute({
     ntt: {
       tokens: {
-        USDC: [
+        [leg.routeTokenKey]: [
           {
             chain: fromToken.chain,
             manager: fromToken.manager.toBase58(),
@@ -176,9 +251,8 @@ export async function fetchUsdcSDepositQuote(
   const route = new Route(wh)
   const transferRequest = await routes.RouteTransferRequest.create(wh, {
     destination: Wormhole.tokenId(toToken.chain, toToken.mint.toBase58()),
-    // Recipient on the destination chain: the per-user inbox PDA, NOT
-    // the user's wallet pubkey. This is the entire reason we don't
-    // reuse sessions-sdk's `bridgeOut` directly.
+    // Recipient is the per-user inbox PDA, NOT the wallet pubkey — the
+    // whole reason we don't reuse sessions-sdk's `bridgeOut`.
     recipient: Wormhole.chainAddress(toToken.chain, recipientOnSolana.toBase58()),
     source: Wormhole.tokenId(fromToken.chain, fromToken.mint.toBase58()),
   })
@@ -189,14 +263,9 @@ export async function fetchUsdcSDepositQuote(
   if (!validated.valid) {
     throw validated.error
   }
-  // The wormhole client's TS surface lies about `fetchExecutorQuote`'s
-  // visibility — it's part of the runtime API. Sessions-sdk uses the
-  // same `@ts-expect-error` workaround.
-  //
-  // `payeeAddress` is declared in `signedQuoteLayout` as
-  // `{ binary: "bytes", size: 32 }`, so the deserialized value is a raw
-  // 32-byte `Uint8Array` — not a `UniversalAddress` wrapper. Pass the
-  // bytes straight to `new PublicKey(Uint8Array)`.
+  // `fetchExecutorQuote` is part of the runtime API despite the TS surface
+  // hiding it (sessions-sdk uses the same `@ts-expect-error`). `payeeAddress`
+  // is raw 32 bytes — pass straight to `new PublicKey(Uint8Array)`.
   const quote = await (route as unknown as {
     fetchExecutorQuote: (
       r: typeof transferRequest,
@@ -216,16 +285,10 @@ export async function fetchUsdcSDepositQuote(
     wh,
   })
 
-  // Prefer our custom union LUT (mirror of bridging LUT + 7 globals
-  // that escape it when fee_token = wFOGO) when deployed; fall back
-  // to the Sessions-SDK bridging LUT otherwise. See
-  // `scripts/deploy-fogo-deposit-lut.mjs` and
-  // `FOGO_DEPOSIT_LUT_OVERRIDE` in `constants.ts`.
-  const lutAddress = FOGO_DEPOSIT_LUT_OVERRIDE ?? BRIDGING_LUT_BY_USDC_S_MINT[FOGO_NETWORK]
   return {
     signedQuoteBytes: new Uint8Array(quote.signedQuote),
     ntt: { ...ntt, payeeNttWithExecutor: payeeAddress },
-    addressLookupTable: new PublicKey(lutAddress),
+    addressLookupTable: leg.lut ?? undefined,
   }
 }
 
@@ -264,9 +327,8 @@ function deriveNttSubAccounts(args: DeriveNttArgs): Promise<Omit<NttBridgeSubAcc
     fromTokenManager,
   )
 
-  // `NTT.custodyAccountAddress` is async (loads token-program metadata
-  // under the hood). Wrap the synchronous PDA derivations in a single
-  // Promise.resolve and await the custody read alongside.
+  // `NTT.custodyAccountAddress` is async (loads token-program metadata),
+  // so await it alongside the synchronous PDA derivations.
   return NTT.custodyAccountAddress(pdas, fromTokenMint).then(nttCustody => ({
     nttManager: fromTokenManager,
     nttConfig: pdas.configAccount(),

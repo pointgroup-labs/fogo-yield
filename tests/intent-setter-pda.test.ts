@@ -15,9 +15,8 @@ describe('findIntentTransferSetterPda', () => {
   it('derives a distinct setter for the OnRe fork program id', () => {
     const [fogo] = findIntentTransferSetterPda(INTENT_TRANSFER_PROGRAM_ID)
     const [onre] = findIntentTransferSetterPda(ONRE_INTENT_PROGRAM_ID)
-    // The fork shares the seed but not the program id, so the setter PDA
-    // is distinct — this is what lets replay monitoring tell an OnRe-routed
-    // sender from a Fogo-routed (dormant-program) one.
+    // Same seed, different program id → distinct setter PDA. This is what lets
+    // replay monitoring tell an OnRe-routed sender from a Fogo-routed one.
     expect(fogo.equals(onre)).toBe(false)
   })
 })

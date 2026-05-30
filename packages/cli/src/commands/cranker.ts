@@ -199,26 +199,17 @@ export function crankerCommands(): Command {
     })
 
   // `diagnose` is the operator-facing "where is this flow stuck and what
-  // do I run next?" command. It mirrors every pre-flight gate inside
-  // `lock_onyc` (deposit-leg step 3) but as a read-only report — no
-  // signatures spent, no chain mutations. The point is to turn a stuck
-  // tx signature into a precise, actionable diagnosis without the
-  // operator having to mentally chain `status` + manual RPC probes +
-  // grep-through-the-cranker-source.
+  // do I run next?" command — a read-only report mirroring every
+  // pre-flight gate inside `lock_onyc` (deposit-leg step 3). No
+  // signatures spent, no chain mutations.
   //
-  // The gates we check (each must pass for `lock_onyc` to dispatch):
+  // Gates checked (each must pass for `lock_onyc` to dispatch):
   //   1. NTT ONyc manager id is not the USDC manager placeholder
   //   2. FOGO peer registered on the Solana ONyc NTT manager
   //   3. FOGO inbox-rate-limit PDA initialized on the same manager
   //   4. `registered_transceiver` PDA initialized on the same manager
   //   5. `relayer_authority` PDA has at least 3M lamports (NTT's
   //      OutboxItem rent debit floor — silently underflows otherwise)
-  //
-  // If gates 1–5 all pass and the Flow PDA is in `Swapped`, the
-  // recommended next action is literally `cranker advance --confirm`.
-  // If the Flow PDA is gone (lock_onyc already fired), the recommended
-  // action is to look up VAA #2 on Wormholescan from the Solana ONyc
-  // emitter and run `cranker redeem-fogo --vaa <hex>`.
   cranker
     .command('diagnose')
     .description('Read-only end-to-end report of why a deposit flow is stalled and exactly what to run next')
@@ -235,12 +226,8 @@ export function crankerCommands(): Command {
       const { connection, client } = useContext()
       const nttProgram = opts.nttProgram ? new PublicKey(opts.nttProgram) : NTT_USDC_PROGRAM_ID
 
-      // Mirror of lock-onyc.ts: NTT debits OutboxItem rent (~1.86M) from
-      // relayer_authority via invoke_signed; target = debit + rent-exempt
-      // + headroom = 3M. Same constant lives in three places (relayer
-      // daemon, CLI lock-onyc, CLI advance); centralizing it would be a
-      // separate cleanup pass. For now, mirror the value so the gate
-      // here matches what `lock_onyc` actually requires.
+      // Mirror of lock-onyc.ts: NTT debits OutboxItem rent from
+      // relayer_authority; target = debit + rent-exempt + headroom = 3M.
       const RELAYER_AUTH_TOPUP_LAMPORTS = 3_000_000n
 
       let vaaBytes: Uint8Array | null = null
@@ -451,25 +438,11 @@ export function crankerCommands(): Command {
       })
       const resolved = resolveNttVaa({ vaaBytes, nttProgramId: nttProgram })
 
-      // The VAA's NTT-message `sender` field is the source-chain
-      // originator. For a non-Session FOGO wallet that's also the
-      // wallet seed for the per-user inbox PDA. For a Fogo *Session*
-      // deposit, the `sender` is the **session keypair** (whatever
-      // signed the bridge ix), NOT the user's main wallet — and the
-      // per-user inbox PDA is seeded on the main wallet (see
-      // `useTransferMutation.ts::buildIntentBridgeIxs` deriving from
-      // `sessionState.walletPublicKey`).
-      //
-      // Auto-detection strategy when `--user-wallet` is unset: probe
-      // [signer.publicKey, senderOnSource, fogo-tx source-ATA owner] and
-      // pick whichever derives the inbox-authority PDA matching the
-      // VAA's recipient. The signer is checked first (common operator
-      // pattern: cranking own deposit), VAA-sender second (non-Session
-      // direct deposit), and the FOGO-tx source-ATA owner last
-      // (Sessions deposits, where the VAA sender is a session keypair
-      // distinct from the wallet that owns the burned ATA). If all
-      // miss, fall through to senderOnSource so Pre-flight 4 below
-      // bails with the standard mismatch diagnostic.
+      // Resolve the wallet that seeds the per-user inbox PDA. For a
+      // Sessions deposit the VAA `sender` is the session keypair, not the
+      // user's main wallet, so we auto-detect via `autoDetectUserWallet`
+      // (see its JSDoc) and fall back to `senderOnSource` so Pre-flight 4
+      // throws the standard mismatch diagnostic.
       let userWallet: PublicKey
       let userWalletSource: UserWalletSource
       if (opts.userWallet) {
@@ -514,18 +487,10 @@ export function crankerCommands(): Command {
         )
       }
 
-      // Pre-flight 3: the per-user inbox ATA must exist when
-      // `claim_usdc` runs — the relayer's account constraint refuses
-      // `init_if_needed`. The contract's design hands ATA creation to
-      // the FOGO `bridge_ntt_tokens` arg `pay_destination_ata_rent: true`
-      // (Wormhole executor pays rent on first delivery). When the
-      // executor doesn't run — i.e. the operator is in this manual
-      // crank path — we have to create it ourselves before the CPI.
-      // Idempotent variant: no-ops if the ATA already exists, so we
-      // unconditionally prepend it and skip the existence-probe RPC.
-      // ATA creation is permissionless; the cranker fronts ~0.002 SOL
-      // of rent that the executor would normally have paid (only on the
-      // genuinely-new branch).
+      // Pre-flight 3: the per-user inbox ATA must exist when `claim_usdc`
+      // runs — the relayer constraint refuses `init_if_needed`. Normally
+      // FOGO `bridge_ntt_tokens` (pay_destination_ata_rent) creates it;
+      // in this manual crank path we prepend an idempotent create ourselves.
       const [userInboxAuthority] = findUserInboxAuthorityPda(
         userWallet,
         client.program.programId,
@@ -574,11 +539,9 @@ export function crankerCommands(): Command {
       }
 
       console.log()
-      // Top-up: NTT Redeem CPI uses relayer_authority PDA as payer for
-      // `inbox_item` init (~1.41M lamports). A bare PDA only holds the
-      // ~1.14M rent-exempt minimum for itself, so the inner System
-      // Transfer fails with `insufficient lamports`. Same fix as
-      // lock_onyc / advance — top up to 3M, idempotent above target.
+      // Top-up: NTT redeem inits `inbox_item` with relayer_authority as
+      // payer (~1.41M); a bare PDA holds only its own ~1.14M rent-exempt
+      // minimum, so top up to 3M (idempotent above target).
       const [relayerAuthorityPdaForClaim] = findAuthorityPda(client.program.programId)
       const relayerAuthInfoForClaim = await connection.getAccountInfo(relayerAuthorityPdaForClaim).catch(() => null)
       const RELAYER_AUTH_TOPUP_CLAIM = 3_000_000n
@@ -771,16 +734,10 @@ export function crankerCommands(): Command {
       // owned by the NTT program afterward.
       const outboxItem = Keypair.generate()
 
-      // Pre-flight: NTT `transfer_lock` requires the destination chain
-      // to have a registered `peer` PDA AND a corresponding
-      // `inbox_rate_limit` PDA on the source-side NTT manager. If
-      // either is missing, the CPI reverts with bare `Custom(1)` — no
-      // helpful logs — and the cranker loses gas + a fresh outbox
-      // keypair. Probe both client-side and bail early with a clear
-      // diagnostic. This is the documented ONyc-deploy gate from
-      // CLAUDE.md ("FOGO ONyc NTT manager not yet published"); the
-      // gate applies to the deposit leg too because both legs traverse
-      // the same ONyc↔ONyc corridor.
+      // Pre-flight: NTT `transfer_lock` needs a registered `peer` PDA and
+      // matching `inbox_rate_limit` PDA on the source-side manager. Missing
+      // either reverts with bare `Custom(1)` (no logs) and burns gas + a
+      // fresh outbox keypair, so probe both and bail with a clear diagnostic.
       const [fogoPeerPda] = findNttPeerPda(FOGO_WORMHOLE_CHAIN_ID, NTT_ONYC_PROGRAM_ID)
       const [fogoInboxRateLimitPda] = findInboxRateLimitPda(FOGO_WORMHOLE_CHAIN_ID, NTT_ONYC_PROGRAM_ID)
       const [peerInfo, inboxRateLimitInfo] = await Promise.all([
@@ -806,36 +763,12 @@ export function crankerCommands(): Command {
 
       const flowFogoSenderPk = new PublicKey(flowFogoSender)
 
-      // Pre-flight: NTT charges the rent for the outbox-item account
-      // (~1.86M lamports for the ~256-byte OutboxItem) to the
-      // `relayer_authority` PDA — it's at position 0 of NTT's
-      // remaining-accounts list and is treated as a signer via
-      // `invoke_signed` from inside `lock_onyc`. The per-transfer
-      // `session_authority` PDA also needs lamports because NTT
-      // reads/writes through it during the SPL `Approve` delegate
-      // path. Both PDAs start at 0 lamports on mainnet — the test
-      // rig airdrops 5 SOL and 1 SOL respectively
-      // (`lock-onyc-e2e.test.ts:116,155`); no airdrop here, so the
-      // cranker prepends two `SystemProgram.transfer` ixs.
-      //
-      // Lamports aren't lost: relayer_authority's 2M lands on the
-      // freshly-created outbox-item as rent (recoverable on close);
-      // session_authority's 2M lands on the same outbox-item or
-      // returns at end-of-tx if NTT didn't draw from it.
-      // session_authority drains to 0 each call (matching the per-
-      // transfer derivation), so re-topping every invocation is
-      // expected behavior. relayer_authority also drains because it
-      // has no data and isn't rent-exempt, so the System Program
-      // permits the full debit.
-      // NTT `transfer_lock` debits OutboxItem rent (~1,858,320 lamports for the current
-      // ~256-byte OutboxItem layout) from `relayer_authority` via invoke_signed. After the
-      // debit, the PDA must end with either 0 lamports (purged) or ≥ rent-exempt for a
-      // 0-byte System-owned account (890,880 lamports). Topping up to exactly the debit
-      // amount would land us at 0 — fine, but fragile if the OutboxItem grows by even 1
-      // byte. So we target debit + rent-exempt + headroom = 3,000,000.
+      // NTT debits OutboxItem rent (~1.86M) from relayer_authority via
+      // invoke_signed and delegates through session_authority; both start at
+      // 0 on mainnet. Target debit + rent-exempt + headroom = 3M to stay
+      // robust if the OutboxItem layout grows; session_authority is never
+      // debited, so 2M just clears the rent-exempt floor.
       const RELAYER_AUTH_TOPUP = 3_000_000n
-      // session_authority is signer-only and not debited; 2M leaves it well above the
-      // 890,880-lamport rent-exempt floor.
       const SESSION_AUTH_TOPUP = 2_000_000n
       const argsHash = nttTransferArgsHash({
         amount: flowAmount,
@@ -1056,32 +989,16 @@ export function crankerCommands(): Command {
   // exits clean. Idempotent: re-running after partial completion
   // detects what's already done and only does the rest.
   //
-  // Stateless by design: no `~/.fogo-onre-cranker/state.json`. The chain
-  // (Flow PDA + status, OutboxItem PDA existence) is the source of
-  // truth. A second `advance` run picks up exactly where the first left
-  // off because both runs start by re-reading state.
+  // Stateless by design: the chain (Flow PDA + status, OutboxItem PDA
+  // existence) is the source of truth, so a second `advance` run picks
+  // up exactly where the first left off.
   //
-  // CURRENT SCOPE: bundles the three Solana ixs we already have
-  // builders for — claim_usdc, swap_usdc_to_onyc, lock_onyc — into one
-  // atomic tx. After lock_onyc lands, the OutboxItem is queued but no
-  // VAA is emitted yet (NTT v1 splits queue from attestation). The
-  // operator must still run a `release-outbound` step (TODO: not yet
-  // implemented in CLI v1) to emit the Wormhole message, and then a
-  // FOGO-side redeem (TODO) to mint ONyc. Both deferred steps will
-  // slot into this orchestrator behind the same `--no-wait-vaa` /
-  // `--vaa-timeout` flags once their builders exist.
+  // Scope: bundles claim_usdc + swap_usdc_to_onyc + lock_onyc. After
+  // lock_onyc the OutboxItem is queued; the operator still needs a
+  // `release-outbound` step and a FOGO-side redeem to mint ONyc.
   //
-  // Per codex review (gpt-5.5):
-  //   - Pre-flight `simulateTransaction` to surface failures with full
-  //     logs before paying gas.
-  //   - Distinct exit codes: 0 = fully complete, 1 = real failure,
-  //     2 = stopped because more work remains but we can't do it yet
-  //     (--no-wait-vaa or release_outbound TODO).
-  //   - Concurrency safety (when a 2nd cranker races us): catch the
-  //     "step already done" send-error patterns, re-read state,
-  //     continue. NOT YET IMPLEMENTED — for now, a race-loss surfaces
-  //     as a normal failure; re-running `advance` recovers because
-  //     state-detection picks up the new chain state.
+  // Exit codes: 0 = fully complete, 1 = real failure, 2 = stopped
+  // because more work remains but can't be done yet.
   cranker
     .command('advance')
     .description('Drive a deposit through every available step in one tx (deposit leg, all-in-one)')
@@ -1208,20 +1125,10 @@ export function crankerCommands(): Command {
         }
       }
 
-      // TX 1: claim_usdc (if needed). Originally claim+swap were bundled
-      // into one tx because swap reads Flow.amount that claim writes
-      // — atomic was nice. But the combined account list (NTT redeem
-      // ~26 accts + OnRe take_offer 22 remaining_accounts + signers +
-      // sysvars) overflows Solana's legacy 1232-byte tx limit when both
-      // run from scratch (~1448 bytes). Splitting into two sequential
-      // legacy txs sidesteps the limit without requiring v0+LUT
-      // plumbing. The atomicity loss is acceptable: swap's pre-flight
-      // gates on `Flow.status === Claimed`, and if claim lands but
-      // swap fails, re-running `cranker advance` (or the daemon's
-      // next tick) picks up the Flow PDA in `Claimed` and dispatches
-      // swap directly — no value at risk, just a paused state machine.
-      // Long-term fix is v0 + NTT/OnRe LUTs; this is the right
-      // immediate change.
+      // TX 1: claim_usdc (if needed). claim+swap can't share one tx — the
+      // combined NTT redeem + OnRe take_offer account list overflows the
+      // 1232-byte legacy tx limit. Splitting is safe: swap gates on
+      // `Flow.status === Claimed`, so a re-run picks up where it stopped.
       if (needClaim) {
         txQueue.push({
           label: 'claim_usdc',
@@ -1237,17 +1144,10 @@ export function crankerCommands(): Command {
                 usdcMint,
               ),
             )
-            // Top-up: NTT Redeem CPI uses the relayer_authority PDA as
-            // payer for `inbox_item` init (see SDK builder
-            // `buildNttRedeemReleaseAccounts` — the first redeem-slice
-            // account is `writable(authority)`). Init costs ~1.41M
-            // lamports; a stock relayer_authority PDA holds only
-            // ~1.14M (rent-exempt for itself), so the inner System
-            // Transfer fails with `insufficient lamports`. Same pattern
-            // lock_onyc handles. Top up to 3M (init + headroom for
-            // multiple Redeems before next top-up). Idempotent:
-            // computeTopUp returns 0 once the PDA is already at-or-above
-            // target, so subsequent claims pay nothing.
+            // Top-up: NTT redeem inits `inbox_item` with relayer_authority
+            // as payer (~1.41M); a stock PDA holds only its own rent-exempt
+            // ~1.14M, so the inner System Transfer underflows. Top up to 3M,
+            // idempotent once at-or-above target.
             const [relayerAuthorityPda] = findAuthorityPda(client.program.programId)
             const relayerAuthInfo = await connection.getAccountInfo(relayerAuthorityPda).catch(() => null)
             const RELAYER_AUTH_TOPUP = 3_000_000n

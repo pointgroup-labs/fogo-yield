@@ -49,8 +49,7 @@ pub fn handler<'info>(
     );
     require!(gross_onyc > 0, RelayerError::ZeroAmountFlow);
 
-    // 1. Fee deduction — withdraw fee in ONyc, paid out of the unlocked
-    //    amount before the swap.
+    // Withdraw fee in ONyc, paid out of the unlocked amount before the swap.
     let (net_onyc, fee_onyc) = ctx.accounts.relayer_config.apply_withdraw_fee(gross_onyc)?;
     let authority_bump = ctx.accounts.relayer_config.relayer_authority_bump;
 
@@ -69,8 +68,8 @@ pub fn handler<'info>(
 
     require!(net_onyc > 0, RelayerError::ZeroAmountFlow);
 
-    // 2. NAV floor — pin onre_offer to OnRe's deposit Offer PDA for the
-    //    bound mints, read its step price, derive the slippage floor.
+    // NAV floor — read OnRe's deposit Offer step price for the bound mints,
+    // derive the slippage floor.
     let nav_floor: u64 = {
         let price = read_offer_nav_price(
             &ctx.accounts.onre_offer.to_account_info(),
@@ -87,7 +86,7 @@ pub fn handler<'info>(
         apply_slippage_floor(gross_expected, ctx.accounts.relayer_config.slippage_bps)?
     };
 
-    // 3. Reload after fee transfer; assert sufficient post-fee balance.
+    // Reload after fee transfer; assert sufficient post-fee balance.
     ctx.accounts.onyc_ata.reload()?;
     require!(
         ctx.accounts.onyc_ata.amount >= net_onyc,
@@ -96,7 +95,7 @@ pub fn handler<'info>(
     let onyc_before = ctx.accounts.onyc_ata.amount;
     let usdc_before = ctx.accounts.usdc_ata.amount;
 
-    // 4. Bounded SPL Approve to swap_delegate for exactly net_onyc.
+    // Bounded SPL Approve to swap_delegate for exactly net_onyc.
     approve_swap_delegate(
         &ctx.accounts.token_program.to_account_info(),
         &ctx.accounts.onyc_ata.to_account_info(),
@@ -128,7 +127,7 @@ pub fn handler<'info>(
         &[&[RELAYER_SEED, &[authority_bump]]],
     )?;
 
-    // 6. Exact-consume on ONyc, floor-check on USDC.
+    // Exact-consume on ONyc, floor-check on USDC.
     ctx.accounts.onyc_ata.reload()?;
     ctx.accounts.usdc_ata.reload()?;
     let onyc_consumed = onyc_before
@@ -154,8 +153,7 @@ pub fn handler<'info>(
     assert_ata_untampered(&ctx.accounts.onyc_ata, &auth_key)?;
     assert_ata_untampered(&ctx.accounts.usdc_ata, &auth_key)?;
 
-    // 7. Flip status; overwrite flow.amount with usdc_received for
-    //    `send_usdc_to_user` to consume.
+    // Flip status; overwrite flow.amount with usdc_received for `send_usdc_to_user` to consume.
     let flow = &mut ctx.accounts.outflight_flow;
     flow.amount = usdc_received;
     flow.status = FlowStatus::Swapped;

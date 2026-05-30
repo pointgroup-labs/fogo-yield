@@ -564,15 +564,6 @@ export class RelayerClient {
   }
 
   /**
-   * Derive the two flow-tracking PDAs keyed off a single `nttInboxItem`.
-   *
-   * Every flow-driving instruction (claim/swap/lock/unlock/send) needs
-   * some subset of `{inflightFlow, outflightFlow}`. Centralising the
-   * derivation here keeps method bodies focused on which accounts an
-   * instruction actually consumes — callers destructure only what they
-   * need.
-   */
-  /**
    * Shape the 14-account NTT `transfer_lock` argument list. Both
    * outbound legs (USDC.s on `sendUsdcToUser`, ONyc on `lockOnyc`)
    * pass an identical clump differing only in `mint` and the
