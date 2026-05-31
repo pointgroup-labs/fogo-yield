@@ -1,3 +1,4 @@
+/* eslint-disable style/max-statements-per-line -- binary buffer assembly: `buf.set(...); off += N` reads more naturally on one line than split */
 import type { NttManagerMode } from '@fogo-onre/sdk'
 import {
   decodeNttConfig,

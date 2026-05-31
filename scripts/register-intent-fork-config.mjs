@@ -8,10 +8,10 @@ import {
   Connection,
   Keypair,
   PublicKey,
+  sendAndConfirmTransaction,
   SystemProgram,
   Transaction,
   TransactionInstruction,
-  sendAndConfirmTransaction,
 } from '@solana/web3.js'
 
 const RPC = process.env.FOGO_RPC ?? 'https://mainnet.fogo.io'

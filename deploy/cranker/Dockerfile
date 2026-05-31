@@ -68,6 +68,8 @@ RUN groupadd --system --gid 10001 cranker \
 WORKDIR /app
 COPY --from=builder --chown=cranker:cranker /out /app
 
+RUN chown cranker:cranker /app
+
 USER cranker
 
 ENV NODE_ENV=production

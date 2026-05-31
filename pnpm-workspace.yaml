@@ -1,19 +1,19 @@
 allowBuilds:
-  # Approved — postinstall does real work the toolchain depends on.
-  bigint-buffer: true   # native bigint codec, Solana account encode/decode
-  esbuild: true         # downloads platform binary, vitest + Next bundler
-  msw: true             # installs service-worker shim used by webapp tests
-  sharp: true           # next/image optimizer native binary
   # Ignored — transitive deps we don't actually exercise. Pure-JS
   # fallbacks (where applicable) work fine; postinstall is either a
   # speedup we don't need or a binding for a chain we don't use.
-  '@stellar/stellar-sdk': false  # transitive via Wormhole; no Stellar flows
-  blake-hash: false              # transitive hasher, JS fallback fine
-  bufferutil: false              # ws speedup, JS fallback fine
-  protobufjs: false              # postinstall is just a deprecation banner
-  tiny-secp256k1: false          # bitcoin curve, not used (Solana = ed25519)
-  usb: false                     # Ledger HID binding, no hardware-wallet flow
-  utf-8-validate: false          # ws speedup, JS fallback fine
+  '@stellar/stellar-sdk': false # transitive via Wormhole; no Stellar flows
+  # Approved — postinstall does real work the toolchain depends on.
+  bigint-buffer: true # native bigint codec, Solana account encode/decode
+  blake-hash: false # transitive hasher, JS fallback fine
+  bufferutil: false # ws speedup, JS fallback fine
+  esbuild: true # downloads platform binary, vitest + Next bundler
+  msw: true # installs service-worker shim used by webapp tests
+  protobufjs: false # postinstall is just a deprecation banner
+  sharp: true # next/image optimizer native binary
+  tiny-secp256k1: false # bitcoin curve, not used (Solana = ed25519)
+  usb: false # Ledger HID binding, no hardware-wallet flow
+  utf-8-validate: false # ws speedup, JS fallback fine
 shellEmulator: true
 
 # `no-downgrade` blocks install whenever any transitive was republished
@@ -37,11 +37,11 @@ overrides:
   # which lost its provenance attestation. The 25.x line uses
   # undici-types@~7.19 which has provenance.
   '@types/node': ^25.6.0
-  # semver@6.3.1 (transitive via babel/metro/react-native) was republished
-  # without provenance. 7.x has provenance attestations and an essentially
-  # identical public API for the parse/satisfies/range surface babel uses.
-  semver: ^7.6.0
   # chokidar@4.0.2 and 4.0.3 (transitive via tsup) lost provenance.
   # 4.0.1 is the latest 4.x with provenance attestations and satisfies
   # tsup's `^4` range. Pin tightly until a later 4.x restores provenance.
   chokidar: 4.0.1
+  # semver@6.3.1 (transitive via babel/metro/react-native) was republished
+  # without provenance. 7.x has provenance attestations and an essentially
+  # identical public API for the parse/satisfies/range surface babel uses.
+  semver: ^7.6.0

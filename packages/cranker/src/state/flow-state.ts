@@ -135,6 +135,26 @@ export class FlowStateTracker {
     return this.states.get(flow)
   }
 
+  /**
+   * Observability snapshot for the stuck-flow metric. `poisoned` is the
+   * alertable signal — a flow that failed past the retry threshold,
+   * which in practice means a persistent upstream wedge (OnRe vector
+   * deletion, NTT manager pause). `cooldown` is the self-healing
+   * gradient below it.
+   */
+  stuckCounts(): { poisoned: number, cooldown: number } {
+    let poisoned = 0
+    let cooldown = 0
+    for (const s of this.states.values()) {
+      if (s.kind === 'poisoned') {
+        poisoned++
+      } else if (s.kind === 'cooldown') {
+        cooldown++
+      }
+    }
+    return { poisoned, cooldown }
+  }
+
   /** Test/observability hook. */
   size(): number {
     return this.states.size

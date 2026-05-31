@@ -15,11 +15,7 @@ domain = "https://app.ignitionfi.xyz"
 enable_session_management = true
 enable_preflight_simulation = true
 
-# OnReBridge: sponsors bridge_ntt_tokens on the OnRe intent fork
-# (inTFf5S7…, source-identical to upstream Xfry4dW9… except declare_id!).
-# Byte-identical to upstream's `Intent NTT Bridge` variation with the
-# intent_transfer program swapped to our fork. Both legs (USDC.s deposit,
-# ONyc redeem) route through this one lane.
+# OnReBridge: sponsors bridge_ntt_tokens on the OnRe intent transfer
 [[domains.tx_variations]]
 version = "v1"
 name = "OnReBridge"
@@ -70,6 +66,4 @@ constraint = { EqualTo = [{ U8 = 1 }] }
 # rotates keys.
 [[domains.tx_variations.instructions.data]]
 start_byte = 1
-constraint = { EqualTo = [
-  { NttSignedQuoter = "0xa54008017941ece968623a0dd8ee907e2b133596" },
-] }
+constraint = { EqualTo = [{ NttSignedQuoter = "0xa54008017941ece968623a0dd8ee907e2b133596" }, ] }

@@ -75,8 +75,6 @@ const NETWORK = 'Mainnet'
 const FOGO_CHAIN = 'Fogo'
 const NTT_VERSION = '3.0.0'
 
-const TX_CONFIRM_TIMEOUT_MS = 90_000
-
 function loadKeypair(path) {
   const raw = fs.readFileSync(path, 'utf8')
   return Keypair.fromSecretKey(Uint8Array.from(JSON.parse(raw)))

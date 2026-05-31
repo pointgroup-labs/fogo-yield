@@ -107,6 +107,23 @@ export function createMetrics(opts: MetricsOptions) {
     help: 'WebSocket subscription health (1=alive, 0=dead)',
     registers: [registry],
   })
+  // Pull-model so the gauge never goes stale: the provider is the live
+  // FlowStateTracker, read at scrape time. `poisoned` is the alertable
+  // signal — a flow stranded by a persistent upstream wedge (OnRe vector
+  // deletion, NTT/manager pause). If upstream is permanently gone, only an
+  // upgrade-authority rescue can move the funds (docs/security.md §3).
+  let stuckFlowProvider: (() => { poisoned: number, cooldown: number }) | undefined
+  const flowStuck = new Gauge({
+    name: 'cranker_flow_stuck',
+    help: 'Flows the cranker cannot advance: state="poisoned" (quarantined past the retry threshold — alert on any nonzero) or state="cooldown" (self-healing backoff).',
+    labelNames: ['state'] as const,
+    registers: [registry],
+    collect() {
+      const c = stuckFlowProvider?.() ?? { poisoned: 0, cooldown: 0 }
+      this.set({ state: 'poisoned' }, c.poisoned)
+      this.set({ state: 'cooldown' }, c.cooldown)
+    },
+  })
 
   let lastHeartbeat = Date.now()
   const heartbeat = {
@@ -144,6 +161,15 @@ export function createMetrics(opts: MetricsOptions) {
       lastBalancePollSuccess[chain] = Date.now()
     },
     wsAlive,
+    flowStuck,
+
+    /**
+     * Wire the live FlowStateTracker so `cranker_flow_stuck` reflects
+     * quarantined/cooling flows at scrape time. Called once at startup.
+     */
+    setStuckFlowProvider(fn: () => { poisoned: number, cooldown: number }): void {
+      stuckFlowProvider = fn
+    },
 
     actualPort: () => actualPort,
 

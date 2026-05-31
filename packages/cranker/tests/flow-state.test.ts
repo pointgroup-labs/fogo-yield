@@ -109,4 +109,31 @@ describe('flowStateTracker', () => {
     expect(t.inspect('a')).toBeUndefined() // evicted
     expect(t.inspect('d')?.kind).toBe('inFlight')
   })
+
+  it('stuckCounts reports poisoned and cooldown, and clears on success', () => {
+    const t = new FlowStateTracker({ cooldownBaseMs: 1, cooldownMaxMs: 1, poisonThreshold: 3 })
+    // Drive flow-1 to poisoned.
+    let now = 0
+    for (let i = 0; i < 3; i++) {
+      const d = t.beginIfReady(F, now)
+      if (!d.allowed) {
+        now += 10
+        t.beginIfReady(F, now)
+      }
+      t.recordError(F, 'classA', now)
+      now += 10
+    }
+    // flow-2 single error → cooldown.
+    t.beginIfReady('flow-2', now)
+    t.recordError('flow-2', 'classB', now)
+    // inFlight flow-3 counts as neither.
+    t.beginIfReady('flow-3', now)
+
+    expect(t.inspect(F)?.kind).toBe('poisoned')
+    expect(t.stuckCounts()).toEqual({ poisoned: 1, cooldown: 1 })
+
+    // A success clears the cooling flow out of the count.
+    t.recordSuccess('flow-2')
+    expect(t.stuckCounts()).toEqual({ poisoned: 1, cooldown: 0 })
+  })
 })
