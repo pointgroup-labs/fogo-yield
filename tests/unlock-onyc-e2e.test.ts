@@ -60,7 +60,7 @@ function intentSetterBytes(programId: PublicKey): Uint8Array {
   return PublicKey.findProgramAddressSync([INTENT_TRANSFER_SETTER_SEED], programId)[0].toBytes()
 }
 
-describe('unlock_onyc e2e (NTT redeem + release_inbound_unlock, Locking mode)', () => {
+describe('receive (withdraw) e2e (NTT redeem + release_inbound_unlock, Locking mode)', () => {
   let svm: LiteSVM
   let authority: Keypair
   let client: RelayerClient
@@ -196,10 +196,11 @@ describe('unlock_onyc e2e (NTT redeem + release_inbound_unlock, Locking mode)', 
 
     try {
       await client
-        .unlockOnyc({
+        .receive({
           payer: authority.publicKey,
+          direction: { withdraw: {} },
           userWallet: userWallet.publicKey,
-          assetMint: assetMint.publicKey,
+          recvMint: assetMint.publicKey,
           nttInboxItem: inboxItemPda,
           nttTransceiverMessage: validatedMsgPda,
           ntt: {
@@ -249,10 +250,11 @@ describe('unlock_onyc e2e (NTT redeem + release_inbound_unlock, Locking mode)', 
     )
 
     await client
-      .unlockOnyc({
+      .receive({
         payer: authority.publicKey,
+        direction: { withdraw: {} },
         userWallet: userWallet.publicKey,
-        assetMint: assetMint.publicKey,
+        recvMint: assetMint.publicKey,
         nttInboxItem: inboxItemPda,
         nttTransceiverMessage: validatedMsgPda,
         ntt: { transceiverAddress: NTT_ONYC_PROGRAM_ID },
@@ -279,10 +281,11 @@ describe('unlock_onyc e2e (NTT redeem + release_inbound_unlock, Locking mode)', 
 
     await expectError(
       async () =>
-        (await client.unlockOnyc({
+        (await client.receive({
           payer: authority.publicKey,
+          direction: { withdraw: {} },
           userWallet: userWallet.publicKey,
-          assetMint: assetMint.publicKey,
+          recvMint: assetMint.publicKey,
           nttInboxItem: inboxItemPda,
           nttTransceiverMessage: validatedMsgPda,
           ntt: { transceiverAddress: NTT_ONYC_PROGRAM_ID },

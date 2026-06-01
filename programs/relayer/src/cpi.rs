@@ -141,7 +141,7 @@ pub fn approve_ntt_session_authority<'info>(
 }
 
 /// PDA-signed SPL `Approve` granting `delegate` permission to spend exactly
-/// `amount` from `source_ata`. Used by `swap_onyc_to_usdc` to bound a
+/// `amount` from `source_ata`. Used by the unified `swap` handler to bound a
 /// third-party swap program's reach: the swap CPI fires under plain `invoke` (no
 /// PDA-signer propagation), and SPL auto-clears the delegation when the
 /// approved amount hits zero — so as long as the swap consumes exactly

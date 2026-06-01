@@ -11,6 +11,9 @@ pub const NTT_USDC_PROGRAM_ID: Pubkey = pubkey!("nttu74CdAmsErx5daJVCQNoDZujswFr
 #[constant]
 pub const NTT_ONYC_PROGRAM_ID: Pubkey = pubkey!("nttpna5vXW7BN2Aa4AfTbkCncJWTEoBsnWvjS87Xgsd");
 
+pub const NTT_BASE_PROGRAM: Pubkey = NTT_USDC_PROGRAM_ID;
+pub const NTT_ASSET_PROGRAM: Pubkey = NTT_ONYC_PROGRAM_ID;
+
 pub const NTT_TRANSFER_LOCK_IX: [u8; 8] = [179, 158, 146, 148, 151, 46, 176, 200];
 pub const NTT_REDEEM_IX: [u8; 8] = [184, 12, 86, 149, 70, 196, 97, 225];
 pub const NTT_RELEASE_INBOUND_UNLOCK_IX: [u8; 8] = [182, 162, 62, 206, 197, 137, 83, 98];
@@ -26,7 +29,7 @@ pub const ONRE_TAKE_OFFER_IX: [u8; 8] = [37, 190, 224, 77, 197, 39, 203, 230];
 /// OnRe deposit `Offer` PDA seed: `[seed, token_in_mint, token_out_mint]`.
 /// For the relayer's deposit-side oracle (USDC → ONyc) the derivation is
 /// `[b"offer", usdc_mint, onyc_mint]` under `ONRE_PROGRAM_ID`. This is the
-/// pricing-vector source `swap_onyc_to_usdc` consults to derive the
+/// pricing-vector source the unified `swap` handler consults to derive the
 /// NAV-anchored slippage floor — pinning it on-chain is the single
 /// load-bearing check that prevents an attacker from forging an offer
 /// account with mint bytes at the expected offsets and a near-zero price
@@ -55,7 +58,7 @@ pub const NTT_SESSION_AUTHORITY_SEED: &[u8] = b"session_authority";
 
 /// Per-user inbox authority PDA seed: `[USER_INBOX_SEED, user_wallet]`.
 /// The webapp signs an intent whose recipient is this PDA's USDC ATA;
-/// `claim_usdc` PDA-signs a sweep from that ATA into the relayer USDC ATA,
+/// `receive` PDA-signs a sweep from that ATA into the relayer USDC ATA,
 /// recording `user_wallet` as `flow.recipient` for the return leg.
 pub const USER_INBOX_SEED: &[u8] = b"user_inbox";
 
@@ -65,7 +68,7 @@ pub const USER_INBOX_SEED: &[u8] = b"user_inbox";
 ///      the from-ATA owner is the singleton `[INTENT_TRANSFER_SETTER_SEED]`
 ///      PDA under `INTENT_TRANSFER_PROGRAM_ID`
 ///   3. that PDA surfaces as `NttManagerMessage.sender` on the VAA
-///   4. `claim_usdc` requires `sender == intent_transfer setter PDA`,
+///   4. `receive` requires `sender == intent_transfer setter PDA`,
 ///      rejecting any direct (non-intent) NTT bridge to the same recipient
 ///
 /// If `intent_transfer` rotates its setter seed OR redeploys at a new program
@@ -87,8 +90,8 @@ pub const INTENT_TRANSFER_SETTER_SEED: &[u8] = b"intent_transfer";
 pub const ONRE_INTENT_PROGRAM_ID: Pubkey =
     pubkey!("inTFf5S7ZtYr8SkwGG85mjDwAyJwjqEPdH2p2nuyrL9");
 
-/// Permanent two-element setter allowlist accepted by `claim_usdc` and
-/// `unlock_onyc`. Keeping Fogo's setter trusted is what preserves the
+/// Permanent two-element setter allowlist accepted by `receive` (both
+/// directions). Keeping Fogo's setter trusted is what preserves the
 /// deposit switch-back fallback; adding OnRe's is what lets us own the
 /// fee. Never remove either at runtime.
 pub fn allowed_intent_setters() -> [Pubkey; 2] {
@@ -125,7 +128,7 @@ pub const ONRE_OFFER_MAX_VECTORS: usize = 10;
 /// OnRe price math constants (mirrored from
 /// `instructions/offer/offer_utils.rs`). `ONRE_PRICE_DENOMINATOR =
 /// 10^ONRE_PRICE_DECIMALS`; precomputed because the math hot path runs
-/// inside `swap_onyc_to_usdc`'s NAV-floor calculation.
+/// inside the unified `swap` handler's NAV-floor calculation.
 pub const ONRE_PRICE_DECIMALS: u32 = 9;
 pub const ONRE_PRICE_DENOMINATOR: u128 = 1_000_000_000;
 pub const ONRE_APR_SCALE: u128 = 1_000_000;

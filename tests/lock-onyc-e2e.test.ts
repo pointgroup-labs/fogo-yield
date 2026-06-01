@@ -34,7 +34,7 @@ import {
   setFlowAccount,
 } from './utils'
 
-describe('lock_onyc e2e (NTT transfer_lock)', () => {
+describe('send (deposit) e2e (NTT transfer_lock)', () => {
   // SKIPPED below (it.skip on the only test): lock_onyc now CPIs into
   // Wormhole Core via the merged release_wormhole_outbound CPI
   // (transfer_lock + release in one ix). LiteSVM cannot host the real
@@ -136,7 +136,7 @@ describe('lock_onyc e2e (NTT transfer_lock)', () => {
     svm.airdrop(nttTokenAuthorityPda, BigInt(1e9))
   })
 
-  it.skip('lock_onyc succeeds with full NTT CPI (transfer_lock)', async () => {
+  it.skip('send (deposit) succeeds with full NTT CPI (transfer_lock)', async () => {
     const nttInboxItem = Keypair.generate()
     const [inflightPda, bump] = findInflightFlowPda(nttInboxItem.publicKey, client.program.programId)
 
@@ -169,14 +169,23 @@ describe('lock_onyc e2e (NTT transfer_lock)', () => {
 
     try {
       await client
-        .lockOnyc({
+        .send({
           payer: authority.publicKey,
+          direction: { deposit: {} },
+          baseMint: baseMint.publicKey,
           assetMint: assetMint.publicKey,
           nttInboxItem: nttInboxItem.publicKey,
           rentDestination: authority.publicKey,
           flowAmount: amount,
           flowRecipient: fogoSender,
           outboxItem: outboxItem.publicKey,
+          release: {
+            wormholeProgram: Keypair.generate().publicKey,
+            wormholeBridge: Keypair.generate().publicKey,
+            wormholeFeeCollector: Keypair.generate().publicKey,
+            wormholeSequence: Keypair.generate().publicKey,
+            outboxItemSigner: Keypair.generate().publicKey,
+          },
         })
         .signers([outboxItem])
         .rpc()

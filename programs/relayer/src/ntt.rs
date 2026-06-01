@@ -187,7 +187,7 @@ const NTT_WIRE_PREFIX: [u8; 4] = [0x99, b'N', b'T', b'T'];
 /// `payload_len: u16 BE`, `NativeTokenTransfer` carries a `0x99 N T T`
 /// prefix.
 ///
-/// SECURITY-CRITICAL on the `claim_usdc` skip path: when
+/// SECURITY-CRITICAL on the `receive` skip path: when
 /// `inbox_item.release_status == Released` we bypass the NTT redeem CPI
 /// and lose its seed-validation linking VTM ↔ InboxItem. Re-deriving here
 /// reproduces exactly what redeem's Anchor seed constraint would have

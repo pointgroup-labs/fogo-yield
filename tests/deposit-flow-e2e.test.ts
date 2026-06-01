@@ -18,6 +18,7 @@
  */
 
 import {
+  buildOnreSwapRemainingAccounts,
   findAuthorityPda,
   findInboxItemPda,
   findInflightFlowPda,
@@ -26,11 +27,12 @@ import {
   findUserInboxAuthorityPda,
   FOGO_WORMHOLE_CHAIN_ID,
   NTT_USDC_PROGRAM_ID,
+  ONRE_PROGRAM_ID,
   RelayerClient,
 } from '@fogo-onre/sdk'
 import { keccak_256 } from '@noble/hashes/sha3.js'
 import { getAssociatedTokenAddressSync, TOKEN_PROGRAM_ID } from '@solana/spl-token'
-import { Keypair, PublicKey } from '@solana/web3.js'
+import { ComputeBudgetProgram, Keypair, PublicKey } from '@solana/web3.js'
 import { Clock, LiteSVM } from 'litesvm'
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
@@ -61,7 +63,7 @@ import {
   setValidatedTransceiverMessage,
 } from './utils'
 
-describe('deposit flow e2e (claim_usdc → swap_usdc_to_onyc)', () => {
+describe('deposit flow e2e (receive (deposit) → swap_usdc_to_onyc)', () => {
   let svm: LiteSVM
   let authority: Keypair
   let client: RelayerClient
@@ -71,6 +73,7 @@ describe('deposit flow e2e (claim_usdc → swap_usdc_to_onyc)', () => {
   let nttTokenAuthorityPda: PublicKey
   let peerPda: PublicKey
   let feeVault: PublicKey
+  let offerPda: PublicKey
 
   let onreVaultAuthorityPda: PublicKey
   let onrePermAuthorityPda: PublicKey
@@ -130,7 +133,7 @@ describe('deposit flow e2e (claim_usdc → swap_usdc_to_onyc)', () => {
     loadFixture(svm, ONRE_VAULT_AUTHORITY_FIXTURE)
     loadFixture(svm, ONRE_PERM_AUTHORITY_FIXTURE)
     loadFixture(svm, ONRE_MINT_AUTHORITY_FIXTURE)
-    const offerPda = loadAndPatchOnreOffer(svm, baseMint.publicKey, assetMint.publicKey)
+    offerPda = loadAndPatchOnreOffer(svm, baseMint.publicKey, assetMint.publicKey)
     // Swap NAV-oracle pin requires config.price_oracle == the Offer PDA.
     setConfigPriceOracle(svm, client.configPda, offerPda)
 
@@ -192,7 +195,7 @@ describe('deposit flow e2e (claim_usdc → swap_usdc_to_onyc)', () => {
     svm.airdrop(nttTokenAuthorityPda, BigInt(1e9))
   })
 
-  it('claim_usdc (NTT inbound) → swap_usdc_to_onyc succeeds', async () => {
+  it('receive (deposit) (NTT inbound) → swap_usdc_to_onyc succeeds', async () => {
     const usdcAta = getAssociatedTokenAddressSync(baseMint.publicKey, relayerAuthorityPda, true)
 
     // The FOGO intent's `recipient_address` is the per-user inbox PDA; NTT
@@ -235,10 +238,11 @@ describe('deposit flow e2e (claim_usdc → swap_usdc_to_onyc)', () => {
 
     try {
       await client
-        .claimUsdc({
+        .receive({
           payer: authority.publicKey,
+          direction: { deposit: {} },
           userWallet: userWallet.publicKey,
-          baseMint: baseMint.publicKey,
+          recvMint: baseMint.publicKey,
           nttInboxItem: inboxItemPda,
           nttTransceiverMessage: validatedMsgPda,
           ntt: {
@@ -265,16 +269,39 @@ describe('deposit flow e2e (claim_usdc → swap_usdc_to_onyc)', () => {
       expect(bal).toEqual(depositAmount)
     }
 
-    // ----- Leg 2: swap_usdc_to_onyc (real OnRe CPI) -----
+    // ----- Leg 2: swap (unified router-agnostic handler, real OnRe CPI) -----
+    const [inflightFlowPda] = findInflightFlowPda(inboxItemPda, client.program.programId)
+    const takeOfferData = Buffer.concat([
+      Buffer.from([37, 190, 224, 77, 197, 39, 203, 230]),
+      (() => {
+        const b = Buffer.alloc(8)
+        b.writeBigUInt64LE(BigInt(flowAfterClaim.amount.toString()))
+        return b
+      })(),
+      Buffer.from([0]), // approval_message: None
+    ])
+    const swapAccounts = buildOnreSwapRemainingAccounts({
+      tokenInMint: baseMint.publicKey,
+      tokenOutMint: assetMint.publicKey,
+      userTokenInAccount: getAssociatedTokenAddressSync(baseMint.publicKey, relayerAuthorityPda, true),
+      userTokenOutAccount: getAssociatedTokenAddressSync(assetMint.publicKey, relayerAuthorityPda, true),
+      user: relayerAuthorityPda,
+    })
     try {
       await client
-        .swapUsdcToOnyc({
+        .swap({
+          flowPda: inflightFlowPda,
           baseMint: baseMint.publicKey,
           assetMint: assetMint.publicKey,
           feeVault,
           nttInboxItem: inboxItemPda,
-          onre: {},
+          onreOffer: offerPda,
+          swapProgram: ONRE_PROGRAM_ID,
+          swapDelegate: relayerAuthorityPda,
+          swapIxData: takeOfferData,
+          swapAccounts,
         })
+        .preInstructions([ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 })])
         .rpc()
     } catch (e: any) {
       console.log('SWAP ERROR:', e.message)
@@ -293,7 +320,7 @@ describe('deposit flow e2e (claim_usdc → swap_usdc_to_onyc)', () => {
     expect(svm.getAccount(inflightPda)).not.toBeNull()
   })
 
-  it('claim_usdc accepts the OnRe fork setter (allowlist member 2)', async () => {
+  it('receive (deposit) accepts the OnRe fork setter (allowlist member 2)', async () => {
     const userWallet = Keypair.generate()
     const [userInboxAuthority] = findUserInboxAuthorityPda(userWallet.publicKey, client.program.programId)
     createAta(svm, authority, baseMint.publicKey, userInboxAuthority)
@@ -326,10 +353,11 @@ describe('deposit flow e2e (claim_usdc → swap_usdc_to_onyc)', () => {
     const [inboxItemPda] = findInboxItemPda(msgHash, NTT_USDC_PROGRAM_ID)
 
     await client
-      .claimUsdc({
+      .receive({
         payer: authority.publicKey,
+        direction: { deposit: {} },
         userWallet: userWallet.publicKey,
-        baseMint: baseMint.publicKey,
+        recvMint: baseMint.publicKey,
         nttInboxItem: inboxItemPda,
         nttTransceiverMessage: validatedMsgPda,
         ntt: { transceiverAddress: NTT_USDC_PROGRAM_ID },

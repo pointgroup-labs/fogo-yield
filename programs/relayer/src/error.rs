@@ -74,12 +74,6 @@ pub enum RelayerError {
     #[msg("Proposed pending_authority equals the current authority — self-rotate is rejected")]
     PendingAuthorityIsCurrent,
 
-    #[msg("Post-CPI ONyc consumed does not equal the bounded Approve amount")]
-    OnycConsumedMismatch,
-
-    #[msg("Post-swap USDC delta is below the NAV-derived slippage floor")]
-    RedeemSlippageBelowFloor,
-
     #[msg("No active OnRe pricing vector for the current clock")]
     OnreNoActiveVector,
 
@@ -107,15 +101,27 @@ pub enum RelayerError {
     #[msg("Configured slippage_bps exceeds MAX_SLIPPAGE_BPS ceiling")]
     SlippageBpsTooHigh,
 
-    #[msg("Post-swap ONyc delta is below the NAV-derived deposit floor")]
-    DepositSlippageBelowFloor,
-
-    #[msg("Post-CPI USDC consumed does not equal the flow's input amount")]
-    UsdcConsumedMismatch,
-
     #[msg("Relayer ATA authority/delegate/close_authority was mutated by the swap CPI")]
     AtaAuthorityTampered,
 
     #[msg("price_oracle account does not match relayer_config.price_oracle (or it is unset)")]
     BadPriceOracle,
+
+    #[msg("swap consumed an input amount different from the flow amount")]
+    InputConsumedMismatch,
+
+    #[msg("swap output fell below the NAV-anchored slippage floor")]
+    OutputBelowFloor,
+
+    #[msg("a swap account aliases relayer custody (fee_vault/config/flow or a relayer_authority-owned token account)")]
+    SwapAccountNotAllowed,
+
+    #[msg("swap CPI drained, reassigned, or reallocated the relayer_authority PDA")]
+    RelayerAuthorityTampered,
+
+    #[msg("ntt_program / transceiver owner does not match the direction-selected NTT manager")]
+    BadNttProgram,
+
+    #[msg("recv_mint does not match the direction-selected config mint")]
+    BadReceiveMint,
 }

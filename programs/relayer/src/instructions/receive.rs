@@ -1,11 +1,31 @@
+//! Permissionless, route-agnostic inbound NTT receive for an in-flight flow.
+//!
+//! Replaces `claim_usdc` + `unlock_onyc`. The `direction` arg selects the NTT
+//! manager (deposit: base/USDC, withdraw: asset/ONyc), the received mint, and
+//! the flow-PDA seed namespace. Redeems the inbound VAA, sweeps the recorded
+//! amount from the per-user inbox ATA into relayer custody, and creates the
+//! `Flow` receipt binding the return leg to the originating FOGO wallet.
+//!
+//! Safety chain (cranker-controlled `user_wallet`):
+//! - VAA recipient is `pda([USER_INBOX_SEED, user_wallet])`.
+//! - NTT release pins `recipient_ata.authority == inbox_item.recipient_address`,
+//!   forcing `user_inbox_ata` to the ATA of the PDA the user signed for.
+//! - We re-derive that PDA from `user_wallet` and require equality.
+//! - `NttManagerMessage.sender == {OnRe, Fogo}` setter: rejects direct
+//!   (non-intent) NTT bridges to the same recipient PDA.
+//! - Sweep is exactly `inbox_item.amount` (per-VAA scoping handles concurrent
+//!   in-flight transfers from the same user).
+//!
+//! `remaining_accounts` = redeem ++ release; `redeem_accounts_len` splits.
+
 use anchor_lang::prelude::*;
 use anchor_spl::token_interface::{
     transfer_checked, Mint, TokenAccount, TokenInterface, TransferChecked,
 };
 
 use crate::constants::{
-    allowed_intent_setters, CONFIG_SEED, FLOW_INBOUND_SEED, FOGO_WORMHOLE_CHAIN_ID, NTT_REDEEM_IX,
-    NTT_RELEASE_INBOUND_UNLOCK_IX, NTT_USDC_PROGRAM_ID, RELAYER_SEED, USER_INBOX_SEED,
+    allowed_intent_setters, CONFIG_SEED, FOGO_WORMHOLE_CHAIN_ID, NTT_REDEEM_IX,
+    NTT_RELEASE_INBOUND_UNLOCK_IX, RELAYER_SEED, USER_INBOX_SEED,
 };
 use crate::cpi::invoke_relayer_signed;
 use crate::error::RelayerError;
@@ -15,7 +35,7 @@ use crate::ntt::{
     validate_ntt_redeem_release_accounts, InboxItem, NttRedeemArgs, NttReleaseInboundArgs,
     ReleaseStatus, TRANSCEIVER_MESSAGE_FROM_CHAIN_OFFSET,
 };
-use crate::state::{Direction, Flow, FlowStatus, RelayerConfig};
+use crate::state::{receive_ntt_program, Direction, Flow, FlowStatus, RelayerConfig};
 
 /// Skip-path validation when `inbox_item.release_status == Released`
 /// (NTT v1 release_inbound is permissionless — Wormhole executor may
@@ -26,19 +46,17 @@ use crate::state::{Direction, Flow, FlowStatus, RelayerConfig};
 /// could craft a system-owned account with the right shape and have
 /// us sweep their pre-funded `user_inbox_ata`.
 fn validate_skip_path_inbox_item(
+    ntt_program: &Pubkey,
     ntt_inbox_item: &AccountInfo,
     ntt_transceiver_message: &AccountInfo,
 ) -> Result<()> {
     require_keys_eq!(
         *ntt_inbox_item.owner,
-        NTT_USDC_PROGRAM_ID,
+        *ntt_program,
         RelayerError::InvalidInboxItem
     );
 
     let vtm_data = ntt_transceiver_message.try_borrow_data()?;
-
-    // Skipped redeem CPI would have pinned origin to FOGO; re-enforce:
-    // `from_chain` (offset 8, u16 LE) must equal FOGO.
     require!(
         vtm_data.len() >= TRANSCEIVER_MESSAGE_FROM_CHAIN_OFFSET + 2,
         RelayerError::InvalidTransceiverMessage
@@ -52,7 +70,7 @@ fn validate_skip_path_inbox_item(
         RelayerError::WrongOriginChain
     );
 
-    let (expected_inbox_item, _) = derive_inbox_item_pda_from_vtm(&NTT_USDC_PROGRAM_ID, &vtm_data)?;
+    let (expected_inbox_item, _) = derive_inbox_item_pda_from_vtm(ntt_program, &vtm_data)?;
     drop(vtm_data);
     require_keys_eq!(
         ntt_inbox_item.key(),
@@ -62,30 +80,41 @@ fn validate_skip_path_inbox_item(
     Ok(())
 }
 
-/// Redeem inbound USDC.s from FOGO via NTT and create the inbound `Flow`
-/// receipt binding the eventual return leg to the originating FOGO wallet.
-///
-/// Permissionless. Safety chain (cranker-controlled `user_wallet`):
-/// - VAA recipient is `pda([USER_INBOX_SEED, user_wallet])`.
-/// - NTT release pins `recipient_ata.authority == inbox_item.recipient_address`,
-///   so `user_inbox_ata` is forced to the ATA of the PDA the user signed for.
-/// - We re-derive that PDA from `user_wallet` and require equality.
-/// - `NttManagerMessage.sender == intent_transfer` setter PDA: rejects
-///   direct (non-intent) NTT bridges to the same recipient PDA.
-/// - Sweep is exactly `inbox_item.amount` (per-VAA scoping handles
-///   concurrent in-flight deposits from the same user).
-///
-/// `remaining_accounts` = redeem accounts ++ release accounts;
-/// `redeem_accounts_len` is the split point.
 pub fn handler<'info>(
-    ctx: Context<'info, ClaimUsdc<'info>>,
+    ctx: Context<'info, Receive<'info>>,
+    direction: Direction,
     redeem_accounts_len: u8,
 ) -> Result<()> {
+    let ntt_program = receive_ntt_program(direction);
+    require_keys_eq!(
+        ctx.accounts.ntt_program.key(),
+        ntt_program,
+        RelayerError::BadNttProgram
+    );
+
+    let cfg = &ctx.accounts.relayer_config;
+    let token_mint = match direction {
+        Direction::Deposit => cfg.base_mint,
+        Direction::Withdraw => cfg.asset_mint,
+    };
+    require_keys_eq!(
+        ctx.accounts.recv_mint.key(),
+        token_mint,
+        RelayerError::BadReceiveMint
+    );
+
+    // Manager is direction-selected, so the compile-time owner constraint became
+    // a runtime check; it must precede the first VTM data read.
+    require_keys_eq!(
+        *ctx.accounts.ntt_transceiver_message.owner,
+        ntt_program,
+        RelayerError::BadNttProgram
+    );
+
     let fogo_sender_raw = parse_fogo_sender_from_vtm(&ctx.accounts.ntt_transceiver_message)?;
 
     // Pin VAA's NTT sender to the permanent {OnRe, Fogo} intent setter
-    // allowlist. Any other sender is a non-intent path and must not
-    // deposit here. Keeping Fogo's setter preserves deposit switch-back.
+    // allowlist; any other sender is a non-intent path and must not receive.
     let allowed = allowed_intent_setters();
     require!(
         allowed.iter().any(|s| s.to_bytes() == fogo_sender_raw),
@@ -101,6 +130,7 @@ pub fn handler<'info>(
     );
     if inbox_already_released {
         validate_skip_path_inbox_item(
+            &ntt_program,
             &ctx.accounts.ntt_inbox_item,
             &ctx.accounts.ntt_transceiver_message,
         )?;
@@ -117,7 +147,7 @@ pub fn handler<'info>(
     validate_ntt_redeem_release_accounts(
         redeem_accs,
         release_accs,
-        &NTT_USDC_PROGRAM_ID,
+        &ntt_program,
         ctx.accounts.ntt_transceiver_message.key(),
         ctx.accounts.ntt_inbox_item.key(),
         ctx.accounts.user_inbox_ata.key(),
@@ -128,7 +158,7 @@ pub fn handler<'info>(
 
     if !inbox_already_released {
         invoke_relayer_signed(
-            NTT_USDC_PROGRAM_ID,
+            ntt_program,
             &NTT_REDEEM_IX,
             &NttRedeemArgs {},
             redeem_accs,
@@ -137,7 +167,7 @@ pub fn handler<'info>(
         )?;
 
         invoke_relayer_signed(
-            NTT_USDC_PROGRAM_ID,
+            ntt_program,
             &NTT_RELEASE_INBOUND_UNLOCK_IX,
             &NttReleaseInboundArgs {
                 revert_on_delay: false,
@@ -156,8 +186,6 @@ pub fn handler<'info>(
         ctx.accounts.user_inbox_authority.key(),
         RelayerError::UserInboxAuthorityMismatch
     );
-    // Trust `inbox_item.amount` as canonical per-VAA: a pre/post balance
-    // delta is fragile under dust, concurrent VAAs, and the skip branch.
     let amount = inbox.amount;
     require!(amount > 0, RelayerError::ZeroAmountFlow);
 
@@ -167,8 +195,8 @@ pub fn handler<'info>(
         RelayerError::InsufficientInboxBalance
     );
 
-    // Sweep this VAA's exact recorded amount; the inbox PDA may keep a
-    // non-zero post-balance (dust/concurrent VAAs) without corrupting us.
+    // Sweep exactly the recorded amount; the inbox may keep dust without
+    // corrupting us.
     let user_wallet_key = ctx.accounts.user_wallet.key();
     let inbox_bump = ctx.bumps.user_inbox_authority;
     let inbox_bump_arr = [inbox_bump];
@@ -178,32 +206,32 @@ pub fn handler<'info>(
             *ctx.accounts.token_program.key,
             TransferChecked {
                 from: ctx.accounts.user_inbox_ata.to_account_info(),
-                mint: ctx.accounts.base_mint.to_account_info(),
-                to: ctx.accounts.base_ata.to_account_info(),
+                mint: ctx.accounts.recv_mint.to_account_info(),
+                to: ctx.accounts.recv_ata.to_account_info(),
                 authority: ctx.accounts.user_inbox_authority.to_account_info(),
             },
             &[inbox_seeds],
         ),
         amount,
-        ctx.accounts.base_mint.decimals,
+        ctx.accounts.recv_mint.decimals,
     )?;
 
-    let flow_key = ctx.accounts.inflight_flow.key();
+    let flow_key = ctx.accounts.flow.key();
     let user_wallet_bytes = user_wallet_key.to_bytes();
 
-    let flow = &mut ctx.accounts.inflight_flow;
+    let flow = &mut ctx.accounts.flow;
     flow.recipient = user_wallet_bytes;
     flow.status = FlowStatus::Received;
     flow.amount = amount;
     flow.payer = ctx.accounts.payer.key();
-    flow.bump = ctx.bumps.inflight_flow;
-    flow.direction = Direction::Deposit;
+    flow.bump = ctx.bumps.flow;
+    flow.direction = direction;
 
     emit!(Received {
         flow: flow_key,
         ntt_inbox_item: ctx.accounts.ntt_inbox_item.key(),
         recipient: user_wallet_bytes,
-        direction: Direction::Deposit,
+        direction,
         amount,
     });
 
@@ -211,78 +239,63 @@ pub fn handler<'info>(
 }
 
 #[derive(Accounts)]
-pub struct ClaimUsdc<'info> {
+#[instruction(direction: Direction)]
+pub struct Receive<'info> {
     #[account(mut)]
     pub payer: Signer<'info>,
 
-    #[account(
-        seeds = [CONFIG_SEED],
-        bump = relayer_config.bump,
-        has_one = base_mint,
-    )]
+    #[account(seeds = [CONFIG_SEED], bump = relayer_config.bump)]
     pub relayer_config: Account<'info, RelayerConfig>,
 
     /// CHECK: PDA derived from RELAYER_SEED.
     #[account(seeds = [RELAYER_SEED], bump = relayer_config.relayer_authority_bump)]
     pub relayer_authority: UncheckedAccount<'info>,
 
-    pub base_mint: InterfaceAccount<'info, Mint>,
+    /// The received token's mint. Pinned in-handler to the direction-selected
+    /// config mint (base for deposit, asset for withdraw).
+    pub recv_mint: InterfaceAccount<'info, Mint>,
 
-    /// Sweep destination — long-lived relayer-authority USDC ATA.
+    /// Sweep destination — long-lived relayer-authority ATA for recv_mint.
     #[account(
         mut,
-        associated_token::mint = base_mint,
+        associated_token::mint = recv_mint,
         associated_token::authority = relayer_authority,
         associated_token::token_program = token_program,
     )]
-    pub base_ata: InterfaceAccount<'info, TokenAccount>,
+    pub recv_ata: InterfaceAccount<'info, TokenAccount>,
 
-    /// Originating FOGO wallet (Solana keys are chain-agnostic).
-    /// Pinned via `user_inbox_authority` PDA derivation + NTT release
-    /// ATA-authority check. See handler doc.
     /// CHECK: see safety chain in handler doc.
     pub user_wallet: UncheckedAccount<'info>,
 
-    /// CHECK: PDA-derived; owns and signs sweeps from `user_inbox_ata`.
-    #[account(
-        seeds = [USER_INBOX_SEED, user_wallet.key().as_ref()],
-        bump,
-    )]
+    /// CHECK: PDA-derived; owns and signs sweeps from user_inbox_ata.
+    #[account(seeds = [USER_INBOX_SEED, user_wallet.key().as_ref()], bump)]
     pub user_inbox_authority: UncheckedAccount<'info>,
 
-    /// NTT release_inbound deposits here; sweep moves exactly
-    /// `flow.amount` to `usdc_ata`. Not `init_if_needed`: FOGO
-    /// `bridge_ntt_tokens` arg `pay_destination_ata_rent: true` makes
-    /// the executor create the ATA on first delivery.
     #[account(
         mut,
-        associated_token::mint = base_mint,
+        associated_token::mint = recv_mint,
         associated_token::authority = user_inbox_authority,
         associated_token::token_program = token_program,
     )]
     pub user_inbox_ata: InterfaceAccount<'info, TokenAccount>,
 
-    /// No `#[account(owner = ...)]` here: on a fresh claim NTT redeem
-    /// creates this account, so a pre-handler owner constraint would
-    /// fail every first-time claim. The owner check runs in
-    /// `validate_skip_path_inbox_item` — the only path where forgery is
-    /// possible (no NTT CPI runs).
     /// CHECK: conditional owner + discriminator/recipient checks in handler.
     pub ntt_inbox_item: UncheckedAccount<'info>,
 
-    /// CHECK: owner pin + discriminator + offset checks in handler.
-    #[account(owner = NTT_USDC_PROGRAM_ID)]
+    /// CHECK: owner pinned in-handler to receive_ntt_program(direction).
     pub ntt_transceiver_message: UncheckedAccount<'info>,
 
-    /// `init` blocks double-claims against the same inbox item.
+    /// CHECK: asserted in-handler == receive_ntt_program(direction).
+    pub ntt_program: UncheckedAccount<'info>,
+
     #[account(
         init,
         payer = payer,
         space = 8 + Flow::INIT_SPACE,
-        seeds = [FLOW_INBOUND_SEED, ntt_inbox_item.key().as_ref()],
+        seeds = [crate::state::flow_seed(direction), ntt_inbox_item.key().as_ref()],
         bump,
     )]
-    pub inflight_flow: Account<'info, Flow>,
+    pub flow: Account<'info, Flow>,
 
     pub token_program: Interface<'info, TokenInterface>,
     pub system_program: Program<'info, System>,

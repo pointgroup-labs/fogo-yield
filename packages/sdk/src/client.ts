@@ -487,6 +487,102 @@ export class RelayerClient {
   }
 
   /**
+   * Route-agnostic outbound send. Merges `lockOnyc` (deposit, pushes ONyc)
+   * and `sendUsdcToUser` (withdraw, pushes USDC). Routes on `direction`:
+   * deposit locks the asset mint via the ONyc NTT manager + inflight flow;
+   * withdraw locks the base mint via the USDC NTT manager + outflight flow.
+   * Each leg CPIs `transfer_lock` + `release_wormhole_outbound` atomically.
+   *
+   * Failure-path callers (deliberately broken `remainingAccounts` for
+   * negative tests) MUST omit `flowAmount` / `flowRecipient` / `outboxItem`
+   * — the SDK returns the bare builder so they can attach their own
+   * `remainingAccounts` to exercise pre-CPI guards.
+   */
+  send(params: {
+    payer: PublicKey
+    direction: { deposit: Record<string, never> } | { withdraw: Record<string, never> }
+    baseMint: PublicKey
+    assetMint: PublicKey
+    nttInboxItem: PublicKey
+    rentDestination: PublicKey
+    flowAmount?: BN | bigint
+    flowRecipient?: Uint8Array
+    outboxItem?: PublicKey
+    /**
+     * NTT v3 release-publish accounts. REQUIRED whenever `flowAmount` /
+     * `flowRecipient` / `outboxItem` are all supplied — there is no
+     * "lock-only" code path.
+     */
+    release?: {
+      wormholeProgram: PublicKey
+      wormholeBridge: PublicKey
+      wormholeFeeCollector: PublicKey
+      wormholeSequence: PublicKey
+      outboxItemSigner: PublicKey
+      /** Optional override; defaults to the manager-as-transceiver PDA. */
+      wormholeMessage?: PublicKey
+      emitter?: PublicKey
+    }
+  }) {
+    const isDeposit = 'deposit' in params.direction
+    const nttProgramId = isDeposit ? NTT_ONYC_PROGRAM_ID : NTT_USDC_PROGRAM_ID
+    const outboundMint = isDeposit ? params.assetMint : params.baseMint
+    const { inflightFlow, outflightFlow } = this.flowPdas(params.nttInboxItem)
+    const flow = isDeposit ? inflightFlow : outflightFlow
+
+    const builder = this.program.methods
+      .send(NTT_TRANSFER_LOCK_ACCOUNT_COUNT)
+      .accountsPartial({
+        payer: params.payer,
+        relayerConfig: this.configPda,
+        relayerAuthority: this.authorityPda,
+        baseMint: params.baseMint,
+        assetMint: params.assetMint,
+        baseAta: this.relayerAta(params.baseMint),
+        assetAta: this.relayerAta(params.assetMint),
+        nttInboxItem: params.nttInboxItem,
+        flow,
+        rentDestination: params.rentDestination,
+        tokenProgram: TOKEN_PROGRAM_ID,
+      })
+
+    if (!params.flowAmount || !params.flowRecipient || !params.outboxItem) {
+      return builder
+    }
+
+    if (!params.release) {
+      throw new Error(
+        'send: `release` is required whenever flowAmount/flowRecipient/outboxItem '
+        + 'are supplied. The on-chain handler now CPIs into NTT release_wormhole_outbound '
+        + 'in the same ix as transfer_lock — there is no lock-only path.',
+      )
+    }
+
+    const transferLock = this.transferLockAccounts({
+      mint: outboundMint,
+      nttProgramId,
+      outboxItem: params.outboxItem,
+      recipientAddress: params.flowRecipient,
+      amount: toBigInt(params.flowAmount),
+    })
+
+    const releaseAccts = buildNttReleaseWormholeOutboundAccountList({
+      payer: params.payer,
+      nttProgramId,
+      outboxItem: params.outboxItem,
+      wormholeProgram: params.release.wormholeProgram,
+      wormholeBridge: params.release.wormholeBridge,
+      wormholeFeeCollector: params.release.wormholeFeeCollector,
+      wormholeSequence: params.release.wormholeSequence,
+      outboxItemSigner: params.release.outboxItemSigner,
+      wormholeMessage: params.release.wormholeMessage,
+      emitter: params.release.emitter,
+    })
+
+    return builder.remainingAccounts([...transferLock, ...releaseAccts])
+  }
+
+  /**
    * Permissionless ONyc → USDC swap for the outbound (withdraw) leg.
    * Cranker fetches a quote from any swap program and the on-chain
    * handler:
@@ -545,6 +641,107 @@ export class RelayerClient {
         tokenProgram: TOKEN_PROGRAM_ID,
       })
       .remainingAccounts(params.swapAccounts)
+  }
+
+  /**
+   * Permissionless, route-agnostic swap for an in-flight flow. Routes on the
+   * persisted `Flow.direction` — no direction arg. Deposit flows swap
+   * base→asset (fee from the asset output); withdraw flows swap asset→base
+   * (fee from the asset input). The caller passes the `flowPda` directly;
+   * the handler re-derives the seed namespace from `flow.direction`.
+   */
+  swap(params: {
+    flowPda: PublicKey
+    baseMint: PublicKey
+    assetMint: PublicKey
+    feeVault: PublicKey
+    nttInboxItem: PublicKey
+    onreOffer: PublicKey
+    swapProgram: PublicKey
+    swapDelegate: PublicKey
+    swapIxData: Uint8Array
+    swapAccounts: AccountMeta[]
+  }) {
+    return this.program.methods
+      .swap(Buffer.from(params.swapIxData))
+      .accountsPartial({
+        relayerConfig: this.configPda,
+        relayerAuthority: this.authorityPda,
+        baseMint: params.baseMint,
+        assetMint: params.assetMint,
+        baseAta: this.relayerAta(params.baseMint),
+        assetAta: this.relayerAta(params.assetMint),
+        feeVault: params.feeVault,
+        nttInboxItem: params.nttInboxItem,
+        flow: params.flowPda,
+        onreOffer: params.onreOffer,
+        swapProgram: params.swapProgram,
+        swapDelegate: params.swapDelegate,
+        tokenProgram: TOKEN_PROGRAM_ID,
+      })
+      .remainingAccounts(params.swapAccounts)
+  }
+
+  /**
+   * Permissionless, route-agnostic inbound NTT receive. Routes on the
+   * `direction` arg (deposit: base/USDC manager + inflight flow PDA;
+   * withdraw: asset/ONyc manager + outflight flow PDA). Replaces
+   * `claimUsdc` + `unlockOnyc`. The handler sweeps the recorded amount from
+   * the per-user inbox ATA into relayer custody and creates the Flow receipt.
+   */
+  receive(params: {
+    payer: PublicKey
+    direction: { deposit: Record<string, never> } | { withdraw: Record<string, never> }
+    userWallet: PublicKey
+    recvMint: PublicKey
+    nttInboxItem: PublicKey
+    nttTransceiverMessage: PublicKey
+    ntt?: NttRedeemContext
+    redeemAccountsLen?: number
+  }) {
+    const isDeposit = 'deposit' in params.direction
+    const nttProgramId = isDeposit ? NTT_USDC_PROGRAM_ID : NTT_ONYC_PROGRAM_ID
+    const [flow] = isDeposit
+      ? findInflightFlowPda(params.nttInboxItem, this.program.programId)
+      : findOutflightFlowPda(params.nttInboxItem, this.program.programId)
+    const { userInboxAuthority, userInboxAta } = this.userInboxBindings(
+      params.userWallet,
+      params.recvMint,
+    )
+    const built = params.ntt
+      ? buildNttRedeemReleaseAccounts({
+          mint: params.recvMint,
+          nttInboxItem: params.nttInboxItem,
+          nttTransceiverMessage: params.nttTransceiverMessage,
+          ntt: params.ntt,
+          programId: nttProgramId,
+          authority: this.authorityPda,
+          // Release lands in the per-user inbox ATA, not relayer custody;
+          // the handler sweeps the recorded amount into custody after release.
+          recipientAta: userInboxAta,
+        })
+      : null
+
+    const builder = this.program.methods
+      .receive(params.direction, built ? built.redeemAccountsLen : (params.redeemAccountsLen ?? 0))
+      .accountsPartial({
+        payer: params.payer,
+        relayerConfig: this.configPda,
+        relayerAuthority: this.authorityPda,
+        recvMint: params.recvMint,
+        recvAta: this.relayerAta(params.recvMint),
+        userWallet: params.userWallet,
+        userInboxAuthority,
+        userInboxAta,
+        nttInboxItem: params.nttInboxItem,
+        nttTransceiverMessage: params.nttTransceiverMessage,
+        nttProgram: nttProgramId,
+        flow,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        systemProgram: SystemProgram.programId,
+      })
+
+    return built ? builder.remainingAccounts(built.remainingAccounts) : builder
   }
 
   async fetchConfig() {

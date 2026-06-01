@@ -39,7 +39,7 @@ import {
   setFlowAccount,
 } from './utils'
 
-describe('send_usdc_to_user e2e (NTT transfer_lock outbound on USDC.s, Locking mode)', () => {
+describe('send (withdraw) e2e (NTT transfer_lock outbound on USDC.s, Locking mode)', () => {
   let svm: LiteSVM
   let authority: Keypair
   let client: RelayerClient
@@ -167,14 +167,23 @@ describe('send_usdc_to_user e2e (NTT transfer_lock outbound on USDC.s, Locking m
 
     try {
       await client
-        .sendUsdcToUser({
+        .send({
           payer: authority.publicKey,
+          direction: { withdraw: {} },
           baseMint: baseMint.publicKey,
+          assetMint: assetMint.publicKey,
           nttInboxItem,
           rentDestination: authority.publicKey,
           flowAmount: sendAmount,
           flowRecipient: fogoSender,
           outboxItem: outboxItem.publicKey,
+          release: {
+            wormholeProgram: Keypair.generate().publicKey,
+            wormholeBridge: Keypair.generate().publicKey,
+            wormholeFeeCollector: Keypair.generate().publicKey,
+            wormholeSequence: Keypair.generate().publicKey,
+            outboxItemSigner: Keypair.generate().publicKey,
+          },
         })
         .signers([outboxItem])
         .rpc()

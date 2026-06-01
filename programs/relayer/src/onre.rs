@@ -89,7 +89,7 @@ pub fn parse_active_offer_vector(data: &[u8], now: u64) -> Result<OnreOfferVecto
 /// price_fix_duration`), matching OnRe — meaning the price one second
 /// into a new interval is already the price at the end of that
 /// interval. Our floor must match this snap exactly, or
-/// `swap_onyc_to_usdc`'s NAV gate would diverge from OnRe's accounting
+/// the unified `swap` handler's NAV gate would diverge from OnRe's accounting
 /// and produce an exploitable asymmetry.
 pub fn calculate_step_price(v: &OnreOfferVector, now: u64) -> Result<u64> {
     require!(v.base_time <= now, RelayerError::OnreNoActiveVector);
@@ -270,7 +270,7 @@ pub fn oracle_expected_out(
 ///
 /// Fail-closed on `slippage_bps > 10_000`: a deploy-time typo must produce
 /// a loud revert, not a silent zero floor that disables the permissionless
-/// `swap_onyc_to_usdc` safety pillar. `slippage_bps == 10_000` is allowed
+/// `swap` safety pillar. `slippage_bps == 10_000` is allowed
 /// and yields a zero floor — the caller's compile-time constant is the gate.
 pub fn apply_slippage_floor(gross_expected: u64, slippage_bps: u16) -> Result<u64> {
     require!(slippage_bps <= 10_000, RelayerError::OnreInvalidSlippageBps);

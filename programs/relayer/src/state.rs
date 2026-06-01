@@ -1,6 +1,9 @@
 use anchor_lang::prelude::*;
 
-use crate::constants::{CONFIG_SEED, FEE_TIMELOCK_SLOTS, MAX_FEE_BPS, MAX_SLIPPAGE_BPS};
+use crate::constants::{
+    CONFIG_SEED, FEE_TIMELOCK_SLOTS, FLOW_INBOUND_SEED, FLOW_OUTBOUND_SEED, MAX_FEE_BPS,
+    MAX_SLIPPAGE_BPS, NTT_ASSET_PROGRAM, NTT_BASE_PROGRAM,
+};
 use crate::error::RelayerError;
 
 /// `authority` gates governance only; flow instructions are permissionless.
@@ -195,6 +198,31 @@ pub enum FlowStatus {
 pub enum Direction {
     Deposit,
     Withdraw,
+}
+
+/// Seed prefix for a flow PDA, selected by direction. Deposit flows live
+/// under the inbound namespace, withdraw flows under the outbound one.
+pub fn flow_seed(direction: Direction) -> &'static [u8] {
+    match direction {
+        Direction::Deposit => FLOW_INBOUND_SEED,
+        Direction::Withdraw => FLOW_OUTBOUND_SEED,
+    }
+}
+
+/// NTT manager for the token a `receive` leg pulls in.
+pub fn receive_ntt_program(direction: Direction) -> Pubkey {
+    match direction {
+        Direction::Deposit => NTT_BASE_PROGRAM,
+        Direction::Withdraw => NTT_ASSET_PROGRAM,
+    }
+}
+
+/// NTT manager for the token a `send` leg pushes out.
+pub fn send_ntt_program(direction: Direction) -> Pubkey {
+    match direction {
+        Direction::Deposit => NTT_ASSET_PROGRAM,
+        Direction::Withdraw => NTT_BASE_PROGRAM,
+    }
 }
 
 /// One-shot receipt binding an inbound bridge message to a FOGO wallet.

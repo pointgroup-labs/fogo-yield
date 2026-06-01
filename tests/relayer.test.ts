@@ -16,7 +16,7 @@ import {
   RelayerClient,
 } from '@fogo-onre/sdk'
 import { getAssociatedTokenAddressSync } from '@solana/spl-token'
-import { Keypair, PublicKey } from '@solana/web3.js'
+import { Keypair, PublicKey, Transaction, TransactionInstruction } from '@solana/web3.js'
 import {
   createAta,
   createMint,
@@ -499,10 +499,10 @@ describe('relayer', () => {
       }
     }
 
-    // Drives claim_usdc only far enough to hit the setter-allowlist check
-    // (handler's first guard, before any NTT CPI). Used by the
+    // Drives receive (deposit) only far enough to hit the setter-allowlist
+    // check (handler's first guard, before any NTT CPI). Used by the
     // non-allowlisted-sender rejection tests below.
-    async function claimUsdcWithSender(senderBytes: Uint8Array) {
+    async function receiveDepositWithSender(senderBytes: Uint8Array) {
       const nttInboxItem = Keypair.generate()
       const userWallet = Keypair.generate()
       const [userInboxAuthority] = findUserInboxAuthorityPda(userWallet.publicKey, client.program.programId)
@@ -524,10 +524,11 @@ describe('relayer', () => {
       )
 
       return client
-        .claimUsdc({
+        .receive({
           payer: authority.publicKey,
+          direction: { deposit: {} },
           userWallet: userWallet.publicKey,
-          baseMint: baseMint.publicKey,
+          recvMint: baseMint.publicKey,
           nttInboxItem: nttInboxItem.publicKey,
           nttTransceiverMessage: validatedMsgPda,
           redeemAccountsLen: 1,
@@ -539,20 +540,20 @@ describe('relayer', () => {
         .rpc()
     }
 
-    it('claim_usdc rejects a non-allowlisted sender', async () => {
+    it('receive (deposit) rejects a non-allowlisted sender', async () => {
       const stranger = Keypair.generate().publicKey
-      await expectError(() => claimUsdcWithSender(stranger.toBytes()), 'UnexpectedFogoSender')
+      await expectError(() => receiveDepositWithSender(stranger.toBytes()), 'UnexpectedFogoSender')
     })
 
-    it('claim_usdc rejects a direct NTT bridge (sender = user session authority)', async () => {
+    it('receive (deposit) rejects a direct NTT bridge (sender = user session authority)', async () => {
       // A plain NTT transfer (no intent_transfer) surfaces the user's own
       // session authority as the VAA sender — not a setter PDA. Must be
       // rejected so only fee-bearing intent bridges can deposit here.
       const userSessionAuthority = Keypair.generate().publicKey
-      await expectError(() => claimUsdcWithSender(userSessionAuthority.toBytes()), 'UnexpectedFogoSender')
+      await expectError(() => receiveDepositWithSender(userSessionAuthority.toBytes()), 'UnexpectedFogoSender')
     })
 
-    it('claim_usdc rejects replay when inflight Flow PDA already exists', async () => {
+    it('receive (deposit) rejects replay when inflight Flow PDA already exists', async () => {
       const nttInboxItem = Keypair.generate()
       const userWallet = Keypair.generate()
 
@@ -595,10 +596,11 @@ describe('relayer', () => {
       await expectFailure(
         () =>
           client
-            .claimUsdc({
+            .receive({
               payer: authority.publicKey,
+              direction: { deposit: {} },
               userWallet: userWallet.publicKey,
-              baseMint: baseMint.publicKey,
+              recvMint: baseMint.publicKey,
               nttInboxItem: nttInboxItem.publicKey,
               nttTransceiverMessage: validatedMsgPda,
               redeemAccountsLen: 1,
@@ -628,7 +630,7 @@ describe('relayer', () => {
       expect('withdraw' in flow.direction).toBe(true)
     })
 
-    it('claim_usdc rejects forged system-owned inbox_item on the released-skip path', async () => {
+    it('receive (deposit) rejects forged system-owned inbox_item on the released-skip path', async () => {
       // Attack: a cranker self-funds its own inbox ATA and forges a
       // system-owned Released InboxItem to bypass the intent_transfer fee
       // path. The skip-branch owner check must reject it before any sweep.
@@ -683,10 +685,11 @@ describe('relayer', () => {
       await expectError(
         () =>
           client
-            .claimUsdc({
+            .receive({
               payer: authority.publicKey,
+              direction: { deposit: {} },
               userWallet: attackerWallet.publicKey,
-              baseMint: baseMint.publicKey,
+              recvMint: baseMint.publicKey,
               nttInboxItem: fakeInboxItem.publicKey,
               nttTransceiverMessage: validatedMsgPda,
               redeemAccountsLen: 1,
@@ -700,7 +703,7 @@ describe('relayer', () => {
       )
     })
 
-    it('claim_usdc rejects released-skip with valid setter VTM but unrelated InboxItem', async () => {
+    it('receive (deposit) rejects released-skip with valid setter VTM but unrelated InboxItem', async () => {
       // Attack: bridge USDC directly via NTT to the attacker's own inbox
       // (skipping intent_transfer fees), then borrow a real setter-originated
       // VTM. On the released-skip path the redeem CPI is skipped, so the
@@ -755,10 +758,11 @@ describe('relayer', () => {
       await expectError(
         () =>
           client
-            .claimUsdc({
+            .receive({
               payer: authority.publicKey,
+              direction: { deposit: {} },
               userWallet: attackerWallet.publicKey,
-              baseMint: baseMint.publicKey,
+              recvMint: baseMint.publicKey,
               nttInboxItem: unrelatedInboxItem.publicKey,
               nttTransceiverMessage: validatedMsgPda,
               redeemAccountsLen: 1,
@@ -772,11 +776,11 @@ describe('relayer', () => {
       )
     })
 
-    it('swap_usdc_to_onyc rejects flow not in Received status', async () => {
+    it('swap rejects flow not in Received status', async () => {
       const nttInboxItem = Keypair.generate()
       const [inflightPda, bump] = findInflightFlowPda(nttInboxItem.publicKey, client.program.programId)
 
-      // Inject a Swapped flow — swap_usdc_to_onyc requires Received
+      // Inject a Swapped flow — swap requires Received
       setFlowAccount(svm, inflightPda, {
         recipient: fogoSender,
         status: FlowStatus.Swapped,
@@ -785,25 +789,28 @@ describe('relayer', () => {
         bump,
       }, client.program.programId)
 
+      const [offerPda] = findOnreOfferPda(baseMint.publicKey, assetMint.publicKey, ONRE_PROGRAM_ID)
       await expectError(
         () =>
           client
-            .swapUsdcToOnyc({
+            .swap({
+              flowPda: inflightPda,
               baseMint: baseMint.publicKey,
               assetMint: assetMint.publicKey,
               feeVault,
               nttInboxItem: nttInboxItem.publicKey,
+              onreOffer: offerPda,
+              swapProgram: ONRE_PROGRAM_ID,
+              swapDelegate: client.authorityPda,
+              swapIxData: Buffer.alloc(0),
+              swapAccounts: [],
             })
-            .remainingAccounts([
-              { pubkey: ONRE_PROGRAM_ID, isSigner: false, isWritable: false },
-              { pubkey: client.authorityPda, isSigner: false, isWritable: false },
-            ])
             .rpc(),
         'FlowStatusMismatch',
       )
     })
 
-    it('swap_usdc_to_onyc rejects an offer account not owned by OnRe', async () => {
+    it('swap rejects an offer account not owned by OnRe', async () => {
       const nttInboxItem = Keypair.generate()
       const [inflightPda, bump] = findInflightFlowPda(nttInboxItem.publicKey, client.program.programId)
 
@@ -831,22 +838,24 @@ describe('relayer', () => {
       await expectError(
         () =>
           client
-            .swapUsdcToOnyc({
+            .swap({
+              flowPda: inflightPda,
               baseMint: baseMint.publicKey,
               assetMint: assetMint.publicKey,
               feeVault,
               nttInboxItem: nttInboxItem.publicKey,
+              onreOffer: offerPda,
+              swapProgram: ONRE_PROGRAM_ID,
+              swapDelegate: client.authorityPda,
+              swapIxData: Buffer.alloc(0),
+              swapAccounts: [],
             })
-            .remainingAccounts([
-              { pubkey: ONRE_PROGRAM_ID, isSigner: false, isWritable: false },
-              { pubkey: client.authorityPda, isSigner: false, isWritable: false },
-            ])
             .rpc(),
         'OnreOfferOwnerMismatch',
       )
     })
 
-    it('swap_usdc_to_onyc rejects when price_oracle is unset (BadPriceOracle)', async () => {
+    it('swap rejects when price_oracle is unset (BadPriceOracle)', async () => {
       const nttInboxItem = Keypair.generate()
       const [inflightPda, bump] = findInflightFlowPda(nttInboxItem.publicKey, client.program.programId)
 
@@ -865,29 +874,92 @@ describe('relayer', () => {
 
       // SDK derives the CORRECT offer PDA, but the fail-closed pin rejects
       // it because relayer_config.price_oracle is still the default pubkey.
+      const [offerPda] = findOnreOfferPda(baseMint.publicKey, assetMint.publicKey, ONRE_PROGRAM_ID)
       await expectError(
         () =>
           client
-            .swapUsdcToOnyc({
+            .swap({
+              flowPda: inflightPda,
               baseMint: baseMint.publicKey,
               assetMint: assetMint.publicKey,
               feeVault,
               nttInboxItem: nttInboxItem.publicKey,
+              onreOffer: offerPda,
+              swapProgram: ONRE_PROGRAM_ID,
+              swapDelegate: client.authorityPda,
+              swapIxData: Buffer.alloc(0),
+              swapAccounts: [],
             })
-            .remainingAccounts([
-              { pubkey: ONRE_PROGRAM_ID, isSigner: false, isWritable: false },
-              { pubkey: client.authorityPda, isSigner: false, isWritable: false },
-            ])
             .rpc(),
         'BadPriceOracle',
       )
     })
 
-    it('lock_onyc rejects flow not in Swapped status', async () => {
+    it('rejects swap on a Flow with an undecodable direction', async () => {
+      const nttInboxItem = Keypair.generate()
+      const [flowPda, bump] = findInflightFlowPda(nttInboxItem.publicKey, client.program.programId)
+
+      // direction byte 9 is not a valid Direction variant; borsh decode of
+      // the Flow account must fail before the handler ever runs.
+      setFlowAccount(svm, flowPda, {
+        recipient: fogoSender,
+        status: FlowStatus.Received,
+        amount: 500_000n,
+        payer: authority.publicKey,
+        bump,
+        direction: 9,
+      }, client.program.programId)
+
+      const [offerPda] = findOnreOfferPda(baseMint.publicKey, assetMint.publicKey, ONRE_PROGRAM_ID)
+
+      await expect(
+        client
+          .swap({
+            flowPda,
+            baseMint: baseMint.publicKey,
+            assetMint: assetMint.publicKey,
+            feeVault,
+            nttInboxItem: nttInboxItem.publicKey,
+            onreOffer: offerPda,
+            swapProgram: ONRE_PROGRAM_ID,
+            swapDelegate: client.authorityPda,
+            swapIxData: Buffer.alloc(0),
+            swapAccounts: [
+              { pubkey: client.authorityPda, isSigner: false, isWritable: false },
+            ],
+          })
+          .rpc(),
+      ).rejects.toThrow(/AccountDidNotDeserialize|failed to deserialize/i)
+    })
+
+    it('rejects receive with an invalid direction discriminant', async () => {
+      // Direction has only {0: Deposit, 1: Withdraw}; byte 2 has no variant,
+      // so borsh decode of the instruction arg fails before account validation.
+      const recvIx = (client.program.idl as any).instructions.find(
+        (i: any) => i.name === 'receive',
+      )
+      const discriminator = Buffer.from(recvIx.discriminator)
+      const data = Buffer.concat([discriminator, Buffer.from([2]), Buffer.from([0])])
+
+      const ix = new TransactionInstruction({
+        programId: client.program.programId,
+        keys: [{ pubkey: authority.publicKey, isSigner: true, isWritable: true }],
+        data,
+      })
+      const tx = new Transaction().add(ix)
+
+      await expectFailure(
+        () => (client.program.provider as any).sendAndConfirm(tx, []),
+        logMatches(/InstructionDidNotDeserialize/i),
+        'receive must reject an unknown Direction discriminant',
+      )
+    })
+
+    it('send rejects flow not in Swapped status', async () => {
       const nttInboxItem = Keypair.generate()
       const [inflightPda, bump] = findInflightFlowPda(nttInboxItem.publicKey, client.program.programId)
 
-      // Inject a Received flow — lock_onyc requires Swapped
+      // Inject a Received flow — send requires Swapped
       setFlowAccount(svm, inflightPda, {
         recipient: fogoSender,
         status: FlowStatus.Received,
@@ -899,8 +971,10 @@ describe('relayer', () => {
       await expectError(
         () =>
           client
-            .lockOnyc({
+            .send({
               payer: authority.publicKey,
+              direction: { deposit: {} },
+              baseMint: baseMint.publicKey,
               assetMint: assetMint.publicKey,
               nttInboxItem: nttInboxItem.publicKey,
               rentDestination: authority.publicKey,
@@ -914,7 +988,7 @@ describe('relayer', () => {
       )
     })
 
-    it('lock_onyc rejects wrong rent destination', async () => {
+    it('send (deposit) rejects wrong rent destination', async () => {
       const nttInboxItem = Keypair.generate()
       const [inflightPda, bump] = findInflightFlowPda(nttInboxItem.publicKey, client.program.programId)
       const rando = Keypair.generate()
@@ -935,8 +1009,10 @@ describe('relayer', () => {
       await expectError(
         () =>
           client
-            .lockOnyc({
+            .send({
               payer: authority.publicKey,
+              direction: { deposit: {} },
+              baseMint: baseMint.publicKey,
               assetMint: assetMint.publicKey,
               nttInboxItem: nttInboxItem.publicKey,
               rentDestination: rando.publicKey,
@@ -950,7 +1026,7 @@ describe('relayer', () => {
       )
     })
 
-    it('lock_onyc rejects Swapped flow without session authority PDA', async () => {
+    it('send (deposit) rejects Swapped flow without session authority PDA', async () => {
       const nttInboxItem = Keypair.generate()
       const [inflightPda, bump] = findInflightFlowPda(nttInboxItem.publicKey, client.program.programId)
 
@@ -973,8 +1049,10 @@ describe('relayer', () => {
       await expectError(
         () =>
           client
-            .lockOnyc({
+            .send({
               payer: authority.publicKey,
+              direction: { deposit: {} },
+              baseMint: baseMint.publicKey,
               assetMint: assetMint.publicKey,
               nttInboxItem: nttInboxItem.publicKey,
               rentDestination: authority.publicKey,
@@ -1037,7 +1115,7 @@ describe('relayer', () => {
       }
     }
 
-    it('unlock_onyc rejects zero fogo_sender', async () => {
+    it('receive (withdraw) rejects zero fogo_sender', async () => {
       const nttInboxItem = Keypair.generate()
       const { userWallet } = setupUserInbox()
       const messageId = new Uint8Array(32)
@@ -1060,10 +1138,11 @@ describe('relayer', () => {
       await expectError(
         () =>
           client
-            .unlockOnyc({
+            .receive({
               payer: authority.publicKey,
+              direction: { withdraw: {} },
               userWallet,
-              assetMint: assetMint.publicKey,
+              recvMint: assetMint.publicKey,
               nttInboxItem: nttInboxItem.publicKey,
               nttTransceiverMessage: validatedMsgPda,
               redeemAccountsLen: 1,
@@ -1077,7 +1156,7 @@ describe('relayer', () => {
       )
     })
 
-    it('unlock_onyc rejects invalid account split (redeem_accounts_len=0)', async () => {
+    it('receive (withdraw) rejects invalid account split (redeem_accounts_len=0)', async () => {
       const nttInboxItem = Keypair.generate()
       const { userWallet } = setupUserInbox()
       const messageId = new Uint8Array(32)
@@ -1100,10 +1179,11 @@ describe('relayer', () => {
       await expectError(
         () =>
           client
-            .unlockOnyc({
+            .receive({
               payer: authority.publicKey,
+              direction: { withdraw: {} },
               userWallet,
-              assetMint: assetMint.publicKey,
+              recvMint: assetMint.publicKey,
               nttInboxItem: nttInboxItem.publicKey,
               nttTransceiverMessage: validatedMsgPda,
               redeemAccountsLen: 0,
@@ -1117,7 +1197,7 @@ describe('relayer', () => {
       )
     })
 
-    it('unlock_onyc rejects double unlock (same ntt_inbox_item)', async () => {
+    it('receive (withdraw) rejects double unlock (same ntt_inbox_item)', async () => {
       const nttInboxItem = Keypair.generate()
       const { userWallet } = setupUserInbox()
       const [outflightPda, bump] = findOutflightFlowPda(nttInboxItem.publicKey, client.program.programId)
@@ -1151,10 +1231,11 @@ describe('relayer', () => {
       await expectFailure(
         () =>
           client
-            .unlockOnyc({
+            .receive({
               payer: authority.publicKey,
+              direction: { withdraw: {} },
               userWallet,
-              assetMint: assetMint.publicKey,
+              recvMint: assetMint.publicKey,
               nttInboxItem: nttInboxItem.publicKey,
               nttTransceiverMessage: validatedMsgPda,
               redeemAccountsLen: 1,
@@ -1169,10 +1250,11 @@ describe('relayer', () => {
       )
     })
 
-    // Position-binding negatives for unlock_onyc. NTT consumes its account
+    // Position-binding negatives for receive (withdraw). NTT consumes its account
     // lists positionally: `redeem` reads slots 3/6, `release_inbound_unlock`
-    // reads slots 2/3; the handler pins all four (unlock_onyc.rs:81-97). Each
-    // test corrupts one slot and arranges the rest so its require! fires first.
+    // reads slots 2/3; the handler pins all four
+    // (receive.rs / validate_ntt_redeem_release_accounts). Each test corrupts
+    // one slot and arranges the rest so its require! fires first.
     function buildUnlockRemainingAccounts(slots: {
       redeem3: PublicKey
       redeem6: PublicKey
@@ -1195,7 +1277,7 @@ describe('relayer', () => {
       return ra
     }
 
-    it('unlock_onyc rejects TransceiverMessageMismatch when redeem[3] differs from named ntt_transceiver_message', async () => {
+    it('receive (withdraw) rejects TransceiverMessageMismatch when redeem[3] differs from named ntt_transceiver_message', async () => {
       const nttInboxItem = Keypair.generate()
       const { userWallet } = setupUserInbox()
       const messageId = new Uint8Array(32)
@@ -1219,10 +1301,11 @@ describe('relayer', () => {
       await expectError(
         () =>
           client
-            .unlockOnyc({
+            .receive({
               payer: authority.publicKey,
+              direction: { withdraw: {} },
               userWallet,
-              assetMint: assetMint.publicKey,
+              recvMint: assetMint.publicKey,
               nttInboxItem: nttInboxItem.publicKey,
               nttTransceiverMessage: validatedMsgPda,
               redeemAccountsLen: 10,
@@ -1238,7 +1321,7 @@ describe('relayer', () => {
       )
     })
 
-    it('unlock_onyc rejects InboxItemMismatch when redeem[6] differs from named ntt_inbox_item', async () => {
+    it('receive (withdraw) rejects InboxItemMismatch when redeem[6] differs from named ntt_inbox_item', async () => {
       const nttInboxItem = Keypair.generate()
       const { userWallet } = setupUserInbox()
       const messageId = new Uint8Array(32)
@@ -1262,10 +1345,11 @@ describe('relayer', () => {
       await expectError(
         () =>
           client
-            .unlockOnyc({
+            .receive({
               payer: authority.publicKey,
+              direction: { withdraw: {} },
               userWallet,
-              assetMint: assetMint.publicKey,
+              recvMint: assetMint.publicKey,
               nttInboxItem: nttInboxItem.publicKey,
               nttTransceiverMessage: validatedMsgPda,
               redeemAccountsLen: 10,
@@ -1281,7 +1365,7 @@ describe('relayer', () => {
       )
     })
 
-    it('unlock_onyc rejects RecipientAtaMismatch when release[3] differs from named user_inbox_ata', async () => {
+    it('receive (withdraw) rejects RecipientAtaMismatch when release[3] differs from named user_inbox_ata', async () => {
       const nttInboxItem = Keypair.generate()
       const { userWallet } = setupUserInbox()
       const messageId = new Uint8Array(32)
@@ -1307,10 +1391,11 @@ describe('relayer', () => {
       await expectError(
         () =>
           client
-            .unlockOnyc({
+            .receive({
               payer: authority.publicKey,
+              direction: { withdraw: {} },
               userWallet,
-              assetMint: assetMint.publicKey,
+              recvMint: assetMint.publicKey,
               nttInboxItem: nttInboxItem.publicKey,
               nttTransceiverMessage: validatedMsgPda,
               redeemAccountsLen: 10,
@@ -1326,25 +1411,28 @@ describe('relayer', () => {
       )
     })
 
-    it('send_usdc_to_user rejects flow not in Swapped status', async () => {
+    it('send (withdraw) rejects flow not in Swapped status', async () => {
       const nttInboxItem = Keypair.generate()
       const [outflightPda, bump] = findOutflightFlowPda(nttInboxItem.publicKey, client.program.programId)
 
-      // Inject a Received flow — send_usdc_to_user requires Swapped
+      // Inject a Received flow — send requires Swapped
       setFlowAccount(svm, outflightPda, {
         recipient: fogoSender,
         status: FlowStatus.Received,
         amount: 500_000n,
         payer: authority.publicKey,
+        direction: 1,
         bump,
       }, client.program.programId)
 
       await expectError(
         () =>
           client
-            .sendUsdcToUser({
+            .send({
               payer: authority.publicKey,
+              direction: { withdraw: {} },
               baseMint: baseMint.publicKey,
+              assetMint: assetMint.publicKey,
               nttInboxItem: nttInboxItem.publicKey,
               rentDestination: authority.publicKey,
             })
@@ -1357,7 +1445,7 @@ describe('relayer', () => {
       )
     })
 
-    it('send_usdc_to_user rejects wrong rent destination', async () => {
+    it('send (withdraw) rejects wrong rent destination', async () => {
       const nttInboxItem = Keypair.generate()
       const [outflightPda, bump] = findOutflightFlowPda(nttInboxItem.publicKey, client.program.programId)
       const rando = Keypair.generate()
@@ -1369,6 +1457,7 @@ describe('relayer', () => {
         status: FlowStatus.Swapped,
         amount: 500_000n,
         payer: authority.publicKey,
+        direction: 1,
         bump,
       }, client.program.programId)
 
@@ -1378,9 +1467,11 @@ describe('relayer', () => {
       await expectError(
         () =>
           client
-            .sendUsdcToUser({
+            .send({
               payer: authority.publicKey,
+              direction: { withdraw: {} },
               baseMint: baseMint.publicKey,
+              assetMint: assetMint.publicKey,
               nttInboxItem: nttInboxItem.publicKey,
               rentDestination: rando.publicKey,
             })
@@ -1393,7 +1484,7 @@ describe('relayer', () => {
       )
     })
 
-    it('send_usdc_to_user with Swapped flow advances past relayer-side checks', async () => {
+    it('send (withdraw) advances past relayer-side checks', async () => {
       const nttInboxItem = Keypair.generate()
       const [outflightPda, bump] = findOutflightFlowPda(nttInboxItem.publicKey, client.program.programId)
 
@@ -1403,6 +1494,7 @@ describe('relayer', () => {
         status: FlowStatus.Swapped,
         amount: 500_000n,
         payer: authority.publicKey,
+        direction: 1,
         bump,
       }, client.program.programId)
 
@@ -1410,17 +1502,17 @@ describe('relayer', () => {
       const [authorityPda] = findAuthorityPda(client.program.programId)
       mintTo(svm, authority, baseMint.publicKey, authorityPda, 500_000)
 
-      // With minimal remaining_accounts the handler will fail at the
-      // pre-CPI lookup for the Token Bridge `authority_signer` PDA (the
-      // delegate the Approve step needs). Hitting that error proves the
-      // status, ATA, and rent-destination checks all passed cleanly. Full
-      // outbound CPI coverage lives in `send-usdc-to-user-e2e.test.ts`.
+      // Minimal remaining_accounts omit the NTT session-authority PDA the
+      // Approve step needs, so the handler trips `MissingSessionAuthority`
+      // only after status, ATA, and rent-destination checks pass cleanly.
       await expectError(
         () =>
           client
-            .sendUsdcToUser({
+            .send({
               payer: authority.publicKey,
+              direction: { withdraw: {} },
               baseMint: baseMint.publicKey,
+              assetMint: assetMint.publicKey,
               nttInboxItem: nttInboxItem.publicKey,
               rentDestination: authority.publicKey,
             })

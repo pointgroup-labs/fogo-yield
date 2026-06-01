@@ -13,6 +13,8 @@ pub mod state;
 
 use instructions::*;
 
+use crate::state::Direction;
+
 declare_id!("onrenRKgX54qtWeK3cuaTBE71xx7dWMXn82ubH61vAp");
 
 /// Cross-chain relayer: USDC.s on FOGO ↔ ONyc on Solana, both legs over
@@ -31,60 +33,37 @@ pub mod fogo_onre_relayer {
         initialize::handler(ctx, deposit_fee_bps, withdraw_fee_bps)
     }
 
-    /// Redeem inbound USDC.s VAA, create inbound `Flow` receipt.
-    pub fn claim_usdc<'info>(
-        ctx: Context<'info, ClaimUsdc<'info>>,
+    /// Redeem an inbound NTT VAA (deposit: base/USDC, withdraw: asset/ONyc),
+    /// create the `Flow` receipt. Direction selects the NTT manager + flow seed.
+    pub fn receive<'info>(
+        ctx: Context<'info, Receive<'info>>,
+        direction: Direction,
         redeem_accounts_len: u8,
     ) -> Result<()> {
-        claim_usdc::handler(ctx, redeem_accounts_len)
+        instructions::receive::handler(ctx, direction, redeem_accounts_len)
     }
 
-    /// Lock ONyc via NTT and atomically emit the outbound VAA.
-    /// `transfer_lock_account_count` splits `remaining_accounts` between
-    /// `transfer_lock` and `release_wormhole_outbound`.
-    pub fn lock_onyc<'info>(
-        ctx: Context<'info, LockOnyc<'info>>,
+    /// Route-agnostic outbound send. Routes on `flow.direction`: deposit
+    /// pushes asset (ONyc) out, withdraw pushes base (USDC) out, each via NTT
+    /// `transfer_lock` + atomic `release_wormhole_outbound`. Replaces
+    /// `lock_onyc` and `send_usdc_to_user`. `transfer_lock_account_count`
+    /// splits `remaining_accounts` between the two NTT CPIs.
+    pub fn send<'info>(
+        ctx: Context<'info, Send<'info>>,
         transfer_lock_account_count: u8,
     ) -> Result<()> {
-        lock_onyc::handler(ctx, transfer_lock_account_count)
+        instructions::send::handler(ctx, transfer_lock_account_count)
     }
 
-    /// Release ONyc from NTT custody, create outbound `Flow` receipt.
-    pub fn unlock_onyc<'info>(
-        ctx: Context<'info, UnlockOnyc<'info>>,
-        redeem_accounts_len: u8,
-    ) -> Result<()> {
-        unlock_onyc::handler(ctx, redeem_accounts_len)
-    }
-
-    /// Lock USDC via NTT and atomically emit the outbound VAA back to
-    /// `flow.recipient`. `transfer_lock_account_count` splits
-    /// `remaining_accounts` between `transfer_lock` and
-    /// `release_wormhole_outbound` (mirrors `lock_onyc`).
-    pub fn send_usdc_to_user<'info>(
-        ctx: Context<'info, SendUsdcToUser<'info>>,
-        transfer_lock_account_count: u8,
-    ) -> Result<()> {
-        send_usdc_to_user::handler(ctx, transfer_lock_account_count)
-    }
-
-    pub fn swap_usdc_to_onyc<'info>(ctx: Context<'info, SwapUsdcToOnyc<'info>>) -> Result<()> {
-        swap_usdc_to_onyc::handler(ctx)
-    }
-
-    /// Permissionless: convert outbound flow's ONyc → USDC via any swap
-    /// program under NAV-anchored slippage protection. Withdraw fee is
-    /// taken in ONyc up front, the post-fee remainder swapped under a
-    /// bounded SPL `Approve` to `swap_delegate`. The swap CPI is signed by
-    /// the relayer authority; post-CPI assertions require the relayer ATAs'
-    /// authority/delegate/close state to be pristine, so PDA-signer
-    /// privilege cannot persist. Replaces the OnRe redemption-request chain
-    /// (KYC-gated, never executes for the relayer PDA).
-    pub fn swap_onyc_to_usdc<'info>(
-        ctx: Context<'info, SwapOnycToUsdc<'info>>,
+    /// Permissionless, route-agnostic swap. Routes on `flow.direction`:
+    /// deposit swaps base→asset (fee from the asset output), withdraw swaps
+    /// asset→base (fee from the asset input). Replaces `swap_usdc_to_onyc`
+    /// and `swap_onyc_to_usdc`.
+    pub fn swap<'info>(
+        ctx: Context<'info, Swap<'info>>,
         swap_ix_data: Vec<u8>,
     ) -> Result<()> {
-        swap_onyc_to_usdc::handler(ctx, swap_ix_data)
+        instructions::swap::handler(ctx, swap_ix_data)
     }
 
     /// Authority-only. `None` args leave fields unchanged. Fee decreases

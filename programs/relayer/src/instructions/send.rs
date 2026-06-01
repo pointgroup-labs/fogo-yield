@@ -1,9 +1,16 @@
+//! Permissionless, route-agnostic outbound send for a swapped flow.
+//!
+//! Replaces `lock_onyc` + `send_usdc_to_user`. Routes on `flow.direction`:
+//! deposit pushes the asset (ONyc) out, withdraw pushes the base (USDC) out.
+//! Each leg locks via NTT and atomically publishes the outbound VAA to
+//! `flow.recipient`. Closing the flow PDA returns rent and blocks replay.
+
 use anchor_lang::prelude::*;
 use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
 
 use crate::constants::{
-    CONFIG_SEED, FLOW_OUTBOUND_SEED, FOGO_WORMHOLE_CHAIN_ID, NTT_RELEASE_WORMHOLE_OUTBOUND_IX,
-    NTT_TRANSFER_LOCK_IX, NTT_USDC_PROGRAM_ID, RELAYER_SEED,
+    CONFIG_SEED, FOGO_WORMHOLE_CHAIN_ID, NTT_RELEASE_WORMHOLE_OUTBOUND_IX, NTT_TRANSFER_LOCK_IX,
+    RELAYER_SEED,
 };
 use crate::cpi::{approve_ntt_session_authority, invoke_relayer_signed};
 use crate::error::RelayerError;
@@ -11,30 +18,31 @@ use crate::events::Sent;
 use crate::ntt::{derive_session_authority, NttReleaseOutboundArgs, NttTransferArgs};
 use crate::state::{Direction, Flow, FlowStatus, RelayerConfig};
 
-/// Lock USDC via NTT and atomically publish the outbound VAA to
-/// `flow.recipient`. Permissionless; PDA close returns rent and
-/// blocks replay.
-///
 /// `transfer_lock_account_count` partitions `remaining_accounts`:
 ///   `[..N]` → NTT `transfer_lock`
 ///   `[N..]` → NTT `release_wormhole_outbound` (atomic VAA emission;
-///             without it the OutboxItem queues without a VAA and the
-///             user's USDC.s never lands on FOGO — mirrors
-///             `lock_onyc.rs`'s atomic-emission pattern).
+///             without it the OutboxItem queues without a VAA).
 pub fn handler<'info>(
-    ctx: Context<'info, SendUsdcToUser<'info>>,
+    ctx: Context<'info, Send<'info>>,
     transfer_lock_account_count: u8,
 ) -> Result<()> {
-    let flow = &mut ctx.accounts.outflight_flow;
+    let direction = ctx.accounts.flow.direction;
     require!(
-        flow.status == FlowStatus::Swapped,
+        ctx.accounts.flow.status == FlowStatus::Swapped,
         RelayerError::FlowStatusMismatch
     );
 
-    let amount = flow.amount;
+    let amount = ctx.accounts.flow.amount;
     require!(amount > 0, RelayerError::ZeroAmountFlow);
 
-    let recipient = flow.recipient;
+    let recipient = ctx.accounts.flow.recipient;
+    let ntt_program = crate::state::send_ntt_program(direction);
+
+    // Deposit pushes the asset out; withdraw pushes the base out.
+    let from_ata = match direction {
+        Direction::Deposit => ctx.accounts.asset_ata.to_account_info(),
+        Direction::Withdraw => ctx.accounts.base_ata.to_account_info(),
+    };
 
     let transfer_args = NttTransferArgs {
         amount,
@@ -45,7 +53,7 @@ pub fn handler<'info>(
 
     // NTT binds session-authority to a hash of the transfer args.
     let (session_authority, _) = derive_session_authority(
-        &NTT_USDC_PROGRAM_ID,
+        &ntt_program,
         &ctx.accounts.relayer_authority.key(),
         &transfer_args,
     );
@@ -54,7 +62,7 @@ pub fn handler<'info>(
 
     approve_ntt_session_authority(
         &ctx.accounts.token_program.to_account_info(),
-        &ctx.accounts.base_ata.to_account_info(),
+        &from_ata,
         &ctx.accounts.relayer_authority.to_account_info(),
         bump,
         session_authority,
@@ -62,10 +70,8 @@ pub fn handler<'info>(
         amount,
     )?;
 
-    let authority = ctx.accounts.relayer_authority.to_account_info();
-
     // Split AFTER pre-CPI checks so failure-path tests with stub
-    // remaining_accounts trip those errors first. Mirrors lock_onyc.rs.
+    // remaining_accounts trip those errors first.
     let split = transfer_lock_account_count as usize;
     require!(
         ctx.remaining_accounts.len() > split,
@@ -73,8 +79,10 @@ pub fn handler<'info>(
     );
     let (transfer_lock_accs, release_accs) = ctx.remaining_accounts.split_at(split);
 
+    let authority = ctx.accounts.relayer_authority.to_account_info();
+
     invoke_relayer_signed(
-        NTT_USDC_PROGRAM_ID,
+        ntt_program,
         &NTT_TRANSFER_LOCK_IX,
         &transfer_args,
         transfer_lock_accs,
@@ -82,12 +90,11 @@ pub fn handler<'info>(
         bump,
     )?;
 
-    // Atomic VAA emission. Without this the OutboxItem queues without
-    // a Wormhole message, leaving the user's USDC stranded in NTT
-    // custody on Solana with no VAA for FOGO to redeem against.
-    // Passthrough: release CPI doesn't reserve a relayer-authority signer slot.
+    // Atomic VAA emission. NTT separates queue (transfer_lock) from
+    // attestation (release_wormhole_outbound); doing both here closes
+    // the "OutboxItem queued but never released" failure mode.
     invoke_relayer_signed(
-        NTT_USDC_PROGRAM_ID,
+        ntt_program,
         &NTT_RELEASE_WORMHOLE_OUTBOUND_IX,
         &NttReleaseOutboundArgs {
             revert_on_delay: false,
@@ -98,10 +105,10 @@ pub fn handler<'info>(
     )?;
 
     emit!(Sent {
-        flow: ctx.accounts.outflight_flow.key(),
+        flow: ctx.accounts.flow.key(),
         ntt_inbox_item: ctx.accounts.ntt_inbox_item.key(),
         recipient,
-        direction: Direction::Withdraw,
+        direction,
         amount,
     });
 
@@ -109,7 +116,7 @@ pub fn handler<'info>(
 }
 
 #[derive(Accounts)]
-pub struct SendUsdcToUser<'info> {
+pub struct Send<'info> {
     #[account(mut)]
     pub payer: Signer<'info>,
 
@@ -117,6 +124,7 @@ pub struct SendUsdcToUser<'info> {
         seeds = [CONFIG_SEED],
         bump = relayer_config.bump,
         has_one = base_mint,
+        has_one = asset_mint,
     )]
     pub relayer_config: Account<'info, RelayerConfig>,
 
@@ -125,6 +133,7 @@ pub struct SendUsdcToUser<'info> {
     pub relayer_authority: UncheckedAccount<'info>,
 
     pub base_mint: InterfaceAccount<'info, Mint>,
+    pub asset_mint: InterfaceAccount<'info, Mint>,
 
     #[account(
         mut,
@@ -134,19 +143,27 @@ pub struct SendUsdcToUser<'info> {
     )]
     pub base_ata: InterfaceAccount<'info, TokenAccount>,
 
+    #[account(
+        mut,
+        associated_token::mint = asset_mint,
+        associated_token::authority = relayer_authority,
+        associated_token::token_program = token_program,
+    )]
+    pub asset_ata: InterfaceAccount<'info, TokenAccount>,
+
     /// CHECK: seed material only; validated transitively via the flow PDA.
     pub ntt_inbox_item: UncheckedAccount<'info>,
 
     #[account(
         mut,
         close = rent_destination,
-        seeds = [FLOW_OUTBOUND_SEED, ntt_inbox_item.key().as_ref()],
-        bump = outflight_flow.bump,
+        seeds = [crate::state::flow_seed(flow.direction), ntt_inbox_item.key().as_ref()],
+        bump = flow.bump,
     )]
-    pub outflight_flow: Account<'info, Flow>,
+    pub flow: Account<'info, Flow>,
 
     /// CHECK: pinned to the flow PDA's stored `payer`; receives rent refund.
-    #[account(mut, address = outflight_flow.payer)]
+    #[account(mut, address = flow.payer)]
     pub rent_destination: UncheckedAccount<'info>,
 
     pub token_program: Interface<'info, TokenInterface>,

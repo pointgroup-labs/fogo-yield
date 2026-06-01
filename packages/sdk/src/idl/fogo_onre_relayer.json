@@ -4,11 +4,11 @@
     "name": "fogo_onre_relayer",
     "version": "0.1.4",
     "spec": "0.1.0",
-    "description": "Fogo OnRe relayer — stateless PDA-custody bridge between OnRe and Wormhole NTT on Solana",
+    "description": "Fogo OnRe relayer \u2014 stateless PDA-custody bridge between OnRe and Wormhole NTT on Solana",
     "repository": "https://github.com/pointgroup-labs/fogo-onre"
   },
   "docs": [
-    "Cross-chain relayer: USDC.s on FOGO ↔ ONyc on Solana, both legs over",
+    "Cross-chain relayer: USDC.s on FOGO \u2194 ONyc on Solana, both legs over",
     "Wormhole NTT. Lets FOGO users hold OnRe's ONyc yield exposure without",
     "leaving FOGO."
   ],
@@ -140,7 +140,7 @@
         {
           "name": "base_ata",
           "docs": [
-            "Sweep destination — long-lived relayer-authority USDC ATA."
+            "Sweep destination \u2014 long-lived relayer-authority USDC ATA."
           ],
           "writable": true,
           "pda": {
@@ -300,7 +300,7 @@
             "No `#[account(owner = ...)]` here: on a fresh claim NTT redeem",
             "creates this account, so a pre-handler owner constraint would",
             "fail every first-time claim. The owner check runs in",
-            "`validate_skip_path_inbox_item` — the only path where forgery is",
+            "`validate_skip_path_inbox_item` \u2014 the only path where forgery is",
             "possible (no NTT CPI runs)."
           ]
         },
@@ -921,6 +921,224 @@
       ]
     },
     {
+      "name": "send",
+      "docs": [
+        "Route-agnostic outbound send. Routes on `flow.direction`: deposit",
+        "pushes asset (ONyc) out, withdraw pushes base (USDC) out, each via NTT",
+        "`transfer_lock` + atomic `release_wormhole_outbound`. Replaces",
+        "`lock_onyc` and `send_usdc_to_user`. `transfer_lock_account_count`",
+        "splits `remaining_accounts` between the two NTT CPIs."
+      ],
+      "discriminator": [
+        102,
+        251,
+        20,
+        187,
+        65,
+        75,
+        12,
+        69
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "relayer_config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  108,
+                  97,
+                  121,
+                  101,
+                  114,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "relayer_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  108,
+                  97,
+                  121,
+                  101,
+                  114
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "base_mint",
+          "relations": [
+            "relayer_config"
+          ]
+        },
+        {
+          "name": "asset_mint",
+          "relations": [
+            "relayer_config"
+          ]
+        },
+        {
+          "name": "base_ata",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "relayer_authority"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "base_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "asset_ata",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "relayer_authority"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "asset_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "ntt_inbox_item"
+        },
+        {
+          "name": "flow",
+          "writable": true
+        },
+        {
+          "name": "rent_destination",
+          "writable": true
+        },
+        {
+          "name": "token_program"
+        }
+      ],
+      "args": [
+        {
+          "name": "transfer_lock_account_count",
+          "type": "u8"
+        }
+      ]
+    },
+    {
       "name": "send_usdc_to_user",
       "docs": [
         "Lock USDC via NTT and atomically emit the outbound VAA back to",
@@ -1097,9 +1315,504 @@
       ]
     },
     {
+      "name": "swap",
+      "docs": [
+        "Permissionless, route-agnostic swap. Routes on `flow.direction`:",
+        "deposit swaps base\u2192asset (fee from the asset output), withdraw swaps",
+        "asset\u2192base (fee from the asset input). Replaces `swap_usdc_to_onyc`",
+        "and `swap_onyc_to_usdc`."
+      ],
+      "discriminator": [
+        248,
+        198,
+        158,
+        145,
+        225,
+        117,
+        135,
+        200
+      ],
+      "accounts": [
+        {
+          "name": "relayer_config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  108,
+                  97,
+                  121,
+                  101,
+                  114,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "relayer_authority",
+          "docs": [
+            "and swap CPI. Reach bounded by the post-CPI ATA assertions."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  108,
+                  97,
+                  121,
+                  101,
+                  114
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "base_mint",
+          "relations": [
+            "relayer_config"
+          ]
+        },
+        {
+          "name": "asset_mint",
+          "relations": [
+            "relayer_config"
+          ]
+        },
+        {
+          "name": "base_ata",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "relayer_authority"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "base_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "asset_ata",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "relayer_authority"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "asset_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "fee_vault",
+          "docs": [
+            "Fee destination \u2014 always denominated in the asset (ONyc) token."
+          ],
+          "writable": true,
+          "relations": [
+            "relayer_config"
+          ]
+        },
+        {
+          "name": "ntt_inbox_item"
+        },
+        {
+          "name": "flow",
+          "writable": true
+        },
+        {
+          "name": "onre_offer",
+          "docs": [
+            "it as the OnRe Offer PDA via read_offer_nav_price."
+          ]
+        },
+        {
+          "name": "swap_program",
+          "docs": [
+            "not program identity."
+          ]
+        },
+        {
+          "name": "swap_delegate",
+          "docs": [
+            "`relayer_authority` as a sentinel for owner-signed routers (OnRe)."
+          ]
+        },
+        {
+          "name": "token_program"
+        }
+      ],
+      "args": [
+        {
+          "name": "swap_ix_data",
+          "type": "bytes"
+        }
+      ]
+    },
+    {
+      "name": "receive",
+      "docs": [
+        "Redeem an inbound NTT VAA (deposit: base/USDC, withdraw: asset/ONyc),",
+        "create the `Flow` receipt. Direction selects the NTT manager + flow seed."
+      ],
+      "discriminator": [
+        86,
+        17,
+        255,
+        171,
+        17,
+        17,
+        187,
+        219
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "relayer_config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  108,
+                  97,
+                  121,
+                  101,
+                  114,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "relayer_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  108,
+                  97,
+                  121,
+                  101,
+                  114
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "recv_mint",
+          "docs": [
+            "The received token's mint. Pinned in-handler to the direction-selected",
+            "config mint (base for deposit, asset for withdraw)."
+          ]
+        },
+        {
+          "name": "recv_ata",
+          "docs": [
+            "Sweep destination \u2014 long-lived relayer-authority ATA for recv_mint."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "relayer_authority"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "recv_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "user_wallet"
+        },
+        {
+          "name": "user_inbox_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  117,
+                  115,
+                  101,
+                  114,
+                  95,
+                  105,
+                  110,
+                  98,
+                  111,
+                  120
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "user_wallet"
+              }
+            ]
+          }
+        },
+        {
+          "name": "user_inbox_ata",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "user_inbox_authority"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "recv_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "ntt_inbox_item"
+        },
+        {
+          "name": "ntt_transceiver_message"
+        },
+        {
+          "name": "ntt_program"
+        },
+        {
+          "name": "flow",
+          "writable": true
+        },
+        {
+          "name": "token_program"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "direction",
+          "type": {
+            "defined": {
+              "name": "Direction"
+            }
+          }
+        },
+        {
+          "name": "redeem_accounts_len",
+          "type": "u8"
+        }
+      ]
+    },
+    {
       "name": "swap_onyc_to_usdc",
       "docs": [
-        "Permissionless: convert outbound flow's ONyc → USDC via any swap",
+        "Permissionless: convert outbound flow's ONyc \u2192 USDC via any swap",
         "program under NAV-anchored slippage protection. Withdraw fee is",
         "taken in ONyc up front, the post-fee remainder swapped under a",
         "bounded SPL `Approve` to `swap_delegate`. The swap CPI is signed by",
@@ -1297,7 +2010,7 @@
         {
           "name": "fee_vault",
           "docs": [
-            "Fee destination — the ONyc token account configured at",
+            "Fee destination \u2014 the ONyc token account configured at",
             "`initialize` / `configure` time (pinned via `has_one`). Receives",
             "the withdraw-fee transfer directly; no derived child ATA."
           ],
@@ -1675,7 +2388,7 @@
         {
           "name": "asset_ata",
           "docs": [
-            "Sweep destination — long-lived relayer-authority ONyc ATA."
+            "Sweep destination \u2014 long-lived relayer-authority ONyc ATA."
           ],
           "writable": true,
           "pda": {
@@ -1835,7 +2548,7 @@
             "No `#[account(owner = ...)]` here: on a fresh unlock NTT redeem",
             "creates this account, so a pre-handler owner constraint would fail",
             "every first-time unlock. The owner check runs in",
-            "`validate_skip_path_inbox_item` — the only path where forgery is",
+            "`validate_skip_path_inbox_item` \u2014 the only path where forgery is",
             "possible (no NTT CPI runs)."
           ]
         },
@@ -2079,73 +2792,88 @@
     },
     {
       "code": 6024,
-      "name": "OnycConsumedMismatch",
-      "msg": "Post-CPI ONyc consumed does not equal the bounded Approve amount"
-    },
-    {
-      "code": 6025,
-      "name": "RedeemSlippageBelowFloor",
-      "msg": "Post-swap USDC delta is below the NAV-derived slippage floor"
-    },
-    {
-      "code": 6026,
       "name": "OnreNoActiveVector",
       "msg": "No active OnRe pricing vector for the current clock"
     },
     {
-      "code": 6027,
+      "code": 6025,
       "name": "OnreNavOverflow",
       "msg": "Overflow in OnRe NAV computation"
     },
     {
-      "code": 6028,
+      "code": 6026,
       "name": "OnreOfferTooShort",
       "msg": "OnRe Offer account data is shorter than the pinned layout"
     },
     {
-      "code": 6029,
+      "code": 6027,
       "name": "OnreOfferTokenInMintMismatch",
       "msg": "OnRe Offer token_in_mint does not match relayer_config.usdc_mint"
     },
     {
-      "code": 6030,
+      "code": 6028,
       "name": "OnreOfferTokenOutMintMismatch",
       "msg": "OnRe Offer token_out_mint does not match relayer_config.onyc_mint"
     },
     {
-      "code": 6031,
+      "code": 6029,
       "name": "OnreOfferOwnerMismatch",
       "msg": "onre_offer account owner is not the OnRe program — handler refuses to read a foreign account as a pricing oracle"
     },
     {
-      "code": 6032,
+      "code": 6030,
       "name": "OnreOfferAddressMismatch",
       "msg": "onre_offer address does not match the deposit Offer PDA derived from (usdc_mint, onyc_mint)"
     },
     {
-      "code": 6033,
+      "code": 6031,
       "name": "OnreInvalidSlippageBps",
       "msg": "MAX_SLIPPAGE_BPS is misconfigured (> 10_000) — refusing to compute a zero floor"
     },
     {
-      "code": 6034,
+      "code": 6032,
       "name": "SlippageBpsTooHigh",
       "msg": "Configured slippage_bps exceeds MAX_SLIPPAGE_BPS ceiling"
     },
     {
+      "code": 6033,
+      "name": "AtaAuthorityTampered",
+      "msg": "Relayer ATA authority/delegate/close_authority was mutated by the swap CPI"
+    },
+    {
+      "code": 6034,
+      "name": "BadPriceOracle",
+      "msg": "price_oracle account does not match relayer_config.price_oracle (or it is unset)"
+    },
+    {
       "code": 6035,
-      "name": "DepositSlippageBelowFloor",
-      "msg": "Post-swap ONyc delta is below the NAV-derived deposit floor"
+      "name": "InputConsumedMismatch",
+      "msg": "swap consumed an input amount different from the flow amount"
     },
     {
       "code": 6036,
-      "name": "UsdcConsumedMismatch",
-      "msg": "Post-CPI USDC consumed does not equal the flow's input amount"
+      "name": "OutputBelowFloor",
+      "msg": "swap output fell below the NAV-anchored slippage floor"
     },
     {
       "code": 6037,
-      "name": "AtaAuthorityTampered",
-      "msg": "Relayer ATA authority/delegate/close_authority was mutated by the swap CPI"
+      "name": "SwapAccountNotAllowed",
+      "msg": "a swap account aliases relayer custody (fee_vault/config/flow or a relayer_authority-owned token account)"
+    },
+    {
+      "code": 6038,
+      "name": "RelayerAuthorityTampered",
+      "msg": "swap CPI drained, reassigned, or reallocated the relayer_authority PDA"
+    },
+    {
+      "code": 6039,
+      "name": "BadNttProgram",
+      "msg": "ntt_program / transceiver owner does not match the direction-selected NTT manager"
+    },
+    {
+      "code": 6040,
+      "name": "BadReceiveMint",
+      "msg": "recv_mint does not match the direction-selected config mint"
     }
   ],
   "types": [
@@ -2168,7 +2896,7 @@
       "docs": [
         "One-shot receipt binding an inbound bridge message to a FOGO wallet.",
         "Replay protection lives in the per-VAA NTT claim account. Field set",
-        "is byte-stable — older PDAs must keep deserializing."
+        "is byte-stable \u2014 older PDAs must keep deserializing."
       ],
       "type": {
         "kind": "struct",
@@ -2301,7 +3029,7 @@
         "",
         "Layout discipline: all fixed-size fields (including `slippage_bps` and the",
         "`reserved` block) come before the two variable-length `Option`s, which stay",
-        "last. Future additive fields are carved out of `reserved` — same total size,",
+        "last. Future additive fields are carved out of `reserved` \u2014 same total size,",
         "so they need no realloc and no migration (old zero bytes read as the new",
         "field's default)."
       ],
@@ -2351,8 +3079,8 @@
           {
             "name": "price_oracle",
             "docs": [
-              "Config-pinned OnRe `Offer` PDA — the swap value-floor oracle.",
-              "Zeroed in legacy accounts ⇒ `Pubkey::default()` ⇒ fail-closed",
+              "Config-pinned OnRe `Offer` PDA \u2014 the swap value-floor oracle.",
+              "Zeroed in legacy accounts \u21d2 `Pubkey::default()` \u21d2 fail-closed",
               "(`BadPriceOracle`) until `configure` sets it."
             ],
             "type": "pubkey"
@@ -2478,7 +3206,7 @@
       "name": "INTENT_TRANSFER_PROGRAM_ID",
       "docs": [
         "SECURITY-CRITICAL CROSS-PROGRAM PIN (deposit flow trust chain):",
-        "1. webapp signs an intent → recipient = per-user inbox PDA on Solana",
+        "1. webapp signs an intent \u2192 recipient = per-user inbox PDA on Solana",
         "2. FOGO `intent_transfer.bridge_ntt_tokens` bridges via NTT;",
         "the from-ATA owner is the singleton `[INTENT_TRANSFER_SETTER_SEED]`",
         "PDA under `INTENT_TRANSFER_PROGRAM_ID`",
@@ -2488,7 +3216,7 @@
         "",
         "If `intent_transfer` rotates its setter seed OR redeploys at a new program",
         "ID, this relayer must redeploy in lockstep. DO NOT make these",
-        "runtime-rotatable via `RelayerConfig` — a stolen authority key could",
+        "runtime-rotatable via `RelayerConfig` \u2014 a stolen authority key could",
         "otherwise redirect the entire deposit flow."
       ],
       "type": "pubkey",
@@ -2507,7 +3235,7 @@
     {
       "name": "ONRE_INTENT_PROGRAM_ID",
       "docs": [
-        "SECURITY-CRITICAL CROSS-PROGRAM PIN — second member of the permanent",
+        "SECURITY-CRITICAL CROSS-PROGRAM PIN \u2014 second member of the permanent",
         "{OnRe, Fogo} setter allowlist. This is the OnRe fork of Fogo's",
         "`intent_transfer` (same source, `declare_id!` only). Compile-time",
         "constant by design: a runtime-rotatable pin would let a stolen",
