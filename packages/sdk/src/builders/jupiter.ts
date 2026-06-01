@@ -52,13 +52,13 @@ export interface JupiterRouteResult {
   addressLookupTables: PublicKey[]
   /**
    * Jupiter v6 program id. Always `JUPITER_V6_PROGRAM_ID` (validated above)
-   * — surfaced so the router-agnostic `swap_onyc_to_usdc` handler can be
+   * — surfaced so the router-agnostic `swap` handler can be
    * fed the right `swap_program` without the caller knowing it's Jupiter.
    */
   programId: PublicKey
   /**
    * Jupiter's `programAuthority` PDA — the SPL delegate that the on-chain
-   * Approve in `swap_onyc_to_usdc` is bounded to. Taken from account index
+   * Approve in `swap` is bounded to. Taken from account index
    * 1 of `shared_accounts_route` (the IDL's `programAuthority` slot).
    */
   swapDelegate: PublicKey
@@ -150,7 +150,7 @@ export async function fetchJupiterRoute(p: JupiterRouteParams): Promise<JupiterR
     programId: JUPITER_V6_PROGRAM_ID,
     // Account index 1 in Jupiter v6 `shared_accounts_route` is the
     // `programAuthority` PDA — the SPL delegate that pulls ONyc out of
-    // the relayer's ATA. `swap_onyc_to_usdc` bounds its Approve to
+    // the relayer's ATA. `swap` bounds its Approve to
     // exactly this key for exactly `net_onyc`.
     swapDelegate: routeAccounts[1].pubkey,
   }

@@ -1,7 +1,6 @@
-//! PDA-signed CPI helpers. Destination program ID and instruction
-//! discriminator are pinned at the call site, so a compromised operator key
-//! can only influence *arguments* and forwarded `remaining_accounts` — never
-//! the target program or method.
+//! PDA-signed CPI helpers. Target program ID and discriminator are pinned at
+//! the call site, so a compromised operator key can influence only *arguments*
+//! and forwarded `remaining_accounts` — never the target program or method.
 
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::instruction::{AccountMeta, Instruction};

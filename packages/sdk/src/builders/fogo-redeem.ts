@@ -19,7 +19,7 @@ import {
  * `redeem` (writes the inbox item) + `release_inbound_{mint,unlock}`
  * (mints or unlocks ONyc to the user's FOGO ATA).
  *
- * Symmetric to the Solana-side relayer flow: the relayer's `claim_usdc`
+ * Symmetric to the Solana-side relayer flow: the relayer's `receive`
  * CPIs into `redeem` + `release_inbound_unlock` for incoming USDC. Here
  * we do the same shape directly (no relayer in the loop) for incoming
  * ONyc on FOGO.

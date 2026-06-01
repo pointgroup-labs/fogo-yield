@@ -1502,8 +1502,7 @@ describe('relayer', () => {
       const [authorityPda] = findAuthorityPda(client.program.programId)
       mintTo(svm, authority, baseMint.publicKey, authorityPda, 500_000)
 
-      // Minimal remaining_accounts omit the NTT session-authority PDA the
-      // Approve step needs, so the handler trips `MissingSessionAuthority`
+      // Omitting the NTT session-authority PDA trips `MissingSessionAuthority`
       // only after status, ATA, and rent-destination checks pass cleanly.
       await expectError(
         () =>

@@ -184,6 +184,11 @@ describe('offer mainnet fixture parity', () => {
     const data = Uint8Array.from(Buffer.from(raw.account.data[0], 'base64'))
     expect(data.length).toBe(ONRE_OFFER_ACCOUNT_SIZE)
 
+    // Lock the Rust `offer_layout_matches_fixture` bin to this canonical
+    // JSON: a mainnet refresh must regenerate onre-offer.bin in lockstep.
+    const binPath = resolve(__dirname, '../tests/fixtures/accounts/onre-offer.bin')
+    expect(Buffer.from(readFileSync(binPath))).toEqual(Buffer.from(data))
+
     const active = parseActiveOfferVector(data, 2_000_000_000n)
     expect(active.start_time).toBe(1_773_878_400n)
     expect(active.base_price).toBe(1_085_708_975n)

@@ -60,6 +60,15 @@ Selected option: ___________________________
 Multisig address (if applicable):___________________________
 Signer roster (if applicable): ___________________________
 
+- [ ] **Gate every upgrade on zero in-flight flows.** A `receive` →
+      `swap` → `send` chain spans multiple transactions and leaves a
+      live `Flow` PDA between legs. Shipping a new `.so` mid-chain can
+      strand custody (relayer holds swept tokens with no matching
+      handler) or break the `Flow` layout an in-progress leg expects.
+      Before any upgrade, confirm there are **no in-flight `Flow` PDAs**
+      (none in `Received` or `Swapped`) — drain them to terminal state
+      or wait them out first.
+
 ### 2b. Config authority
 
 The `config authority` (set at `initialize`, rotatable only via `configure`)

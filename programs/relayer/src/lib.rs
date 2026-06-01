@@ -59,10 +59,7 @@ pub mod fogo_onre_relayer {
     /// deposit swaps base→asset (fee from the asset output), withdraw swaps
     /// asset→base (fee from the asset input). Replaces `swap_usdc_to_onyc`
     /// and `swap_onyc_to_usdc`.
-    pub fn swap<'info>(
-        ctx: Context<'info, Swap<'info>>,
-        swap_ix_data: Vec<u8>,
-    ) -> Result<()> {
+    pub fn swap<'info>(ctx: Context<'info, Swap<'info>>, swap_ix_data: Vec<u8>) -> Result<()> {
         instructions::swap::handler(ctx, swap_ix_data)
     }
 

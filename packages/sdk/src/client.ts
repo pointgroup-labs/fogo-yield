@@ -1,6 +1,6 @@
 import type { Provider } from '@anchor-lang/core'
 import type { AccountMeta, PublicKey } from '@solana/web3.js'
-import type { NttRedeemContext, OnreSwapContext } from './builders'
+import type { NttRedeemContext } from './builders'
 import type { FogoOnreRelayer } from './types/fogo_onre_relayer'
 import { Buffer } from 'node:buffer'
 import { BN, Program } from '@anchor-lang/core'
@@ -15,11 +15,9 @@ import {
   buildNttRedeemReleaseAccounts,
   buildNttReleaseWormholeOutboundAccountList,
   buildNttTransferLockAccountList,
-  buildOnreSwapRemainingAccounts,
-  findOnreOfferPda,
   NTT_TRANSFER_LOCK_ACCOUNT_COUNT,
 } from './builders'
-import { FOGO_WORMHOLE_CHAIN_ID, NTT_ONYC_PROGRAM_ID, NTT_USDC_PROGRAM_ID, ONRE_PROGRAM_ID } from './constants'
+import { FOGO_WORMHOLE_CHAIN_ID, NTT_ONYC_PROGRAM_ID, NTT_USDC_PROGRAM_ID } from './constants'
 import IDL from './idl/fogo_onre_relayer.json' with { type: 'json' }
 import {
   findAuthorityPda,
@@ -134,361 +132,8 @@ export class RelayerClient {
   }
 
   /**
-   * Claim bridged USDC.s via NTT (`redeem` + `release_inbound_unlock`) and
-   * create an inflight Flow PDA bound to the per-VAA `ntt_inbox_item`.
-   * Mirrors `unlockOnyc` but on the USDC mint.
-   */
-  claimUsdc(params: {
-    payer: PublicKey
-    /**
-     * Originating FOGO wallet (= same pubkey on Solana). Drives the
-     * `[user_inbox, user_wallet]` PDA derivation that scopes the
-     * release_inbound destination ATA + sweep authority. Must match the
-     * wallet that signed the FOGO bridge intent.
-     */
-    userWallet: PublicKey
-    baseMint: PublicKey
-    nttInboxItem: PublicKey
-    nttTransceiverMessage: PublicKey
-    /**
-     * NTT redeem+release context (custody account from NTT config, plus the
-     * USDC.s transceiver address). When omitted (failure-path tests) the
-     * caller MUST supply `redeemAccountsLen` and chain `.remainingAccounts`.
-     */
-    ntt?: NttRedeemContext
-    redeemAccountsLen?: number
-  }) {
-    const { inflightFlow } = this.flowPdas(params.nttInboxItem)
-    const { userInboxAuthority, userInboxAta } = this.userInboxBindings(
-      params.userWallet,
-      params.baseMint,
-    )
-    const built = params.ntt
-      ? buildNttRedeemReleaseAccounts({
-          mint: params.baseMint,
-          nttInboxItem: params.nttInboxItem,
-          nttTransceiverMessage: params.nttTransceiverMessage,
-          ntt: params.ntt,
-          programId: NTT_USDC_PROGRAM_ID,
-          authority: this.authorityPda,
-          // Release lands in the per-user inbox ATA, not relayer custody;
-          // the handler sweeps the delta into custody after release.
-          recipientAta: userInboxAta,
-        })
-      : null
-
-    const builder = this.program.methods
-      .claimUsdc(built ? built.redeemAccountsLen : (params.redeemAccountsLen ?? 0))
-      .accountsPartial({
-        payer: params.payer,
-        relayerConfig: this.configPda,
-        relayerAuthority: this.authorityPda,
-        baseMint: params.baseMint,
-        baseAta: this.relayerAta(params.baseMint),
-        userWallet: params.userWallet,
-        userInboxAuthority,
-        userInboxAta,
-        nttInboxItem: params.nttInboxItem,
-        nttTransceiverMessage: params.nttTransceiverMessage,
-        inflightFlow,
-        tokenProgram: TOKEN_PROGRAM_ID,
-        systemProgram: SystemProgram.programId,
-      })
-
-    return built ? builder.remainingAccounts(built.remainingAccounts) : builder
-  }
-
-  /**
-   * Swap USDC to ONyc via OnRe (deposit leg). The SDK assembles OnRe's
-   * 22-entry `remainingAccounts` list when `onre` is supplied.
-   *
-   * `feeVault` is explicit even though Anchor's relation resolver
-   * could derive it from `relayerConfig.has_one` — silent resolution
-   * depends on Anchor version + IDL metadata staying intact across
-   * regenerations. Pass it in to make instruction construction stable
-   * across upgrades.
-   */
-  swapUsdcToOnyc(params: {
-    baseMint: PublicKey
-    assetMint: PublicKey
-    nttInboxItem: PublicKey
-    feeVault: PublicKey
-    onre?: OnreSwapContext
-  }) {
-    const { inflightFlow } = this.flowPdas(params.nttInboxItem)
-    const onreProgramId = params.onre?.deployment?.programId ?? ONRE_PROGRAM_ID
-    const [onreOffer] = findOnreOfferPda(params.baseMint, params.assetMint, onreProgramId)
-    const builder = this.program.methods
-      .swapUsdcToOnyc()
-      .accountsPartial({
-        relayerConfig: this.configPda,
-        relayerAuthority: this.authorityPda,
-        baseMint: params.baseMint,
-        assetMint: params.assetMint,
-        baseAta: this.relayerAta(params.baseMint),
-        assetAta: this.relayerAta(params.assetMint),
-        feeVault: params.feeVault,
-        nttInboxItem: params.nttInboxItem,
-        onreOffer,
-        inflightFlow,
-        tokenProgram: TOKEN_PROGRAM_ID,
-      })
-
-    if (!params.onre) {
-      return builder
-    }
-    return builder.remainingAccounts(
-      buildOnreSwapRemainingAccounts({
-        tokenInMint: params.baseMint,
-        tokenOutMint: params.assetMint,
-        userTokenInAccount: this.relayerAta(params.baseMint),
-        userTokenOutAccount: this.relayerAta(params.assetMint),
-        user: this.authorityPda,
-        ctx: params.onre,
-      }),
-    )
-  }
-
-  /**
-   * Lock ONyc via NTT and atomically publish the outbound Wormhole VAA
-   * (transfer_lock + release_wormhole_outbound, both PDA-signed). Sends
-   * ONyc to `flow.recipient`. Closes the inflight Flow PDA.
-   *
-   * Caller MUST fetch the flow first to obtain `flowAmount` /
-   * `flowRecipient` (needed for the NTT `session_authority` derivation),
-   * supply a fresh `outboxItem` keypair (also via `.signers([])`), and
-   * supply the NTT v3 `release` accounts. After this PR there is no
-   * "lock without release" path — every successful `lock_onyc` emits the
-   * Wormhole VAA atomically.
-   *
-   * The remaining-accounts layout is `[...transferLock(NTT_TRANSFER_LOCK_ACCOUNT_COUNT), ...release(15)]`
-   * for a total of 29; the on-chain handler uses
-   * `NTT_TRANSFER_LOCK_ACCOUNT_COUNT` to split.
-   *
-   * Failure-path callers (deliberately broken `remainingAccounts` for
-   * negative tests) MUST omit `flowAmount` / `flowRecipient` / `outboxItem`
-   * — the SDK returns the bare builder so they can attach their own
-   * `remainingAccounts` to exercise pre-CPI guards.
-   */
-  lockOnyc(params: {
-    payer: PublicKey
-    assetMint: PublicKey
-    nttInboxItem: PublicKey
-    rentDestination: PublicKey
-    flowAmount?: BN | bigint
-    flowRecipient?: Uint8Array
-    outboxItem?: PublicKey
-    /**
-     * NTT v3 release-publish accounts. REQUIRED whenever `flowAmount` /
-     * `flowRecipient` / `outboxItem` are all supplied — there is no
-     * "lock-only" code path post-merge.
-     */
-    release?: {
-      wormholeProgram: PublicKey
-      wormholeBridge: PublicKey
-      wormholeFeeCollector: PublicKey
-      wormholeSequence: PublicKey
-      outboxItemSigner: PublicKey
-      /** Optional override; defaults to the manager-as-transceiver PDA. */
-      wormholeMessage?: PublicKey
-      emitter?: PublicKey
-    }
-  }) {
-    const { inflightFlow } = this.flowPdas(params.nttInboxItem)
-    const builder = this.program.methods
-      .lockOnyc(NTT_TRANSFER_LOCK_ACCOUNT_COUNT)
-      .accountsPartial({
-        payer: params.payer,
-        relayerConfig: this.configPda,
-        relayerAuthority: this.authorityPda,
-        assetMint: params.assetMint,
-        assetAta: this.relayerAta(params.assetMint),
-        nttInboxItem: params.nttInboxItem,
-        inflightFlow,
-        rentDestination: params.rentDestination,
-        tokenProgram: TOKEN_PROGRAM_ID,
-      })
-
-    if (!params.flowAmount || !params.flowRecipient || !params.outboxItem) {
-      return builder
-    }
-
-    if (!params.release) {
-      throw new Error(
-        'lockOnyc: `release` is required whenever flowAmount/flowRecipient/outboxItem '
-        + 'are supplied. The on-chain handler now CPIs into NTT release_wormhole_outbound '
-        + 'in the same ix as transfer_lock — there is no lock-only path.',
-      )
-    }
-
-    const transferLock = this.transferLockAccounts({
-      mint: params.assetMint,
-      nttProgramId: NTT_ONYC_PROGRAM_ID,
-      outboxItem: params.outboxItem,
-      recipientAddress: params.flowRecipient,
-      amount: toBigInt(params.flowAmount),
-    })
-
-    const releaseAccts = buildNttReleaseWormholeOutboundAccountList({
-      payer: params.payer,
-      nttProgramId: NTT_ONYC_PROGRAM_ID,
-      outboxItem: params.outboxItem,
-      wormholeProgram: params.release.wormholeProgram,
-      wormholeBridge: params.release.wormholeBridge,
-      wormholeFeeCollector: params.release.wormholeFeeCollector,
-      wormholeSequence: params.release.wormholeSequence,
-      outboxItemSigner: params.release.outboxItemSigner,
-      wormholeMessage: params.release.wormholeMessage,
-      emitter: params.release.emitter,
-    })
-
-    return builder.remainingAccounts([...transferLock, ...releaseAccts])
-  }
-
-  /**
-   * Unlock ONyc from NTT (`redeem` + `release_inbound_unlock`) and create
-   * an outflight Flow PDA bound to the per-VAA `ntt_inbox_item`.
-   */
-  unlockOnyc(params: {
-    payer: PublicKey
-    /**
-     * Originating FOGO wallet (= same pubkey on Solana). Drives the
-     * `[user_inbox, user_wallet]` PDA derivation that scopes the
-     * release_inbound destination ATA + sweep authority. Must match the
-     * wallet that signed the FOGO redeem intent.
-     */
-    userWallet: PublicKey
-    assetMint: PublicKey
-    nttInboxItem: PublicKey
-    nttTransceiverMessage: PublicKey
-    ntt?: NttRedeemContext
-    redeemAccountsLen?: number
-  }) {
-    const { outflightFlow } = this.flowPdas(params.nttInboxItem)
-    const { userInboxAuthority, userInboxAta } = this.userInboxBindings(
-      params.userWallet,
-      params.assetMint,
-    )
-    const built = params.ntt
-      ? buildNttRedeemReleaseAccounts({
-          mint: params.assetMint,
-          nttInboxItem: params.nttInboxItem,
-          nttTransceiverMessage: params.nttTransceiverMessage,
-          ntt: params.ntt,
-          programId: NTT_ONYC_PROGRAM_ID,
-          authority: this.authorityPda,
-          // Release lands in the per-user inbox ATA, not relayer custody;
-          // the handler sweeps the recorded amount into custody after release.
-          recipientAta: userInboxAta,
-        })
-      : null
-
-    const builder = this.program.methods
-      .unlockOnyc(built ? built.redeemAccountsLen : (params.redeemAccountsLen ?? 0))
-      .accountsPartial({
-        payer: params.payer,
-        relayerConfig: this.configPda,
-        relayerAuthority: this.authorityPda,
-        assetMint: params.assetMint,
-        assetAta: this.relayerAta(params.assetMint),
-        userWallet: params.userWallet,
-        userInboxAuthority,
-        userInboxAta,
-        nttInboxItem: params.nttInboxItem,
-        nttTransceiverMessage: params.nttTransceiverMessage,
-        outflightFlow,
-        tokenProgram: TOKEN_PROGRAM_ID,
-        systemProgram: SystemProgram.programId,
-      })
-
-    return built ? builder.remainingAccounts(built.remainingAccounts) : builder
-  }
-
-  /**
-   * Send USDC.s back to `flow.recipient` via NTT `transfer_lock` +
-   * `release_wormhole_outbound` (atomic). Closes the outflight Flow PDA.
-   * Mirrors `lockOnyc` on the USDC mint — the on-chain handler now CPIs
-   * into both NTT ix's, so `release` is required whenever `flowAmount` /
-   * `flowRecipient` / `outboxItem` are supplied.
-   */
-  sendUsdcToUser(params: {
-    payer: PublicKey
-    baseMint: PublicKey
-    nttInboxItem: PublicKey
-    rentDestination: PublicKey
-    flowAmount?: BN | bigint
-    flowRecipient?: Uint8Array
-    outboxItem?: PublicKey
-    /**
-     * NTT v3 release-publish accounts. REQUIRED whenever `flowAmount` /
-     * `flowRecipient` / `outboxItem` are all supplied — there is no
-     * "lock-only" code path post-merge.
-     */
-    release?: {
-      wormholeProgram: PublicKey
-      wormholeBridge: PublicKey
-      wormholeFeeCollector: PublicKey
-      wormholeSequence: PublicKey
-      outboxItemSigner: PublicKey
-      /** Optional override; defaults to the manager-as-transceiver PDA. */
-      wormholeMessage?: PublicKey
-      emitter?: PublicKey
-    }
-  }) {
-    const { outflightFlow } = this.flowPdas(params.nttInboxItem)
-    const builder = this.program.methods
-      .sendUsdcToUser(NTT_TRANSFER_LOCK_ACCOUNT_COUNT)
-      .accountsPartial({
-        payer: params.payer,
-        relayerConfig: this.configPda,
-        relayerAuthority: this.authorityPda,
-        baseMint: params.baseMint,
-        baseAta: this.relayerAta(params.baseMint),
-        nttInboxItem: params.nttInboxItem,
-        outflightFlow,
-        rentDestination: params.rentDestination,
-        tokenProgram: TOKEN_PROGRAM_ID,
-      })
-
-    if (!params.flowAmount || !params.flowRecipient || !params.outboxItem) {
-      return builder
-    }
-
-    if (!params.release) {
-      throw new Error(
-        'sendUsdcToUser: `release` is required whenever flowAmount/flowRecipient/outboxItem '
-        + 'are supplied. The on-chain handler now CPIs into NTT release_wormhole_outbound '
-        + 'in the same ix as transfer_lock — there is no lock-only path.',
-      )
-    }
-
-    const transferLock = this.transferLockAccounts({
-      mint: params.baseMint,
-      nttProgramId: NTT_USDC_PROGRAM_ID,
-      outboxItem: params.outboxItem,
-      recipientAddress: params.flowRecipient,
-      amount: toBigInt(params.flowAmount),
-    })
-
-    const releaseAccts = buildNttReleaseWormholeOutboundAccountList({
-      payer: params.payer,
-      nttProgramId: NTT_USDC_PROGRAM_ID,
-      outboxItem: params.outboxItem,
-      wormholeProgram: params.release.wormholeProgram,
-      wormholeBridge: params.release.wormholeBridge,
-      wormholeFeeCollector: params.release.wormholeFeeCollector,
-      wormholeSequence: params.release.wormholeSequence,
-      outboxItemSigner: params.release.outboxItemSigner,
-      wormholeMessage: params.release.wormholeMessage,
-      emitter: params.release.emitter,
-    })
-
-    return builder.remainingAccounts([...transferLock, ...releaseAccts])
-  }
-
-  /**
-   * Route-agnostic outbound send. Merges `lockOnyc` (deposit, pushes ONyc)
-   * and `sendUsdcToUser` (withdraw, pushes USDC). Routes on `direction`:
+   * Route-agnostic outbound send. Routes on `direction`:
+   * deposit pushes ONyc; withdraw pushes USDC. Specifically:
    * deposit locks the asset mint via the ONyc NTT manager + inflight flow;
    * withdraw locks the base mint via the USDC NTT manager + outflight flow.
    * Each leg CPIs `transfer_lock` + `release_wormhole_outbound` atomically.
@@ -583,67 +228,6 @@ export class RelayerClient {
   }
 
   /**
-   * Permissionless ONyc → USDC swap for the outbound (withdraw) leg.
-   * Cranker fetches a quote from any swap program and the on-chain
-   * handler:
-   *   1. deducts the withdraw fee in ONyc to `feeVault` directly (PDA-signed),
-   *   2. derives the slippage floor from OnRe's deposit-side `Offer`
-   *      pricing vector (no caller-supplied `minOut`),
-   *   3. PDA-signs an SPL `Approve` granting `swapDelegate` exactly
-   *      `flow.amount - fee` over `assetAta`,
-   *   4. invokes the swap program under `invoke_signed` (relayer authority
-   *      signs Jupiter's `userTransferAuthority` slot),
-   *   5. asserts post-balances clear the floor, exactly consume the
-   *      delegated amount, and that both relayer ATAs are left pristine
-   *      (owner/delegate/close untouched — defeats PDA-signer hijack),
-   *   6. transitions the flow `Claimed → Swapped` and writes the USDC
-   *      received into `flow.amount` for `send_usdc_to_user` to consume.
-   *
-   * `feeVault` is the ONyc token account configured at `initialize` /
-   * `configure` time (pinned via `has_one` on `relayer_config`) and
-   * receives the fee transfer directly.
-   *
-   * `onreOffer`, `swapProgram`, `swapDelegate` semantics: `onreOffer` is
-   * OnRe's deposit-side Offer PDA (its `token_in_mint == usdc_mint` and
-   * `token_out_mint == onyc_mint` are re-validated on-chain).
-   * `swapDelegate` is the SPL delegate the swap program spends from
-   * `onyc_ata`. For Jupiter `shared_accounts_route` this is the
-   * program-authority PDA (account index 1 of the route); other routers
-   * differ. The SPL Approve auto-clears when `net_onyc` is consumed.
-   */
-  swapOnycToUsdc(params: {
-    assetMint: PublicKey
-    baseMint: PublicKey
-    nttInboxItem: PublicKey
-    feeVault: PublicKey
-    onreOffer: PublicKey
-    swapProgram: PublicKey
-    swapDelegate: PublicKey
-    swapIxData: Uint8Array
-    swapAccounts: AccountMeta[]
-  }) {
-    const { outflightFlow } = this.flowPdas(params.nttInboxItem)
-    return this.program.methods
-      .swapOnycToUsdc(Buffer.from(params.swapIxData))
-      .accountsPartial({
-        relayerConfig: this.configPda,
-        relayerAuthority: this.authorityPda,
-        assetMint: params.assetMint,
-        baseMint: params.baseMint,
-        assetAta: this.relayerAta(params.assetMint),
-        baseAta: this.relayerAta(params.baseMint),
-        feeVault: params.feeVault,
-        nttInboxItem: params.nttInboxItem,
-        outflightFlow,
-        onreOffer: params.onreOffer,
-        swapProgram: params.swapProgram,
-        swapDelegate: params.swapDelegate,
-        tokenProgram: TOKEN_PROGRAM_ID,
-      })
-      .remainingAccounts(params.swapAccounts)
-  }
-
-  /**
    * Permissionless, route-agnostic swap for an in-flight flow. Routes on the
    * persisted `Flow.direction` — no direction arg. Deposit flows swap
    * base→asset (fee from the asset output); withdraw flows swap asset→base
@@ -685,9 +269,9 @@ export class RelayerClient {
   /**
    * Permissionless, route-agnostic inbound NTT receive. Routes on the
    * `direction` arg (deposit: base/USDC manager + inflight flow PDA;
-   * withdraw: asset/ONyc manager + outflight flow PDA). Replaces
-   * `claimUsdc` + `unlockOnyc`. The handler sweeps the recorded amount from
-   * the per-user inbox ATA into relayer custody and creates the Flow receipt.
+   * withdraw: asset/ONyc manager + outflight flow PDA). The handler sweeps
+   * the recorded amount from the per-user inbox ATA into relayer custody
+   * and creates the Flow receipt.
    */
   receive(params: {
     payer: PublicKey
@@ -769,7 +353,7 @@ export class RelayerClient {
 
   /**
    * Shape the 14-account NTT `transfer_lock` argument list. Both
-   * outbound legs (USDC.s on `sendUsdcToUser`, ONyc on `lockOnyc`)
+   * outbound `send` legs (withdraw on USDC.s, deposit on ONyc)
    * pass an identical clump differing only in `mint` and the
    * NTT manager program id, so the relayer authority/from-token
    * derivation is centralised here.
@@ -806,7 +390,7 @@ export class RelayerClient {
   /**
    * Per-user inbox-authority PDA + the ATA owned by it for `mint`.
    *
-   * `claimUsdc` is the only consumer today; extracted so that any future
+   * `receive` is the only consumer today; extracted so that any future
    * inbox-aware instruction (e.g. send-back-to-sender) inherits the
    * canonical derivation without copy-paste drift.
    */

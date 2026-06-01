@@ -37,7 +37,7 @@ export const FOGO_NETWORK
 export const USDC_S_MINT = new PublicKey('uSd2czE61Evaf76RNbq4KPpXnkiL3irdzgLFUMe3NoG')
 
 // Canonical Solana USDC — Solana-side counterpart of USDC.s. Used to
-// derive the OnRe Offer PDA `(usdcMint, onycMint)` for live price reads.
+// derive the OnRe Offer PDA `(baseMint, assetMint)` for live price reads.
 export const SOLANA_USDC_MINT = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v')
 
 // NTT-bridged ONyc on FOGO. Received on deposit, burned on withdraw.

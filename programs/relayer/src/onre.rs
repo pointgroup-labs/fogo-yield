@@ -1,9 +1,4 @@
-//! OnRe instruction arg layouts.
-//!
-//! These mirror the upstream Anchor handler signatures. When OnRe rev's an
-//! instruction's args struct, this is the one file that must change in
-//! lock-step. Discriminators and account-slot indices live next to them in
-//! `constants.rs` for the same reason.
+//! OnRe instruction arg layouts, mirrored from upstream Anchor signatures.
 
 use anchor_lang::prelude::*;
 
@@ -15,21 +10,10 @@ use crate::constants::{
 use crate::error::RelayerError;
 use crate::state::Direction;
 
-#[derive(AnchorSerialize)]
-pub struct OnreTakeOfferArgs {
-    pub amount: u64,
-    pub approval_message: Option<Vec<u8>>,
-}
-
-/// Mirror of `OfferVector` in
-/// `onre-finance/onre-sol/programs/onreapp/src/instructions/offer/offer_state.rs`.
-/// Five back-to-back `u64`s (40 bytes); upstream declares `#[zero_copy]
-/// #[repr(C)]` so layout is well-defined.
-///
-/// `start_time` governs active-vector selection; `base_time` is the
-/// reference moment the price-growth math integrates from. They are
-/// commonly equal but can diverge when a vector is added with a
-/// retroactive `base_time`.
+/// Mirror of upstream OnRe's `OfferVector` (offer_state.rs): five back-to-back
+/// `u64`s, 40 bytes, `#[zero_copy] #[repr(C)]`. `start_time` selects the active
+/// vector; `base_time` is where the price-growth math integrates from (usually
+/// equal, but can diverge on a retroactive `base_time`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct OnreOfferVector {
     pub start_time: u64,
@@ -39,58 +23,47 @@ pub struct OnreOfferVector {
     pub price_fix_duration: u64,
 }
 
-/// Read the active pricing vector for `now` from a serialized OnRe `Offer`
-/// account.
+/// Decode a little-endian `u64` at `off`. Callers operate on a slice already
+/// length-checked to `ONRE_OFFER_ACCOUNT_SIZE`, so indexing cannot panic.
+fn read_u64_le(data: &[u8], off: usize) -> u64 {
+    u64::from_le_bytes(data[off..off + 8].try_into().unwrap())
+}
+
+/// Decode one 40-byte `OfferVector` (five back-to-back `u64`s) at `off`.
+fn read_offer_vector(data: &[u8], off: usize) -> OnreOfferVector {
+    OnreOfferVector {
+        start_time: read_u64_le(data, off),
+        base_time: read_u64_le(data, off + 8),
+        base_price: read_u64_le(data, off + 16),
+        apr: read_u64_le(data, off + 24),
+        price_fix_duration: read_u64_le(data, off + 32),
+    }
+}
+
+/// Active pricing vector for `now`, mirroring OnRe's `find_active_vector_at`:
+/// among slots with `start_time != 0 && start_time <= now`, the largest
+/// `start_time` wins (`OnreNoActiveVector` if none qualify).
 ///
-/// Mirrors OnRe's `find_active_vector_at`: among vectors with
-/// `start_time != 0 && start_time <= now`, picks the one with the
-/// largest `start_time`. Returns `OnreNoActiveVector` if none qualify
-/// (e.g. all slots zeroed, or all vectors are in the future).
-///
-/// Reads exactly `ONRE_OFFER_MAX_VECTORS` slots — the full pinned layout.
-/// If upstream ever *grows* the array, the `ONRE_OFFER_ACCOUNT_SIZE` length
-/// check above and `offer_layout_matches_fixture` would fire first; absent
-/// that, missing a newer (higher-price) vector would select an older,
-/// lower-price one and *under*-state the NAV floor — i.e. weaken
-/// protection, not fail safe. The size pin + fixture tripwire are the guard.
+/// Scans all `ONRE_OFFER_MAX_VECTORS` slots; the `ONRE_OFFER_ACCOUNT_SIZE` pin
+/// and `offer_layout_matches_fixture` guard against upstream growing the array,
+/// which would otherwise under-state the NAV floor.
 pub fn parse_active_offer_vector(data: &[u8], now: u64) -> Result<OnreOfferVector> {
     require!(
         data.len() >= ONRE_OFFER_ACCOUNT_SIZE,
         RelayerError::OnreOfferTooShort
     );
 
-    let mut best: Option<OnreOfferVector> = None;
-    for i in 0..ONRE_OFFER_MAX_VECTORS {
-        let off = ONRE_OFFER_VECTORS_OFFSET + i * ONRE_OFFER_VECTOR_SIZE;
-        let v = OnreOfferVector {
-            start_time: u64::from_le_bytes(data[off..off + 8].try_into().unwrap()),
-            base_time: u64::from_le_bytes(data[off + 8..off + 16].try_into().unwrap()),
-            base_price: u64::from_le_bytes(data[off + 16..off + 24].try_into().unwrap()),
-            apr: u64::from_le_bytes(data[off + 24..off + 32].try_into().unwrap()),
-            price_fix_duration: u64::from_le_bytes(data[off + 32..off + 40].try_into().unwrap()),
-        };
-        if v.start_time == 0 || v.start_time > now {
-            continue;
-        }
-        match best {
-            None => best = Some(v),
-            Some(cur) if v.start_time > cur.start_time => best = Some(v),
-            _ => {}
-        }
-    }
-
-    best.ok_or_else(|| error!(RelayerError::OnreNoActiveVector))
+    (0..ONRE_OFFER_MAX_VECTORS)
+        .map(|i| read_offer_vector(data, ONRE_OFFER_VECTORS_OFFSET + i * ONRE_OFFER_VECTOR_SIZE))
+        .filter(|v| v.start_time != 0 && v.start_time <= now)
+        .reduce(|best, v| if v.start_time > best.start_time { v } else { best })
+        .ok_or_else(|| error!(RelayerError::OnreNoActiveVector))
 }
 
-/// Step-snapped redemption price in 1e9 fixed-point. Byte-for-byte mirror
-/// of OnRe's `calculate_step_price_at` + `calculate_vector_price`.
-///
-/// Snaps to the END of the current discrete interval (`(step + 1) *
-/// price_fix_duration`), matching OnRe — meaning the price one second
-/// into a new interval is already the price at the end of that
-/// interval. Our floor must match this snap exactly, or
-/// the unified `swap` handler's NAV gate would diverge from OnRe's accounting
-/// and produce an exploitable asymmetry.
+/// Step-snapped redemption price (1e9 fp); mirror of OnRe's
+/// `calculate_step_price_at` + `calculate_vector_price`. Snaps to the END of
+/// the current interval (`(step + 1) * price_fix_duration`); the floor must
+/// match this snap exactly or the `swap` NAV gate diverges from OnRe.
 pub fn calculate_step_price(v: &OnreOfferVector, now: u64) -> Result<u64> {
     require!(v.base_time <= now, RelayerError::OnreNoActiveVector);
     require!(v.price_fix_duration > 0, RelayerError::OnreNoActiveVector);
@@ -121,10 +94,9 @@ pub fn calculate_step_price(v: &OnreOfferVector, now: u64) -> Result<u64> {
     u64::try_from(price_u128).map_err(|_| error!(RelayerError::OnreNavOverflow))
 }
 
-/// Pin `onre_offer` to OnRe's deposit `Offer` PDA for `(usdc_mint,
-/// onyc_mint)` and return its step-snapped NAV price (1e9 fp). Both swap
-/// legs anchor their slippage floor on this single on-chain oracle read,
-/// so the owner/PDA/mint validation lives here once.
+/// Pin `onre_offer` to OnRe's deposit `Offer` PDA for `(usdc_mint, onyc_mint)`
+/// and return its step-snapped NAV price (1e9 fp). Both swap legs anchor their
+/// slippage floor here, so owner/PDA/mint validation lives in one place.
 pub fn read_offer_nav_price(
     onre_offer: &AccountInfo,
     usdc_mint: &Pubkey,
@@ -174,19 +146,17 @@ pub fn read_offer_nav_price(
     calculate_step_price(&active, now_unix)
 }
 
-/// Gross USDC value of redeeming `token_in_amount` at `price` (1e9 fp),
-/// mirroring OnRe's `process_redemption_core` output formula:
+/// Gross (pre-fee) USDC from redeeming `token_in_amount` at `price` (1e9 fp),
+/// mirroring OnRe's `process_redemption_core`:
 ///
 /// ```text
 /// out = token_in * price * 10^token_out_decimals
 ///       / (10^token_in_decimals * 10^9)
 /// ```
 ///
-/// Returns the **gross** (pre-fee) amount. The relayer's withdraw fee is
-/// taken separately upstream and OnRe's own redemption fee does not apply
-/// to this path (this fires when OnRe has already cancelled — refunding
-/// ONyc unswapped, no fee charged), so subtracting either here would
-/// artificially depress the floor and concede that delta to the operator.
+/// Gross on purpose: the withdraw fee is taken upstream and OnRe charges no
+/// redemption fee on this (already-cancelled) path, so netting here would
+/// understate the floor.
 pub fn redemption_expected_out(
     token_in_amount: u64,
     price: u64,
@@ -212,18 +182,15 @@ pub fn redemption_expected_out(
 }
 
 /// Algebraic inverse of `redemption_expected_out` for the deposit leg
-/// (USDC in → ONyc out), mirroring OnRe's `process_take_offer` pricing
-/// under the assumption both directions clear at the same step `price`:
+/// (USDC in → ONyc out), mirroring OnRe's `process_take_offer` at the same
+/// step `price`:
 ///
 /// ```text
 /// out = usdc_in * 10^onyc_decimals * 10^9
 ///       / (price * 10^usdc_decimals)
 /// ```
 ///
-/// Returns the **gross** (pre-fee) ONyc the relayer should receive. The
-/// caller applies the slippage floor for rounding headroom; OnRe's own
-/// deposit fee (if any) is taken inside `take_offer`, so the floor is set
-/// off the post-fee delta the caller observes.
+/// Returns gross (pre-fee) ONyc; the caller applies the slippage floor.
 pub fn deposit_expected_out(
     usdc_in_amount: u64,
     price: u64,
@@ -249,10 +216,8 @@ pub fn deposit_expected_out(
     u64::try_from(num / den).map_err(|_| error!(RelayerError::OnreNavOverflow))
 }
 
-/// Direction-aware NAV expected-out. Deposit converts base→asset (÷ price);
-/// withdraw converts asset→base (× price). `base_decimals`/`asset_decimals`
-/// are the mint decimals; the caller supplies `swap_in` in the input mint's
-/// atomic units. Reuses the existing, tested per-direction math.
+/// Direction-aware NAV expected-out: deposit converts base→asset (÷ price),
+/// withdraw asset→base (× price). `swap_in` is in the input mint's atomic units.
 pub fn oracle_expected_out(
     price: u64,
     swap_in: u64,
@@ -262,16 +227,16 @@ pub fn oracle_expected_out(
 ) -> Result<u64> {
     match direction {
         Direction::Deposit => deposit_expected_out(swap_in, price, base_decimals, asset_decimals),
-        Direction::Withdraw => redemption_expected_out(swap_in, price, asset_decimals, base_decimals),
+        Direction::Withdraw => {
+            redemption_expected_out(swap_in, price, asset_decimals, base_decimals)
+        }
     }
 }
 
 /// Apply a basis-point slippage haircut to a gross expected output.
 ///
-/// Fail-closed on `slippage_bps > 10_000`: a deploy-time typo must produce
-/// a loud revert, not a silent zero floor that disables the permissionless
-/// `swap` safety pillar. `slippage_bps == 10_000` is allowed
-/// and yields a zero floor — the caller's compile-time constant is the gate.
+/// Fail-closed on `slippage_bps > 10_000` so a deploy-time typo reverts loudly
+/// instead of silently zeroing the floor. `== 10_000` is allowed (zero floor).
 pub fn apply_slippage_floor(gross_expected: u64, slippage_bps: u16) -> Result<u64> {
     require!(slippage_bps <= 10_000, RelayerError::OnreInvalidSlippageBps);
     let factor = 10_000u128 - slippage_bps as u128;
@@ -288,11 +253,62 @@ mod tests {
     #[test]
     fn oracle_expected_out_branches_on_direction() {
         let price = 1_000_000_000u64; // 1.0 in 1e9 fp
-        // deposit: base(6dp) -> asset(9dp), divide by price
         let dep = oracle_expected_out(price, 1_000_000, Direction::Deposit, 6, 9).unwrap();
-        // withdraw: asset(9dp) -> base(6dp), multiply by price
         let wd = oracle_expected_out(price, 1_000_000_000, Direction::Withdraw, 6, 9).unwrap();
         assert_eq!(dep, deposit_expected_out(1_000_000, price, 6, 9).unwrap());
-        assert_eq!(wd, redemption_expected_out(1_000_000_000, price, 9, 6).unwrap());
+        assert_eq!(
+            wd,
+            redemption_expected_out(1_000_000_000, price, 9, 6).unwrap()
+        );
+    }
+
+    /// Drift tripwire: parses the real mainnet `Offer` dump (the same
+    /// `E88zk…` account the SDK `offer mainnet fixture parity` test reads).
+    /// If upstream re-lays out `Offer`, the pinned `ONRE_OFFER_*` offsets
+    /// stop selecting this vector and this fails — forcing a lockstep refresh.
+    #[test]
+    fn offer_layout_matches_fixture() {
+        let data: &[u8] = include_bytes!("../../../tests/fixtures/accounts/onre-offer.bin");
+        assert_eq!(data.len(), ONRE_OFFER_ACCOUNT_SIZE);
+
+        let active = parse_active_offer_vector(data, 2_000_000_000).unwrap();
+        assert_eq!(active.start_time, 1_773_878_400);
+        assert_eq!(active.base_price, 1_085_708_975);
+        assert_eq!(active.apr, 97_593);
+        assert_eq!(active.price_fix_duration, 86_400);
+
+        let price = calculate_step_price(&active, 2_000_000_000).unwrap();
+        assert!(price >= active.base_price);
+    }
+
+    /// Locks the active-vector selection policy without relying on the live
+    /// mainnet dump: zeroed and future-dated slots are skipped, the largest
+    /// qualifying `start_time` wins, and ties keep the earliest slot.
+    #[test]
+    fn selects_latest_started_active_vector() {
+        let put = |buf: &mut [u8], slot: usize, start_time: u64, base_price: u64| {
+            let off = ONRE_OFFER_VECTORS_OFFSET + slot * ONRE_OFFER_VECTOR_SIZE;
+            buf[off..off + 8].copy_from_slice(&start_time.to_le_bytes());
+            buf[off + 8..off + 16].copy_from_slice(&start_time.to_le_bytes());
+            buf[off + 16..off + 24].copy_from_slice(&base_price.to_le_bytes());
+            buf[off + 32..off + 40].copy_from_slice(&86_400u64.to_le_bytes());
+        };
+
+        let mut buf = vec![0u8; ONRE_OFFER_ACCOUNT_SIZE];
+        put(&mut buf, 0, 1_000, 111);
+        put(&mut buf, 1, 3_000, 333); // future vs now=2_500 -> skipped
+        put(&mut buf, 2, 2_000, 222); // latest among active; slot 3 zeroed -> skipped
+        let active = parse_active_offer_vector(&buf, 2_500).unwrap();
+        assert_eq!(active.start_time, 2_000);
+        assert_eq!(active.base_price, 222);
+
+        // None qualify once `now` predates every start_time.
+        assert!(parse_active_offer_vector(&buf, 999).is_err());
+
+        // Tie on start_time keeps the earliest slot (first-on-tie).
+        let mut tie = vec![0u8; ONRE_OFFER_ACCOUNT_SIZE];
+        put(&mut tie, 0, 2_000, 222);
+        put(&mut tie, 1, 2_000, 999);
+        assert_eq!(parse_active_offer_vector(&tie, 2_500).unwrap().base_price, 222);
     }
 }

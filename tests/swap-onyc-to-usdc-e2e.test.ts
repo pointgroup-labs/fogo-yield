@@ -13,6 +13,7 @@
  * `amount = usdc_received`.
  */
 
+import { BN } from '@anchor-lang/core'
 import {
   applySlippageFloor,
   calculateStepPrice,
@@ -22,7 +23,6 @@ import {
   redemptionExpectedOut,
   RelayerClient,
 } from '@fogo-onre/sdk'
-import { BN } from '@anchor-lang/core'
 import { getAssociatedTokenAddressSync, TOKEN_PROGRAM_ID } from '@solana/spl-token'
 import { ComputeBudgetProgram, Keypair, PublicKey } from '@solana/web3.js'
 import { Clock, LiteSVM } from 'litesvm'
@@ -108,7 +108,7 @@ describe('withdraw swap e2e (asset→base via local router)', () => {
     const nttInboxItem = Keypair.generate().publicKey
     const [outflightFlowPda, flowBump] = findOutflightFlowPda(nttInboxItem, client.program.programId)
     const flowData = await client.program.coder.accounts.encode('flow', {
-      recipient: Array.from(new Uint8Array(32).fill(7)),
+      recipient: new PublicKey(new Uint8Array(32).fill(7)),
       status: { received: {} },
       amount: new BN(grossOnyc.toString()),
       payer: authority.publicKey,

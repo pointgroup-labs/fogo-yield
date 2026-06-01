@@ -5,8 +5,7 @@ import { findInboxItemPda } from '../builders/ntt'
 
 /**
  * VAA + Wormhole-NTT-transceiver + NttManagerMessage wire decoders, plus
- * the PDA derivations any cranker / observer needs to invoke `claim_usdc`
- * or `unlock_onyc`:
+ * the PDA derivations any cranker / observer needs to invoke `receive`:
  *
  *   - `nttInboxItem`           = ["inbox_item", keccak256(from_chain_BE || ntt_manager_message_wire)]
  *   - `nttTransceiverMessage`  = ["transceiver_message", from_chain_BE, message_id]
@@ -19,7 +18,7 @@ import { findInboxItemPda } from '../builders/ntt'
  * NOT a full VAA validator — guardian signatures aren't checked. The
  * Solana NTT manager re-verifies them downstream during redeem. We only
  * need enough parsing to (a) recover the on-chain account addresses the
- * relayer's `claim_usdc` / `unlock_onyc` ix references, and (b) report
+ * relayer's `receive` ix references, and (b) report
  * status to operators.
  */
 
@@ -223,8 +222,8 @@ export function findValidatedTransceiverMessagePda(
 }
 
 /**
- * One-shot: signed VAA bytes → everything needed to call `claim_usdc` /
- * `unlock_onyc`. Throws with a precise message at the first parse failure
+ * One-shot: signed VAA bytes → everything needed to call `receive`.
+ * Throws with a precise message at the first parse failure
  * (so the caller can distinguish a malformed VAA from a non-NTT emitter).
  */
 export interface ResolvedNttVaa {

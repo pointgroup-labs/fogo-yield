@@ -5,18 +5,19 @@ program: which keys exist, what each can do, and what happens if each is
 compromised.
 
 The relayer's headline property — **"the relayer has no privileged caller"** —
-means every flow-driving instruction (`claim_usdc`, `swap_usdc_to_onyc`,
-`lock_onyc`, `unlock_onyc`, `swap_onyc_to_usdc`,
-`send_usdc_to_user`) is **permissionless**: any
-wallet on the network can submit them. Safety does not depend on who pays
-the transaction fee. This is the result of several layered design choices
-documented here. None of the layers individually is sufficient; the model
-assumes all are in place.
+means every flow-driving instruction (`receive`, `swap`, `send`) is
+**permissionless**: any wallet on the network can submit them. The three
+are route-agnostic — each reads `flow.direction` (Deposit/Withdraw) to
+pick the NTT manager, fee side, and token, so deposit and withdraw share
+one code path. Safety does not depend on who pays the transaction fee.
+This is the result of several layered design choices documented here.
+None of the layers individually is sufficient; the model assumes all are
+in place.
 
 > **Withdraw-chain soft dependency.** OnRe redemptions are KYC-gated and
-> the relayer PDA cannot complete KYC, so the withdraw leg converts the
-> unlocked ONyc to USDC through a third-party swap router (Jupiter today,
-> router-agnostic) in `swap_onyc_to_usdc`, not through an OnRe redemption.
+> the relayer PDA cannot complete KYC, so the withdraw leg of `swap`
+> converts the received ONyc to USDC through a third-party swap router
+> (Jupiter today, router-agnostic), not through an OnRe redemption.
 > This soft-depends on two upstreams: the OnRe deposit `Offer` staying
 > live (it sets the NAV floor — see §3) and the router holding ONyc→USDC
 > liquidity above that floor. If either is unavailable the swap reverts
@@ -28,14 +29,14 @@ assumes all are in place.
 
 ## 1. Key inventory
 
-| Key                             | Holder                            | Lifecycle                                                                                                                                                                                                                                   | On-chain capability                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| ------------------------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Upgrade authority**           | Multisig (or `None` if immutable) | Set at deploy, never rotated                                                                                                                                                                                                                | Can replace the relayer `.so`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| **Config authority**            | Set at `initialize` time          | Two-step rotation: `configure` proposes (current authority signs); `accept_authority` finalizes (proposed key signs, separately). The two parties never need to sign the same transaction — supports independent multisig→multisig handoff. | **Set fees up to `MAX_FEE_BPS` (10%) per leg with 2-day timelock on increases, redirect `fee_vault` to attacker-controlled account, loosen swap slippage up to `MAX_SLIPPAGE_BPS` (2%), propose+accept-rotate authority to attacker key.** See §4.2.5 — bounded blast radius. Cannot drain operating ATAs (no instruction lets the authority sign for `usdc_ata` / `onyc_ata` outflows; only the handler chain bound to specific `Flow` PDAs can), cannot redirect per-flow outbound recipients (those are bound to `flow.fogo_sender`), cannot bypass `MAX_FEE_BPS`. |
-| **OnRe price-vector authority** | OnRe governance / multisig        | OnRe-controlled, not in this repo                                                                                                                                                                                                           | Updates ONyc price parameters that the OnRe vault reads via Wormhole Queries.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| **NTT manager admin**           | Wormhole Foundation / OnRe ops    | Wormhole-controlled, not in this repo                                                                                                                                                                                                       | Adjusts NTT rate limits, registered transceivers, peers.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| **Wormhole guardians**          | 19 Wormhole guardian set          | Rotated by Wormhole governance                                                                                                                                                                                                              | Sign VAAs that the relayer consumes via NTT.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| **OnRe boss**                   | OnRe governance                   | OnRe-controlled, not in this repo                                                                                                                                                                                                           | Receives token-in fees on `take_offer_permissionless`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| Key                             | Holder                            | Lifecycle                                                                                                                                                                                                                                   | On-chain capability                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| ------------------------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Upgrade authority**           | Multisig (or `None` if immutable) | Set at deploy, never rotated                                                                                                                                                                                                                | Can replace the relayer `.so`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| **Config authority**            | Set at `initialize` time          | Two-step rotation: `configure` proposes (current authority signs); `accept_authority` finalizes (proposed key signs, separately). The two parties never need to sign the same transaction — supports independent multisig→multisig handoff. | **Set fees up to `MAX_FEE_BPS` (10%) per leg with 2-day timelock on increases, redirect `fee_vault` to attacker-controlled account, loosen swap slippage up to `MAX_SLIPPAGE_BPS` (2%), set `price_oracle` (the OnRe `Offer` PDA that sources the swap NAV floor), propose+accept-rotate authority to attacker key.** See §4.2.5 — bounded blast radius. Cannot drain operating ATAs (no instruction lets the authority sign for `base_ata` / `asset_ata` outflows; only the handler chain bound to specific `Flow` PDAs can), cannot redirect per-flow outbound recipients (those are bound to `flow.recipient`), cannot bypass `MAX_FEE_BPS`. |
+| **OnRe price-vector authority** | OnRe governance / multisig        | OnRe-controlled, not in this repo                                                                                                                                                                                                           | Updates ONyc price parameters that the OnRe vault reads via Wormhole Queries.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| **NTT manager admin**           | Wormhole Foundation / OnRe ops    | Wormhole-controlled, not in this repo                                                                                                                                                                                                       | Adjusts NTT rate limits, registered transceivers, peers.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| **Wormhole guardians**          | 19 Wormhole guardian set          | Rotated by Wormhole governance                                                                                                                                                                                                              | Sign VAAs that the relayer consumes via NTT.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| **OnRe boss**                   | OnRe governance                   | OnRe-controlled, not in this repo                                                                                                                                                                                                           | Receives token-in fees on `take_offer_permissionless`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 
 There is **no operator / curator / cranker key** in the relayer's trust
 model. Anyone with enough SOL to pay the transaction fee can submit any
@@ -52,14 +53,14 @@ There is no "admin" with elevated access to relayer state.
 Every account the relayer authorities over is a PDA. The seeds are
 defined in `programs/relayer/src/constants.rs` and mirrored in the SDK.
 
-| PDA                   | Seeds                                                                                               | Owner / signer  | Purpose                                                                                         |
-| --------------------- | --------------------------------------------------------------------------------------------------- | --------------- | ----------------------------------------------------------------------------------------------- |
-| Relayer authority     | `[b"relayer"]`                                                                                      | Relayer program | Owns the long-lived USDC and ONyc ATAs; signs every outbound CPI.                               |
-| User inbox authority  | `[b"user_inbox", user_wallet]`                                                                      | Relayer program | Owns the per-user `user_inbox_ata` NTT `release_inbound` deposits into; PDA-signs the sweep of exactly `inbox_item.amount` into the relayer USDC ATA. |
-| Config                | `[b"relayer_config"]`                                                                               | Relayer program | Stores `usdc_mint`, `onyc_mint`, fee BPS, fee vault. Settable only by the configured authority. |
-| Inbound Flow          | `[b"inflight", ntt_inbox_item]`                                                                     | Relayer program | Receipt for an in-progress deposit. Init-once on `claim_usdc`.                                  |
-| Outbound Flow         | `[b"outflight", ntt_inbox_item]`                                                                    | Relayer program | Receipt for an in-progress withdrawal. Init-once on `unlock_onyc`.                              |
-| NTT session authority | `[b"session_authority", sender, keccak(transfer_args)]` (under `NTT_ONYC_PROGRAM_ID`, not the relayer's) | NTT program     | Per-call delegate for `transfer_lock`.                                                          |
+| PDA                   | Seeds                                                                                                    | Owner / signer  | Purpose                                                                                                                                               |
+| --------------------- | -------------------------------------------------------------------------------------------------------- | --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Relayer authority     | `[b"relayer"]`                                                                                           | Relayer program | Owns the long-lived USDC and ONyc ATAs; signs every outbound CPI.                                                                                     |
+| User inbox authority  | `[b"user_inbox", user_wallet]`                                                                           | Relayer program | Owns the per-user `user_inbox_ata` NTT `release_inbound` deposits into; PDA-signs the sweep of exactly `inbox_item.amount` into the relayer USDC ATA. |
+| Config                | `[b"relayer_config"]`                                                                                    | Relayer program | Stores `base_mint`, `asset_mint`, fee BPS, fee vault, `price_oracle`. Settable only by the configured authority.                                      |
+| Inbound Flow          | `[b"inflight", ntt_inbox_item]`                                                                          | Relayer program | Receipt for an in-progress deposit. Init-once on `receive`.                                                                                           |
+| Outbound Flow         | `[b"outflight", ntt_inbox_item]`                                                                         | Relayer program | Receipt for an in-progress withdrawal. Init-once on `receive`.                                                                                        |
+| NTT session authority | `[b"session_authority", sender, keccak(transfer_args)]` (under `NTT_ONYC_PROGRAM_ID`, not the relayer's) | NTT program     | Per-call delegate for `transfer_lock`.                                                                                                                |
 
 **Key property**: every Flow PDA is seeded by the _NTT inbox-item PDA_
 for that message, which the NTT manager creates via CPI when it accepts
@@ -72,7 +73,7 @@ from Wormhole/NTT.
 ### Wormhole guardians (19-of-19 threshold for governance, 13-of-19 for messages)
 
 Trusted to honestly attest source-chain events. Compromise of ≥13 guardian
-keys would let an attacker forge a `claim_usdc` NTT VAA and direct minted
+keys would let an attacker forge a deposit-leg `receive` NTT VAA and direct minted
 USDC
 
 - associated ONyc to an attacker-controlled FOGO address. Outside the
@@ -80,8 +81,8 @@ USDC
 
 ### NTT inbound redeem + intent-setter allowlist (deposit leg)
 
-The deposit leg redeems inbound USDC through the NTT USDC manager
-(`claim_usdc`: `redeem` + `release_inbound_unlock`) — there is **no
+The deposit leg of `receive` redeems inbound USDC through the NTT USDC manager
+(`redeem` + `release_inbound_unlock`) — there is **no
 Wormhole Token Bridge or Gateway dependency left in the stack**; both
 legs migrated to NTT. NTT release deposits into a per-user inbox ATA
 owned by `pda([b"user_inbox", user_wallet])`, and the relayer sweeps
@@ -101,37 +102,42 @@ is the only defense (see §7).
 Trusted to correctly lock ONyc into custody on outbound and release on
 inbound. Same `pub const` pinning treatment in `constants.rs`. Relayer
 also encodes the positional `redeem_accounts_len` split that NTT
-expects — see `InvalidAccountSplit` in `claim_usdc.rs`.
+expects — see `InvalidAccountSplit` in `receive.rs`.
 
 ### OnRe program
 
 Trusted to honor `take_offer_permissionless` semantics on the **deposit**
-leg (`swap_usdc_to_onyc` CPIs `ONRE_TAKE_OFFER_IX` with the `Offer` PDA in
-`remaining_accounts`): USDC in → ONyc out at the published price, plus
+leg of `swap` (which reads `flow.direction == Deposit` and CPIs
+`ONRE_TAKE_OFFER_IX` with the `Offer` PDA in `remaining_accounts`):
+USDC in → ONyc out at the published price, plus
 apply OnRe's own fee. The relayer does **not** blindly trust the ONyc
-amount returned — it independently derives a NAV floor from the same
-deposit `Offer` step price (`read_offer_nav_price` + `deposit_expected_out`
-+ `slippage_bps`) and reverts `DepositSlippageBelowFloor` if the swap
-under-delivers, plus a post-CPI `usdc_consumed == flow.amount` exact-spend
-check. It then skims the deposit fee from the post-swap output to
-`fee_vault`. This is the symmetric counterpart of the withdraw-leg floor.
+amount returned — it independently derives a NAV floor from the
+`price_oracle`-pinned deposit `Offer` step price (`read_offer_nav_price`
 
-On the **withdraw** leg the relayer does not use OnRe at all for the
-conversion — OnRe redemptions are KYC-gated and the relayer PDA cannot
-complete KYC. Instead `swap_onyc_to_usdc` routes the unlocked ONyc
-through a third-party swap program (Jupiter today; the account layout is
-aggregator-agnostic). OnRe's role shrinks to the **NAV-floor oracle**:
-the handler reads the deposit `Offer` step price (`read_offer_nav_price`)
-and rejects any fill below `gross_expected * (1 - slippage_bps)`
-(`RedeemSlippageBelowFloor`). Three further layers bound the swap CPI: an
-SPL `Approve` to exactly `flow.amount - fee` (the only spendable
-surface), a post-CPI exact-consume assertion (`onyc_consumed ==
-net_onyc`), and `assert_ata_untampered` on both ATAs — any
-`SetAuthority`/`Approve` a malicious router smuggles in reverts the whole
-transaction. **The swap program identity is not trusted**; safety rests
-on the NAV floor plus these post-balance invariants. The only liveness
-dependency is router liquidity above the floor — there is no
-`redemption_admin` to stall and no cancel path.
+- `oracle_expected_out` + `max_slippage_bps`) and reverts
+  `OutputBelowFloor` if the swap under-delivers, plus a post-CPI
+  `in_consumed == swap_in` exact-spend check (`InputConsumedMismatch`). It
+  then skims the deposit fee from the post-swap ONyc output to
+  `fee_vault`. This is the symmetric counterpart of the withdraw-leg floor.
+
+On the **withdraw** leg (`flow.direction == Withdraw`) the relayer does
+not use OnRe at all for the conversion — OnRe redemptions are KYC-gated
+and the relayer PDA cannot complete KYC. Instead the same `swap` handler
+routes the received ONyc through a third-party swap program (Jupiter
+today; the account layout is aggregator-agnostic), skimming the withdraw
+fee from the ONyc input before the swap. OnRe's role shrinks to the
+**NAV-floor oracle**: the handler reads the same deposit `Offer` step
+price (`read_offer_nav_price`) and rejects any fill below
+`gross_expected * (1 - max_slippage_bps)` (`OutputBelowFloor`). Three
+further layers bound the swap CPI: a bounded SPL `Approve` to exactly
+`swap_in` (the only spendable surface), a post-CPI exact-consume
+assertion (`in_consumed == swap_in`, `InputConsumedMismatch`), and
+`assert_ata_untampered` on both ATAs — any `SetAuthority`/`Approve` a
+malicious router smuggles in reverts the whole transaction. **The swap
+program identity is not trusted**; safety rests on the NAV floor plus
+these post-balance invariants. The only liveness dependency is router
+liquidity above the floor — there is no `redemption_admin` to stall and
+no cancel path.
 
 ### OnRe price-vector authority
 
@@ -142,20 +148,32 @@ movement.
 
 ### OnRe deposit `Offer` active-vector liveness invariant
 
-**Both** relayer legs derive their NAV from OnRe's deposit `Offer` PDA
-(`[b"offer", usdc_mint, onyc_mint]`): the deposit swap prices off it, and
-the withdraw swap reads it as the slippage floor (`onre.rs`
-`read_offer_nav_price`). OnRe's own redemption prices off the *same*
+**Both** legs of `swap` derive their NAV from OnRe's deposit `Offer` PDA
+(`[b"offer", base_mint, asset_mint]`): the deposit leg prices off it, and
+the withdraw leg reads it as the slippage floor (`onre.rs`
+`read_offer_nav_price`). OnRe's own redemption prices off the _same_
 account — `RedemptionOffer` holds no price, only a reference to this
 `Offer` plus a fee — so this is the canonical NAV source, not a relayer
 shortcut.
 
+**Floor source is config-pinned, not freshness-bounded.** The `Offer`
+account `swap` reads is not caller-supplied: the handler requires
+`onre_offer.key() == relayer_config.price_oracle` and rejects a zeroed /
+legacy `price_oracle` (`Pubkey::default()`) with `BadPriceOracle` — it
+fails closed until the authority configures it (§4.2.5). There is
+deliberately **no time-based freshness bound** (no `max_price_age`):
+OnRe NAV is canonical and self-accruing — the `Offer` step price advances
+deterministically with the clock, so a "stale" read is still the correct
+on-chain price, and adding an age gate would only manufacture a liveness
+failure mode. `read_offer_nav_price` still structurally validates the
+account (owner == OnRe program, address == the deposit `Offer` PDA, mint
+fields, layout length) on every read.
+
 **Invariant: the deposit `Offer` must retain ≥1 active pricing vector
 (`start_time != 0 && start_time <= now`) while any flow is in flight.**
 If it has none, `read_offer_nav_price` reverts `OnreNoActiveVector` and
-every `swap_usdc_to_onyc` / `swap_onyc_to_usdc` reverts — stranding the
-flow's funds in the relayer's pooled ATA (deposit `Claimed` → USDC;
-withdraw `Claimed` → ONyc).
+every `swap` reverts — stranding the flow's funds in the relayer's pooled
+ATA (deposit `Received` → USDC; withdraw `Received` → ONyc).
 
 This state is **not reachable by normal operation.** `add_offer_vector`
 is append-only and activates immediately or in the future, so past
@@ -193,25 +211,42 @@ address, and forge Flow PDAs to defraud the FOGO-side vault.
 
 **Blast radius: ~ZERO.** The flow instructions are permissionless — any
 wallet can submit them, and that's by design. Every safety-critical input
-(`fogo_sender`, `ntt_inbox_item`, the in-flight token
+(`recipient`, `ntt_inbox_item`, the in-flight token
 amount) is parsed from a guardian-signed VAA or a CPI-created bridge PDA,
 not from a caller-supplied parameter. The caller cannot:
 
-- Choose the outbound recipient — `lock_onyc` and `send_usdc_to_user`
-  read `flow.fogo_sender` (parsed from the VAA on `claim_usdc` /
-  `unlock_onyc`), not a parameter.
+- Choose the outbound recipient — `send` (either leg) reads
+  `flow.recipient` (parsed from the VAA at `receive` time), not a
+  parameter.
 - Forge a Flow PDA — Flow seeds include the NTT manager's CPI-created
   inbox-item PDA; nobody can create that without first feeding a real
   guardian-signed VAA through NTT.
-- Skip or reorder the steps — `swap_usdc_to_onyc` requires `flow.status
-  == Claimed` and transitions to `Swapped`; `lock_onyc` requires
-  `Swapped`. Each handler emits an `emit!` event so misordered attempts
-  are visible on-chain.
+- Skip or reorder the steps — `swap` requires `flow.status == Received`
+  and transitions to `Swapped`; `send` requires `Swapped`. Each handler
+  emits an `emit!` event so misordered attempts are visible on-chain.
 - Drain the long-lived USDC / ONyc ATAs — the relayer authority PDA
   signs all CPIs; an external wallet has no signing power over PDAs.
 - Pocket the fee — fees are routed to the configured `fee_vault` (set
   by the config authority at `initialize` / `configure` time), not to
   the caller.
+
+**Bounded-custody invariant (permissionless `swap`).** `swap` signs as
+`relayer_authority` for an _arbitrary_ router program, yet a stolen
+cranker key cannot use it to drain relayer custody. A local structural
+guard walks `remaining_accounts` and rejects every token account whose
+authority is `relayer_authority` — across both SPL Token and Token-2022,
+since the check is an interface `TokenAccount` deserialization — with the
+sole exception of this swap's `base_ata` / `asset_ata` (themselves
+protected by the NAV floor + exact-consume `InputConsumedMismatch` + the
+post-CPI `assert_ata_untampered`). The guard also excludes `fee_vault`,
+`relayer_config`, and the `flow` PDA outright (`SwapAccountNotAllowed`).
+The `relayer_authority` account is passed **writable** to the router
+(OnRe declares its offer-taker `mut`, so it cannot be forced readonly);
+its lamports/owner/data are instead snapshotted before the CPI and
+re-checked after — any router that drains, reassigns, or reallocates the
+PDA reverts the whole transaction (`RelayerAuthorityTampered`). Mint
+immutability after `initialize` is defense-in-depth only and is not part
+of this handler's checks.
 
 **Worst case from a malicious caller:**
 
@@ -223,10 +258,9 @@ not from a caller-supplied parameter. The caller cannot:
   whichever wallet originally paid for the PDA).
 
 A caller paying for a Flow PDA on someone else's deposit cannot
-withhold rent reclamation maliciously — `lock_onyc` / `send_usdc_to_user`
-close the PDA atomically with the final CPI, returning rent to the
-original payer. The original payer's wallet is recorded in the Flow PDA
-at init time.
+withhold rent reclamation maliciously — `send` (either leg) closes the
+PDA atomically with the final CPI, returning rent to the original payer.
+The original payer's wallet is recorded in the Flow PDA at init time.
 
 This is the system's headline property. It depends on §4.1 holding —
 if the attacker has the upgrade authority, none of this matters.
@@ -235,7 +269,7 @@ if the attacker has the upgrade authority, none of this matters.
 
 **Blast radius: BOUNDED.** The config authority is set at `initialize`
 and rotatable only via `configure`. No instruction in the program lets
-the authority sign for `usdc_ata` / `onyc_ata` outflows — operating
+the authority sign for `base_ata` / `asset_ata` outflows — operating
 ATAs are touchable only by the flow-handler chain, bound to specific
 `Flow` PDAs. A compromised config authority can:
 
@@ -248,23 +282,30 @@ ATAs are touchable only by the flow-handler chain, bound to specific
   immediately. All subsequent fee skims (capped at 10%) flow to the
   new vault.
 - **Loosen swap slippage tolerance up to `MAX_SLIPPAGE_BPS` (2%).**
-  `slippage_bps` is authority-tunable and applies to both swap legs;
+  `max_slippage_bps` is authority-tunable and applies to both swap legs;
   `validate()` caps it at the constant. Maxed out, swaps may fill up to
   2% below the OnRe NAV floor — the worst-case griefing surface on the
   swap path. Unlike fee increases, it has no timelock (applies
   immediately).
+- **Repoint `price_oracle` (the NAV-floor source).** The floor `swap`
+  enforces is read from whatever `Offer` PDA is pinned in
+  `price_oracle`. Repointing it to a different (e.g. higher-priced)
+  `Offer` would _raise_ the floor and only block swaps; it is still
+  structurally validated as an OnRe `Offer` PDA, so it cannot be
+  pointed at an attacker-shaped account. Worst case is a self-inflicted
+  liveness stall, not a fund leak.
 
 **What the config authority CANNOT do:**
 
 - **Drain operating ATAs.** No instruction in the program lets the
-  authority sign for `usdc_ata` / `onyc_ata` outflows. The
+  authority sign for `base_ata` / `asset_ata` outflows. The
   `relayer_authority` PDA is signed for only by handler-chain logic
   bound to specific `Flow` PDAs.
 - **Bypass `MAX_FEE_BPS`.** `validate()` enforces the cap at every
   configure call, on both live and staged fields.
-- **Redirect a specific flow's outbound recipient.** `lock_onyc` and
-  `send_usdc_to_user` read `flow.fogo_sender` (parsed from the VAA at
-  `claim_usdc` / `unlock_onyc` time), not from config.
+- **Redirect a specific flow's outbound recipient.** `send` (either
+  leg) reads `flow.recipient` (parsed from the VAA at `receive` time),
+  not from config.
 - **Forge a Flow PDA or skip status guards.** Those are enforced by
   the program logic, not by config.
 - **Replace the program.** That requires the upgrade authority (§4.1).
@@ -354,9 +395,9 @@ Two independent layers:
    bridge's own replay protection.
 2. **Relayer-side**: every Flow PDA is `init` (not `init_if_needed`)
    with seeds bound to the bridge PDA from layer 1. A second
-   `claim_usdc` for the same VAA fails with the system program's
+   `receive` for the same VAA fails with the system program's
    `already in use` error before any CPI runs. This is asserted by
-   `claim_usdc rejects replay when inflight Flow PDA already exists`
+   `receive rejects replay when inflight Flow PDA already exists`
    in `tests/relayer.test.ts`.
 
 A bug in either layer alone would not enable replay. Both must fail
@@ -416,7 +457,7 @@ runtime check.
   for their own infrastructure (alerting on stuck flows, retry logic).
   No on-chain role exists for them. The reference cranker surfaces
   `cranker_flow_stuck{state="poisoned"}` as the stuck-flow alert signal.
-- **Economic attacks.** MEV ordering between `claim_usdc` and the
+- **Economic attacks.** MEV ordering between `receive` and the
   swap, oracle manipulation of the OnRe price vector, etc., are out
   of scope.
 
@@ -424,11 +465,11 @@ runtime check.
 
 ## Quick reference for incident response
 
-| Symptom                                               | Likely cause                                                                                                                 | First action                                                                                                                                                                                                                                                                                                                                   |
-| ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `constants.rs` diff in PR review                      | Possible CPI redirection (intentional or malicious)                                                                          | Diff every changed `pub const Pubkey` and instruction tag against the canonical source linked in each const's doc comment. There is no automated test catching this — reviewer attention is the only line of defense.                                                                                                                          |
-| Flow PDA stuck in `Claimed`                           | Swap CPI not yet done. Deposit: `swap_usdc_to_onyc` (OnRe price vector stale, NTT/OnRe rate limit, OnRe paused). Withdraw: `swap_onyc_to_usdc` (router lacks ONyc→USDC liquidity above the NAV floor, or the OnRe deposit `Offer` has no active vector)                                           | Diagnose the upstream condition. Re-crank the matching swap permissionlessly once it clears — funds remain in the relayer's authority-owned ATA (USDC on deposit, ONyc on withdraw) and resume on the next successful swap. No cancel path; recovery is "wait for upstream + retry".                                                                                             |
-| Flow PDA stuck in `Swapped`                           | NTT send CPI not yet completed (rate limit, custody/outbox account state) — either leg | Deposit: re-crank `lock_onyc`. Withdraw: re-crank `send_usdc_to_user`. Check the NTT outbound rate limit first; both re-crank permissionlessly once it clears. No cancel path on either side.                                                                                                                                                    |
-| `already in use` error on `claim_usdc`                | Replay attempt OR legitimate retry of a flow already created                                                                 | Inspect the existing Flow PDA — if it's at `Claimed`/`Swapped` for the same VAA, this is normal idempotence. No double-spend possible because the NTT `inbox_item` PDA is also init-once.                                                                                                                                          |
-| Permanently stuck flow (upstream broken indefinitely) | OnRe / NTT discontinued, frozen mint, etc.                                                                                   | **There is no on-chain recovery path.** Funds in the in-flight ATAs require an upgrade-authority action (deploy a patched program with a one-shot rescue instruction, or migrate state to a new program). This is a known limitation of the v1 relayer — see `deploy-checklist.md` §6 for the OnRe/NTT availability assumptions this rests on. |
-| Upgrade authority compromised                         | Per §4.1 — emergency                                                                                                         | If immutable: not possible. If multisig: revoke compromised signer; freeze deploys.                                                                                                                                                                                                                                                            |
+| Symptom                                               | Likely cause                                                                                                                                                                                                                                                            | First action                                                                                                                                                                                                                                                                                                                                   |
+| ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `constants.rs` diff in PR review                      | Possible CPI redirection (intentional or malicious)                                                                                                                                                                                                                     | Diff every changed `pub const Pubkey` and instruction tag against the canonical source linked in each const's doc comment. There is no automated test catching this — reviewer attention is the only line of defense.                                                                                                                          |
+| Flow PDA stuck in `Received`                          | Swap CPI not yet done. Deposit: `swap` (deposit leg, OnRe-priced — OnRe price vector stale, NTT/OnRe rate limit, OnRe paused). Withdraw: `swap` (withdraw leg — router lacks ONyc→USDC liquidity above the NAV floor, or the OnRe deposit `Offer` has no active vector) | Diagnose the upstream condition. Re-crank `swap` permissionlessly once it clears — funds remain in the relayer's authority-owned ATA (USDC on deposit, ONyc on withdraw) and resume on the next successful swap. No cancel path; recovery is "wait for upstream + retry".                                                                      |
+| Flow PDA stuck in `Swapped`                           | NTT send CPI not yet completed (rate limit, custody/outbox account state) — either leg                                                                                                                                                                                  | Re-crank `send` (either leg). Check the NTT outbound rate limit first; it re-cranks permissionlessly once it clears. No cancel path on either side.                                                                                                                                                                                            |
+| `already in use` error on `receive`                   | Replay attempt OR legitimate retry of a flow already created                                                                                                                                                                                                            | Inspect the existing Flow PDA — if it's at `Received`/`Swapped` for the same VAA, this is normal idempotence. No double-spend possible because the NTT `inbox_item` PDA is also init-once.                                                                                                                                                     |
+| Permanently stuck flow (upstream broken indefinitely) | OnRe / NTT discontinued, frozen mint, etc.                                                                                                                                                                                                                              | **There is no on-chain recovery path.** Funds in the in-flight ATAs require an upgrade-authority action (deploy a patched program with a one-shot rescue instruction, or migrate state to a new program). This is a known limitation of the v1 relayer — see `deploy-checklist.md` §6 for the OnRe/NTT availability assumptions this rests on. |
+| Upgrade authority compromised                         | Per §4.1 — emergency                                                                                                                                                                                                                                                    | If immutable: not possible. If multisig: revoke compromised signer; freeze deploys.                                                                                                                                                                                                                                                            |

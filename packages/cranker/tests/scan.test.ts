@@ -33,35 +33,69 @@ function recordingLogger(): { log: Logger, calls: Array<{ level: string, msg: st
 const PUBKEY = new PublicKey('11111111111111111111111111111111')
 
 describe('scanAndAdvance', () => {
-  it('dispatches claimUsdc for Pending flows and skips terminal/unknown', async () => {
-    const claimUsdc = vi.fn().mockResolvedValue({ kind: 'noop', reason: 'test' })
-    const swapUsdcToOnyc = vi.fn().mockResolvedValue({ kind: 'noop', reason: 'test' })
-    const lockOnyc = vi.fn().mockResolvedValue({ kind: 'noop', reason: 'test' })
+  it('dispatches receive for Pending flows and skips terminal/unknown', async () => {
+    const receive = vi.fn().mockResolvedValue({ kind: 'noop', reason: 'test' })
+    const swap = vi.fn().mockResolvedValue({ kind: 'noop', reason: 'test' })
+    const send = vi.fn().mockResolvedValue({ kind: 'noop', reason: 'test' })
 
     await scanAndAdvance(makeCtx(), {
       maxConcurrentAdvances: 4,
       rpcTimeoutMs: 5000,
       enumerateFlows: async () => [
-        { pubkey: PUBKEY, status: 'Pending', fogoTx: 'tx-A' },
-        { pubkey: PUBKEY, status: 'Closed', fogoTx: 'tx-B' }, // terminal — skipped
-        { pubkey: PUBKEY, status: 'Swapped', fogoTx: 'tx-C' },
+        { pubkey: PUBKEY, status: 'Pending', direction: 'deposit', fogoTx: 'tx-A' },
+        { pubkey: PUBKEY, status: 'Closed', direction: 'deposit', fogoTx: 'tx-B' }, // terminal — skipped
+        { pubkey: PUBKEY, status: 'Swapped', direction: 'deposit', fogoTx: 'tx-C' },
       ],
-      advanceFns: {
-        claimUsdc,
-        swapUsdcToOnyc,
-        lockOnyc,
-      },
+      advanceFns: { receive, swap, send },
     })
 
-    expect(claimUsdc).toHaveBeenCalledTimes(1)
-    expect(lockOnyc).toHaveBeenCalledTimes(1)
-    expect(swapUsdcToOnyc).toHaveBeenCalledTimes(0)
+    expect(receive).toHaveBeenCalledTimes(1)
+    expect(send).toHaveBeenCalledTimes(1)
+    expect(swap).toHaveBeenCalledTimes(0)
+  })
+
+  it('dispatches swap for Received flows', async () => {
+    const receive = vi.fn()
+    const swap = vi.fn().mockResolvedValue({ kind: 'noop', reason: 'test' })
+    const send = vi.fn()
+
+    await scanAndAdvance(makeCtx(), {
+      maxConcurrentAdvances: 4,
+      rpcTimeoutMs: 5000,
+      enumerateFlows: async () => [
+        { pubkey: PUBKEY, status: 'Received', direction: 'withdraw', fogoTx: 'tx-A' },
+      ],
+      advanceFns: { receive, swap, send },
+    })
+
+    expect(swap).toHaveBeenCalledTimes(1)
+    expect(receive).toHaveBeenCalledTimes(0)
+    expect(send).toHaveBeenCalledTimes(0)
+  })
+
+  it('dispatches send for Swapped flows', async () => {
+    const receive = vi.fn()
+    const swap = vi.fn()
+    const send = vi.fn().mockResolvedValue({ kind: 'noop', reason: 'test' })
+
+    await scanAndAdvance(makeCtx(), {
+      maxConcurrentAdvances: 4,
+      rpcTimeoutMs: 5000,
+      enumerateFlows: async () => [
+        { pubkey: PUBKEY, status: 'Swapped', direction: 'withdraw', fogoTx: 'tx-A' },
+      ],
+      advanceFns: { receive, swap, send },
+    })
+
+    expect(send).toHaveBeenCalledTimes(1)
+    expect(receive).toHaveBeenCalledTimes(0)
+    expect(swap).toHaveBeenCalledTimes(0)
   })
 
   it('respects maxConcurrentAdvances bound', async () => {
     let inflight = 0
     let maxObserved = 0
-    const claimUsdc = vi.fn().mockImplementation(async () => {
+    const receive = vi.fn().mockImplementation(async () => {
       inflight++
       maxObserved = Math.max(maxObserved, inflight)
       await new Promise(r => setTimeout(r, 20))
@@ -72,6 +106,7 @@ describe('scanAndAdvance', () => {
     const flows = Array.from({ length: 10 }, (_, i) => ({
       pubkey: PUBKEY,
       status: 'Pending',
+      direction: 'deposit' as const,
       fogoTx: `tx-${i}`,
     }))
 
@@ -79,14 +114,10 @@ describe('scanAndAdvance', () => {
       maxConcurrentAdvances: 2,
       rpcTimeoutMs: 5000,
       enumerateFlows: async () => flows,
-      advanceFns: {
-        claimUsdc,
-        swapUsdcToOnyc: vi.fn(),
-        lockOnyc: vi.fn(),
-      },
+      advanceFns: { receive, swap: vi.fn(), send: vi.fn() },
     })
 
-    expect(claimUsdc).toHaveBeenCalledTimes(10)
+    expect(receive).toHaveBeenCalledTimes(10)
     expect(maxObserved).toBeLessThanOrEqual(2)
   })
 
@@ -97,12 +128,8 @@ describe('scanAndAdvance', () => {
       scanAndAdvance(makeCtx(ac.signal), {
         maxConcurrentAdvances: 2,
         rpcTimeoutMs: 5000,
-        enumerateFlows: async () => [{ pubkey: PUBKEY, status: 'Pending', fogoTx: 'tx-A' }],
-        advanceFns: {
-          claimUsdc: vi.fn(),
-          swapUsdcToOnyc: vi.fn(),
-          lockOnyc: vi.fn(),
-        },
+        enumerateFlows: async () => [{ pubkey: PUBKEY, status: 'Pending', direction: 'deposit', fogoTx: 'tx-A' }],
+        advanceFns: { receive: vi.fn(), swap: vi.fn(), send: vi.fn() },
       }),
     ).rejects.toThrow(/abort/)
   })
@@ -110,7 +137,7 @@ describe('scanAndAdvance', () => {
   it('dedupes recurring per-flow advance failures: warn once, debug repeats', async () => {
     const recorder = recordingLogger()
     const seenAdvanceErrors = new Map<string, string>()
-    const claimUsdc = vi.fn().mockResolvedValue({
+    const receive = vi.fn().mockResolvedValue({
       kind: 'error',
       error: new Error('cannot derive userWallet'),
       partialSignatures: [],
@@ -119,12 +146,8 @@ describe('scanAndAdvance', () => {
     const opts = {
       maxConcurrentAdvances: 1,
       rpcTimeoutMs: 5000,
-      enumerateFlows: async () => [{ pubkey: PUBKEY, status: 'Pending', fogoTx: 'tx-A' }],
-      advanceFns: {
-        claimUsdc,
-        swapUsdcToOnyc: vi.fn(),
-        lockOnyc: vi.fn(),
-      },
+      enumerateFlows: async () => [{ pubkey: PUBKEY, status: 'Pending', direction: 'deposit' as const, fogoTx: 'tx-A' }],
+      advanceFns: { receive, swap: vi.fn(), send: vi.fn() },
       seenAdvanceErrors,
     }
 
@@ -143,7 +166,7 @@ describe('scanAndAdvance', () => {
     const recorder = recordingLogger()
     const seenAdvanceErrors = new Map<string, string>()
     let attempt = 0
-    const claimUsdc = vi.fn().mockImplementation(async () => ({
+    const receive = vi.fn().mockImplementation(async () => ({
       kind: 'error' as const,
       error: new Error(attempt++ === 0 ? 'first kind of failure' : 'different failure mode'),
       partialSignatures: [],
@@ -152,12 +175,8 @@ describe('scanAndAdvance', () => {
     const opts = {
       maxConcurrentAdvances: 1,
       rpcTimeoutMs: 5000,
-      enumerateFlows: async () => [{ pubkey: PUBKEY, status: 'Pending', fogoTx: 'tx-A' }],
-      advanceFns: {
-        claimUsdc,
-        swapUsdcToOnyc: vi.fn(),
-        lockOnyc: vi.fn(),
-      },
+      enumerateFlows: async () => [{ pubkey: PUBKEY, status: 'Pending', direction: 'deposit' as const, fogoTx: 'tx-A' }],
+      advanceFns: { receive, swap: vi.fn(), send: vi.fn() },
       seenAdvanceErrors,
     }
 
@@ -177,6 +196,7 @@ describe('scanAndAdvance', () => {
     const flows = Array.from({ length: 100 }, (_, i) => ({
       pubkey: PUBKEY,
       status: 'Pending',
+      direction: 'deposit' as const,
       fogoTx: `tx-${i}`,
     }))
     let i = 0
@@ -184,7 +204,7 @@ describe('scanAndAdvance', () => {
       // 32-char base58-shaped strings; errorClass() should redact each.
       // Avoid '0' — not in base58 alphabet, would slip through redaction.
       `Recipient${k.toString().replace(/0/g, '1').padStart(23, 'A')}`)
-    const claimUsdc = vi.fn().mockImplementation(async () => ({
+    const receive = vi.fn().mockImplementation(async () => ({
       kind: 'error' as const,
       error: new Error(`cannot derive userWallet for VAA recipient ${fakePubkeys[i++]}`),
       partialSignatures: [],
@@ -194,11 +214,7 @@ describe('scanAndAdvance', () => {
       maxConcurrentAdvances: 1,
       rpcTimeoutMs: 5000,
       enumerateFlows: async () => flows,
-      advanceFns: {
-        claimUsdc,
-        swapUsdcToOnyc: vi.fn(),
-        lockOnyc: vi.fn(),
-      },
+      advanceFns: { receive, swap: vi.fn(), send: vi.fn() },
       seenAdvanceErrors,
     })
 
@@ -210,97 +226,97 @@ describe('scanAndAdvance', () => {
     expect(rollups).toHaveLength(1) // info-rollup at end of iteration
   })
 
-  it('chains legs in-tick: Pending → Claimed → Swapped → Locked in one task', async () => {
-    // The leg-chain optimization: once `claim_usdc` returns `advanced`,
-    // we don't wait for the next scan tick to dispatch `swap_usdc_to_onyc`.
-    // We loop on `pickAdvanceForStatus(toStatus)` until a leg fails to
-    // advance (noop/error) or the new status has no successor.
-    const claimUsdc = vi.fn().mockResolvedValue({
+  it('chains legs in-tick: Pending → Received → Swapped → Closed in one task', async () => {
+    // The leg-chain optimization: once `receive` returns `advanced`, we
+    // don't wait for the next scan tick to dispatch `swap`. We loop on
+    // `pickAdvanceForStatus(toStatus)` until a leg fails to advance
+    // (noop/error) or the new status has no successor.
+    const receive = vi.fn().mockResolvedValue({
       kind: 'advanced',
-      signatures: ['sig-claim'],
+      signatures: ['sig-receive'],
       fromStatus: 'Pending',
-      toStatus: 'Claimed',
+      toStatus: 'Received',
     })
-    const swapUsdcToOnyc = vi.fn().mockResolvedValue({
+    const swap = vi.fn().mockResolvedValue({
       kind: 'advanced',
       signatures: ['sig-swap'],
-      fromStatus: 'Claimed',
+      fromStatus: 'Received',
       toStatus: 'Swapped',
     })
-    const lockOnyc = vi.fn().mockResolvedValue({
+    const send = vi.fn().mockResolvedValue({
       kind: 'advanced',
-      signatures: ['sig-lock'],
+      signatures: ['sig-send'],
       fromStatus: 'Swapped',
-      toStatus: 'Locked',
+      toStatus: 'Closed',
     })
 
     await scanAndAdvance(makeCtx(), {
       maxConcurrentAdvances: 1,
       rpcTimeoutMs: 5000,
-      enumerateFlows: async () => [{ pubkey: PUBKEY, status: 'Pending', fogoTx: 'tx-A' }],
-      advanceFns: { claimUsdc, swapUsdcToOnyc, lockOnyc },
+      enumerateFlows: async () => [{ pubkey: PUBKEY, status: 'Pending', direction: 'deposit', fogoTx: 'tx-A' }],
+      advanceFns: { receive, swap, send },
     })
 
-    expect(claimUsdc).toHaveBeenCalledTimes(1)
-    expect(swapUsdcToOnyc).toHaveBeenCalledTimes(1)
-    expect(lockOnyc).toHaveBeenCalledTimes(1)
+    expect(receive).toHaveBeenCalledTimes(1)
+    expect(swap).toHaveBeenCalledTimes(1)
+    expect(send).toHaveBeenCalledTimes(1)
   })
 
   it('stops chain on first non-advanced result (leg 2 noop → leg 3 not called)', async () => {
-    const claimUsdc = vi.fn().mockResolvedValue({
+    const receive = vi.fn().mockResolvedValue({
       kind: 'advanced',
-      signatures: ['sig-claim'],
+      signatures: ['sig-receive'],
       fromStatus: 'Pending',
-      toStatus: 'Claimed',
+      toStatus: 'Received',
     })
-    const swapUsdcToOnyc = vi.fn().mockResolvedValue({
+    const swap = vi.fn().mockResolvedValue({
       // E.g. another cranker raced us between leg 1 and leg 2.
       kind: 'noop',
-      reason: 'Flow already past Claimed',
+      reason: 'Flow already past Received',
     })
-    const lockOnyc = vi.fn()
+    const send = vi.fn()
 
     await scanAndAdvance(makeCtx(), {
       maxConcurrentAdvances: 1,
       rpcTimeoutMs: 5000,
-      enumerateFlows: async () => [{ pubkey: PUBKEY, status: 'Pending', fogoTx: 'tx-A' }],
-      advanceFns: { claimUsdc, swapUsdcToOnyc, lockOnyc },
+      enumerateFlows: async () => [{ pubkey: PUBKEY, status: 'Pending', direction: 'deposit', fogoTx: 'tx-A' }],
+      advanceFns: { receive, swap, send },
     })
 
-    expect(claimUsdc).toHaveBeenCalledTimes(1)
-    expect(swapUsdcToOnyc).toHaveBeenCalledTimes(1)
-    expect(lockOnyc).toHaveBeenCalledTimes(0)
+    expect(receive).toHaveBeenCalledTimes(1)
+    expect(swap).toHaveBeenCalledTimes(1)
+    expect(send).toHaveBeenCalledTimes(0)
   })
 
   it('stops chain on error and skips remaining legs', async () => {
-    const claimUsdc = vi.fn().mockResolvedValue({
+    const receive = vi.fn().mockResolvedValue({
       kind: 'advanced',
-      signatures: ['sig-claim'],
+      signatures: ['sig-receive'],
       fromStatus: 'Pending',
-      toStatus: 'Claimed',
+      toStatus: 'Received',
     })
-    const swapUsdcToOnyc = vi.fn().mockResolvedValue({
+    const swap = vi.fn().mockResolvedValue({
       kind: 'error',
       error: new Error('OnRe offer expired'),
       partialSignatures: [],
     })
-    const lockOnyc = vi.fn()
+    const send = vi.fn()
 
     await scanAndAdvance(makeCtx(), {
       maxConcurrentAdvances: 1,
       rpcTimeoutMs: 5000,
-      enumerateFlows: async () => [{ pubkey: PUBKEY, status: 'Pending', fogoTx: 'tx-A' }],
-      advanceFns: { claimUsdc, swapUsdcToOnyc, lockOnyc },
+      enumerateFlows: async () => [{ pubkey: PUBKEY, status: 'Pending', direction: 'deposit', fogoTx: 'tx-A' }],
+      advanceFns: { receive, swap, send },
     })
 
-    expect(claimUsdc).toHaveBeenCalledTimes(1)
-    expect(swapUsdcToOnyc).toHaveBeenCalledTimes(1)
-    expect(lockOnyc).toHaveBeenCalledTimes(0)
+    expect(receive).toHaveBeenCalledTimes(1)
+    expect(swap).toHaveBeenCalledTimes(1)
+    expect(send).toHaveBeenCalledTimes(0)
   })
 
   it('aborts chain mid-way when abortSignal fires between legs', async () => {
     const ac = new AbortController()
-    const claimUsdc = vi.fn().mockImplementation(async () => {
+    const receive = vi.fn().mockImplementation(async () => {
       // Trigger abort during leg 1; the chain loop's pre-leg abort check
       // must short-circuit before leg 2 dispatches. (runBounded itself
       // doesn't re-throw here because the per-task workload completed —
@@ -308,23 +324,23 @@ describe('scanAndAdvance', () => {
       ac.abort()
       return {
         kind: 'advanced',
-        signatures: ['sig-claim'],
+        signatures: ['sig-receive'],
         fromStatus: 'Pending',
-        toStatus: 'Claimed',
+        toStatus: 'Received',
       }
     })
-    const swapUsdcToOnyc = vi.fn()
-    const lockOnyc = vi.fn()
+    const swap = vi.fn()
+    const send = vi.fn()
 
     await scanAndAdvance(makeCtx(ac.signal), {
       maxConcurrentAdvances: 1,
       rpcTimeoutMs: 5000,
-      enumerateFlows: async () => [{ pubkey: PUBKEY, status: 'Pending', fogoTx: 'tx-A' }],
-      advanceFns: { claimUsdc, swapUsdcToOnyc, lockOnyc },
+      enumerateFlows: async () => [{ pubkey: PUBKEY, status: 'Pending', direction: 'deposit', fogoTx: 'tx-A' }],
+      advanceFns: { receive, swap, send },
     })
 
-    expect(claimUsdc).toHaveBeenCalledTimes(1)
-    expect(swapUsdcToOnyc).toHaveBeenCalledTimes(0)
-    expect(lockOnyc).toHaveBeenCalledTimes(0)
+    expect(receive).toHaveBeenCalledTimes(1)
+    expect(swap).toHaveBeenCalledTimes(0)
+    expect(send).toHaveBeenCalledTimes(0)
   })
 })

@@ -1,22 +1,6 @@
-//! Permissionless, route-agnostic inbound NTT receive for an in-flight flow.
-//!
-//! Replaces `claim_usdc` + `unlock_onyc`. The `direction` arg selects the NTT
-//! manager (deposit: base/USDC, withdraw: asset/ONyc), the received mint, and
-//! the flow-PDA seed namespace. Redeems the inbound VAA, sweeps the recorded
-//! amount from the per-user inbox ATA into relayer custody, and creates the
-//! `Flow` receipt binding the return leg to the originating FOGO wallet.
-//!
-//! Safety chain (cranker-controlled `user_wallet`):
-//! - VAA recipient is `pda([USER_INBOX_SEED, user_wallet])`.
-//! - NTT release pins `recipient_ata.authority == inbox_item.recipient_address`,
-//!   forcing `user_inbox_ata` to the ATA of the PDA the user signed for.
-//! - We re-derive that PDA from `user_wallet` and require equality.
-//! - `NttManagerMessage.sender == {OnRe, Fogo}` setter: rejects direct
-//!   (non-intent) NTT bridges to the same recipient PDA.
-//! - Sweep is exactly `inbox_item.amount` (per-VAA scoping handles concurrent
-//!   in-flight transfers from the same user).
-//!
-//! `remaining_accounts` = redeem ++ release; `redeem_accounts_len` splits.
+//! Route-agnostic inbound NTT receive. Security pins: VAA recipient ==
+//! re-derived `pda([USER_INBOX_SEED, user_wallet])`; `NttManagerMessage.sender`
+//! ∈ {OnRe, Fogo} setters; sweep amount == `inbox_item.amount`.
 
 use anchor_lang::prelude::*;
 use anchor_spl::token_interface::{
@@ -37,14 +21,10 @@ use crate::ntt::{
 };
 use crate::state::{receive_ntt_program, Direction, Flow, FlowStatus, RelayerConfig};
 
-/// Skip-path validation when `inbox_item.release_status == Released`
-/// (NTT v1 release_inbound is permissionless — Wormhole executor may
-/// have already redeemed before our cranker landed). In the skip
-/// branch we never invoke NTT, so the redeem CPI's seed-validation of
-/// `inbox_item` against `transceiver_message` does not run. We
-/// reproduce it here, plus an explicit owner pin: without it a cranker
-/// could craft a system-owned account with the right shape and have
-/// us sweep their pre-funded `user_inbox_ata`.
+/// Re-validate `inbox_item` on the skip path (already `Released`), where the
+/// redeem CPI's seed-check against `transceiver_message` never runs. Pins the
+/// owner too: without it a cranker could forge a system-owned look-alike and
+/// have us sweep their pre-funded `user_inbox_ata`.
 fn validate_skip_path_inbox_item(
     ntt_program: &Pubkey,
     ntt_inbox_item: &AccountInfo,
@@ -103,8 +83,8 @@ pub fn handler<'info>(
         RelayerError::BadReceiveMint
     );
 
-    // Manager is direction-selected, so the compile-time owner constraint became
-    // a runtime check; it must precede the first VTM data read.
+    // Direction-selected manager: this owner check is runtime, and must
+    // precede the first VTM data read.
     require_keys_eq!(
         *ctx.accounts.ntt_transceiver_message.owner,
         ntt_program,
@@ -113,8 +93,8 @@ pub fn handler<'info>(
 
     let fogo_sender_raw = parse_fogo_sender_from_vtm(&ctx.accounts.ntt_transceiver_message)?;
 
-    // Pin VAA's NTT sender to the permanent {OnRe, Fogo} intent setter
-    // allowlist; any other sender is a non-intent path and must not receive.
+    // Pin the VAA's NTT sender to the {OnRe, Fogo} intent-setter allowlist;
+    // any other sender is a non-intent path and must not receive.
     let allowed = allowed_intent_setters();
     require!(
         allowed.iter().any(|s| s.to_bytes() == fogo_sender_raw),
@@ -217,10 +197,9 @@ pub fn handler<'info>(
     )?;
 
     let flow_key = ctx.accounts.flow.key();
-    let user_wallet_bytes = user_wallet_key.to_bytes();
 
     let flow = &mut ctx.accounts.flow;
-    flow.recipient = user_wallet_bytes;
+    flow.recipient = user_wallet_key;
     flow.status = FlowStatus::Received;
     flow.amount = amount;
     flow.payer = ctx.accounts.payer.key();
@@ -230,7 +209,7 @@ pub fn handler<'info>(
     emit!(Received {
         flow: flow_key,
         ntt_inbox_item: ctx.accounts.ntt_inbox_item.key(),
-        recipient: user_wallet_bytes,
+        recipient: user_wallet_key,
         direction,
         amount,
     });
@@ -292,7 +271,7 @@ pub struct Receive<'info> {
         init,
         payer = payer,
         space = 8 + Flow::INIT_SPACE,
-        seeds = [crate::state::flow_seed(direction), ntt_inbox_item.key().as_ref()],
+        seeds = [Flow::seed(direction), ntt_inbox_item.key().as_ref()],
         bump,
     )]
     pub flow: Account<'info, Flow>,

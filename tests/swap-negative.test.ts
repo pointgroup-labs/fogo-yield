@@ -151,7 +151,7 @@ describe('swap negatives (malicious router + custody guards)', () => {
     let flowBump: number
     ;[outflightFlowPda, flowBump] = findOutflightFlowPda(nttInboxItem, client.program.programId)
     const flowData = await client.program.coder.accounts.encode('flow', {
-      recipient: Array.from(new Uint8Array(32).fill(7)),
+      recipient: new PublicKey(new Uint8Array(32).fill(7)),
       status: { received: {} },
       amount: new BN(grossOnyc.toString()),
       payer: authority.publicKey,

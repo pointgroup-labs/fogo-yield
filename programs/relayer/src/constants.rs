@@ -24,8 +24,6 @@ pub const NTT_RELEASE_INBOUND_UNLOCK_IX: [u8; 8] = [182, 162, 62, 206, 197, 137,
 pub const NTT_RELEASE_WORMHOLE_OUTBOUND_IX: [u8; 8] =
     [0xCA, 0x57, 0x33, 0xAD, 0x8E, 0xA0, 0xBC, 0xCC];
 
-pub const ONRE_TAKE_OFFER_IX: [u8; 8] = [37, 190, 224, 77, 197, 39, 203, 230];
-
 /// OnRe deposit `Offer` PDA seed: `[seed, token_in_mint, token_out_mint]`.
 /// For the relayer's deposit-side oracle (USDC → ONyc) the derivation is
 /// `[b"offer", usdc_mint, onyc_mint]` under `ONRE_PROGRAM_ID`. This is the
@@ -87,8 +85,7 @@ pub const INTENT_TRANSFER_SETTER_SEED: &[u8] = b"intent_transfer";
 /// constant by design: a runtime-rotatable pin would let a stolen
 /// authority redirect deposit/redeem flow (see the Fogo pin doc above).
 #[constant]
-pub const ONRE_INTENT_PROGRAM_ID: Pubkey =
-    pubkey!("inTFf5S7ZtYr8SkwGG85mjDwAyJwjqEPdH2p2nuyrL9");
+pub const ONRE_INTENT_PROGRAM_ID: Pubkey = pubkey!("inTFf5S7ZtYr8SkwGG85mjDwAyJwjqEPdH2p2nuyrL9");
 
 /// Permanent two-element setter allowlist accepted by `receive` (both
 /// directions). Keeping Fogo's setter trusted is what preserves the
@@ -141,8 +138,10 @@ mod allowlist_tests {
     #[test]
     fn allowlist_has_distinct_onre_and_fogo_setters() {
         let setters = allowed_intent_setters();
-        let (fogo, _) =
-            Pubkey::find_program_address(&[INTENT_TRANSFER_SETTER_SEED], &INTENT_TRANSFER_PROGRAM_ID);
+        let (fogo, _) = Pubkey::find_program_address(
+            &[INTENT_TRANSFER_SETTER_SEED],
+            &INTENT_TRANSFER_PROGRAM_ID,
+        );
         let (onre, _) =
             Pubkey::find_program_address(&[INTENT_TRANSFER_SETTER_SEED], &ONRE_INTENT_PROGRAM_ID);
         assert_eq!(setters.len(), 2);

@@ -165,7 +165,7 @@ export function encodeNttTransferArgsBorsh(args: NttTransferArgs): Uint8Array {
 
 /**
  * Inputs needed to build the NTT redeem + release_inbound_unlock account
- * lists for `unlock_onyc`. Everything here is derivable from on-chain NTT
+ * lists for `receive`. Everything here is derivable from on-chain NTT
  * state EXCEPT the per-VAA accounts (`nttInboxItem`, `nttTransceiverMessage`)
  * which are addressable only off-chain via the relayer's VAA pipeline.
  *
@@ -182,13 +182,13 @@ export interface NttRedeemContext {
 /**
  * Build the 14-entry account list expected by NTT v1's outbound
  * `transfer_lock` instruction. Mode-, mint-, and program-id-agnostic — the
- * relayer's Solana-side `lock_onyc` / `send_usdc_to_user` use it under the
+ * relayer's Solana-side `send` uses it under the
  * canonical per-leg NTT program ID (USDC.s or ONyc) with the relayer authority PDA as the
  * non-signer source owner; FOGO-side user-signed flows use it with the
  * FOGO NTT manager program ID and the user's wallet as a signer source.
  *
  * The order matches the NTT v1 `TransferLock` Anchor accounts struct
- * (verified against the relayer's Rust `lock_onyc` handler). Reordering
+ * (verified against the relayer's Rust `send` handler). Reordering
  * any entry silently breaks the CPI — keep these in lockstep with NTT
  * upstream.
  */
@@ -217,9 +217,9 @@ export interface BuildNttTransferLockAccountListParams {
 
 /**
  * Account count for the NTT `transfer_lock` instruction. The handler
- * unpacks exactly this many trailing accounts; the relayer instructions
- * (`lockOnyc`, `sendUsdcToUser`) pass it as the split-marker so the
- * on-chain program knows where the NTT slice ends and the next builder
+ * unpacks exactly this many trailing accounts; the relayer `send`
+ * instruction passes it as the split-marker so the on-chain program
+ * knows where the NTT slice ends and the next builder
  * (release-wormhole-outbound) begins.
  */
 export const NTT_TRANSFER_LOCK_ACCOUNT_COUNT = 14
@@ -399,16 +399,16 @@ export interface BuildNttRedeemReleaseAccountsParams {
   /** PDA that signs the redeem+release CPIs (relayer authority on this stack). */
   authority: PublicKey
   /**
-   * Destination ATA for the release leg. Caller picks per-instruction:
-   *  `claim_usdc` routes to the per-user inbox ATA, `unlock_onyc` routes
-   *  to the long-lived relayer custody ATA.
+   * Destination ATA for the release leg. Caller picks per-direction:
+   *  deposit `receive` routes to the per-user inbox ATA, withdraw `receive`
+   *  routes to the long-lived relayer custody ATA.
    */
   recipientAta: PublicKey
 }
 
 /**
  * Build the concatenated `redeem ‖ release ‖ NTT program` account list
- * for `claim_usdc` / `unlock_onyc`. Mint-agnostic — caller supplies the
+ * for `receive`. Mint-agnostic — caller supplies the
  * NTT-managed mint (USDC.s on the deposit leg, ONyc on the withdraw leg).
  *
  *   Redeem (10):  payer, config, peer, validatedMsg, registeredTransceiver,

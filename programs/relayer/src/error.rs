@@ -83,10 +83,10 @@ pub enum RelayerError {
     #[msg("OnRe Offer account data is shorter than the pinned layout")]
     OnreOfferTooShort,
 
-    #[msg("OnRe Offer token_in_mint does not match relayer_config.usdc_mint")]
+    #[msg("OnRe Offer token_in_mint does not match relayer_config.base_mint")]
     OnreOfferTokenInMintMismatch,
 
-    #[msg("OnRe Offer token_out_mint does not match relayer_config.onyc_mint")]
+    #[msg("OnRe Offer token_out_mint does not match relayer_config.asset_mint")]
     OnreOfferTokenOutMintMismatch,
 
     #[msg("onre_offer account owner is not the OnRe program — handler refuses to read a foreign account as a pricing oracle")]

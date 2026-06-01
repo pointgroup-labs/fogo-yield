@@ -8,7 +8,7 @@
  *   - `calculate_step_price` ↔ `calculateStepPrice`
  *
  * **Drift contract.** Consumers use these to compute the same NAV floor
- * the on-chain `swap_onyc_to_usdc` will enforce. If they diverge, a
+ * the on-chain `swap` will enforce. If they diverge, a
  * "quote clears floor" verdict gets rejected by the chain. The Rust
  * side has the `offer_layout_matches_fixture` tripwire; this module's
  * tests pin the same constants and replicate the same fixed-point math
@@ -95,7 +95,7 @@ export function redemptionExpectedOut(
 /**
  * Mirror of `deposit_expected_out` (USDC in → ONyc out), the algebraic
  * inverse of `redemptionExpectedOut`. Lets the cranker/webapp preview the
- * deposit-leg NAV floor that `swap_usdc_to_onyc` enforces on-chain.
+ * deposit-leg NAV floor that `swap` enforces on-chain.
  */
 export function depositExpectedOut(
   usdcInAmount: bigint,
@@ -148,7 +148,7 @@ export function parseActiveOfferVector(data: Uint8Array, now: bigint): OnreOffer
 
 /**
  * Mirror of `calculate_step_price`. Snaps to the END of the current
- * discrete step — must match `swap_onyc_to_usdc`'s on-chain snap
+ * discrete step — must match `swap`'s on-chain snap
  * exactly, or cranker preview and on-chain handler diverge.
  */
 export function calculateStepPrice(v: OnreOfferVector, now: bigint): bigint {

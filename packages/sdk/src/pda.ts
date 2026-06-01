@@ -18,31 +18,41 @@ export function findAuthorityPda(programId: PublicKey = RELAYER_PROGRAM_ID) {
   return PublicKey.findProgramAddressSync([RELAYER_SEED], programId)
 }
 
+/**
+ * Canonical flow-PDA derivation. `deposit` uses the inbound seed
+ * namespace, `withdraw` the outbound one.
+ */
+export function findFlowPda(
+  direction: 'deposit' | 'withdraw',
+  nttInboxItem: PublicKey,
+  programId: PublicKey = RELAYER_PROGRAM_ID,
+) {
+  const seed = direction === 'deposit' ? FLOW_INBOUND_SEED : FLOW_OUTBOUND_SEED
+  return PublicKey.findProgramAddressSync(
+    [seed, nttInboxItem.toBuffer()],
+    programId,
+  )
+}
+
 export function findInflightFlowPda(
   nttInboxItem: PublicKey,
   programId: PublicKey = RELAYER_PROGRAM_ID,
 ) {
-  return PublicKey.findProgramAddressSync(
-    [FLOW_INBOUND_SEED, nttInboxItem.toBuffer()],
-    programId,
-  )
+  return findFlowPda('deposit', nttInboxItem, programId)
 }
 
 export function findOutflightFlowPda(
   nttInboxItem: PublicKey,
   programId: PublicKey = RELAYER_PROGRAM_ID,
 ) {
-  return PublicKey.findProgramAddressSync(
-    [FLOW_OUTBOUND_SEED, nttInboxItem.toBuffer()],
-    programId,
-  )
+  return findFlowPda('withdraw', nttInboxItem, programId)
 }
 
 /**
  * Per-user inbox authority PDA — `[USER_INBOX_SEED, wallet]` under the
  * relayer program. Used as `recipient_address` in the user-signed FOGO
  * intent so NTT `release_inbound` deposits USDC into the ATA owned by
- * this PDA. `claim_usdc` re-derives + PDA-signs a sweep into the
+ * this PDA. `receive` re-derives + PDA-signs a sweep into the
  * relayer custody ATA.
  */
 export function findUserInboxAuthorityPda(

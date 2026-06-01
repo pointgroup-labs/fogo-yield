@@ -20,7 +20,7 @@ export type AdvanceContext = {
    * + post_vaa) where each tx is confirmed individually, and mainnet
    * congestion routinely pushes per-tx confirm to 20–40 s. Using
    * `rpcTimeoutMs` (15 s default) here aborts mid-sequence and leaves
-   * the flow `WithdrawPending` until the next scan.
+   * the flow `Pending` until the next scan.
    */
   txConfirmTimeoutMs: number
   /**

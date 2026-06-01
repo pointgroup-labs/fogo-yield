@@ -5,51 +5,36 @@ import type { AdvanceContext, AdvanceResult } from './types'
 import { runBounded } from '../utils/concurrency'
 import { errorClass, errorFields, recordErrorClass, rollupErrorClasses } from '../utils/log'
 import { withTimeout } from '../utils/rpc'
-import { claimUsdc } from './claim-usdc'
-import { lockOnyc } from './lock-onyc'
-import { sendUsdcToUser } from './send-usdc-to-user'
-import { swapOnycToUsdc } from './swap-onyc-to-usdc'
-import { swapUsdcToOnyc } from './swap-usdc-to-onyc'
-import { unlockOnyc } from './unlock-onyc'
+import { receive } from './receive'
+import { send } from './send'
+import { swap } from './swap'
 
 /**
- * Flow lifecycle states the cranker recognises. Mirrors the on-chain
- * `FlowStatus` enum (`programs/relayer/src/state.rs`) plus the synthetic
- * `Pending` value used for VAAs that don't yet have a Flow PDA.
+ * Flow lifecycle states the cranker recognises. The three real on-chain
+ * `FlowStatus` values (`programs/relayer/src/state.rs`) are `Received` and
+ * `Swapped`; the rest are synthetic:
+ *   - `Pending`     — no Flow PDA yet (entry point for either direction).
+ *   - `Closed`      — post-`send` terminal (Flow PDA closed for rent).
+ *   - `Undecodable` — sentinel for a PDA written by an older relayer IDL.
  *
- * Centralised here so leg handlers, scan dispatch, and tests share the
- * exact same vocabulary — typo'd statuses become compile errors instead
- * of silent skip-paths through `pickAdvanceForStatus`'s default branch.
+ * Direction (`deposit`/`withdraw`) rides on `ScannedFlow.direction`, so
+ * status alone picks the handler — no leg-prefixing. Centralised here so
+ * handlers, dispatch, and tests share one vocabulary; typo'd statuses
+ * become compile errors instead of silent skip-paths.
  */
 export const FLOW_STATUSES = [
-  // Deposit leg
   'Pending',
-  'Claimed',
+  'Received',
   'Swapped',
-  'Locked',
   'Closed',
-  // Withdraw leg — synthetic leg-prefixed strings (spec §3.5 Option A).
-  // The on-chain `FlowStatus` enum is shared between deposit and
-  // withdraw, so a bare `Claimed` cannot pick a handler. The enumerator
-  // (`enumerate.ts:synthesizeStatus`) prefixes withdraw statuses to
-  // disambiguate, and `pickAdvanceForStatus` dispatches on these.
-  'WithdrawPending',
-  'WithdrawClaimed',
-  'WithdrawSwapped',
-  'WithdrawClosed',
+  'Undecodable',
 ] as const
 export type FlowStatus = typeof FLOW_STATUSES[number]
 
 export type AdvanceFns = {
-  // Deposit leg
-  claimUsdc: typeof claimUsdc
-  swapUsdcToOnyc: typeof swapUsdcToOnyc
-  lockOnyc: typeof lockOnyc
-  // Withdraw leg — Jupiter-direct swap. OnRe's redemption queue is
-  // KYC-gated and never executes for the relayer PDA.
-  unlockOnyc: typeof unlockOnyc
-  swapOnycToUsdc: typeof swapOnycToUsdc
-  sendUsdcToUser: typeof sendUsdcToUser
+  receive: typeof receive
+  swap: typeof swap
+  send: typeof send
 }
 
 export type ScannedFlow = {
@@ -61,6 +46,8 @@ export type ScannedFlow = {
    * to the default skip branch.
    */
   status: FlowStatus | string
+  /** Which chain leg this VAA belongs to — drives mint/manager/route selection. */
+  direction: 'deposit' | 'withdraw'
   /** Source-chain tx signature; may be empty if unknown. */
   fogoTx: string
   /** Pre-fetched VAA bytes hex-encoded — preferred over fogoTx to avoid a second Wormholescan round-trip. */
@@ -121,12 +108,9 @@ export type ScanOptions = {
 }
 
 const DEFAULT_ADVANCE_FNS: AdvanceFns = {
-  claimUsdc,
-  swapUsdcToOnyc,
-  lockOnyc,
-  unlockOnyc,
-  swapOnycToUsdc,
-  sendUsdcToUser,
+  receive,
+  swap,
+  send,
 }
 
 const defaultEnumerateFlows: EnumerateFlowsFn = async () => []
@@ -188,13 +172,8 @@ export async function scanAndAdvance(
       }
     }
     tasks.push(async () => {
-      // Chain legs in-tick: a flow that progresses Pending → Claimed →
-      // Swapped → Locked shouldn't pay one scan-interval (and one full
-      // re-enumerate) per leg. We hold the FSM in-flight slot for the
-      // whole chain — releasing it between legs would let another task
-      // in this same tick race us on the same flow. Loop terminates on
-      // first non-`advanced` result, on abort, or when the new status
-      // has no successor dispatch.
+      // Chain legs in-tick so a flow advancing Pending→…→Closed doesn't pay
+      // a scan-interval per leg; hold the FSM slot for the whole chain.
       let currentStatus = flow.status
       let lastResult: AdvanceResult = {
         kind: 'noop',
@@ -206,7 +185,7 @@ export async function scanAndAdvance(
           break
         }
         ctx.log.debug('dispatching advance', { flow: flowKey, status: currentStatus })
-        const result = await nextDispatch(ctx, { fogoTx: flow.fogoTx, vaaHex: flow.vaaHex })
+        const result = await nextDispatch(ctx, { fogoTx: flow.fogoTx, vaaHex: flow.vaaHex, direction: flow.direction })
         logAdvanceResult(ctx, flowKey, currentStatus, result, opts.seenAdvanceErrors, iterationFailures)
         lastResult = result
         if (result.kind !== 'advanced') {
@@ -360,34 +339,20 @@ function logAdvanceResult(
 
 type DispatchFn = (
   ctx: AdvanceContext,
-  input: { fogoTx: string, vaaHex?: string },
+  input: { fogoTx: string, vaaHex?: string, direction: 'deposit' | 'withdraw' },
 ) => Promise<AdvanceResult>
 
 function pickAdvanceForStatus(status: FlowStatus | string, fns: AdvanceFns): DispatchFn | undefined {
   switch (status) {
-    // Deposit leg
     case 'Pending':
-      return fns.claimUsdc
-    case 'Claimed':
-      return fns.swapUsdcToOnyc
+      return fns.receive
+    case 'Received':
+      return fns.swap
     case 'Swapped':
-      return fns.lockOnyc
-    // Withdraw leg — synthetic leg-prefixed strings from
-    // `enumerate.ts:synthesizeStatus`. The shared on-chain `FlowStatus`
-    // (`Claimed`/`Swapped`) means we cannot dispatch on the bare
-    // on-chain value alone; the prefix lets the withdraw-leg `Claimed`
-    // route to `swapOnycToUsdc` while the deposit-leg `Claimed` routes
-    // to `swapUsdcToOnyc`.
-    case 'WithdrawPending':
-      return fns.unlockOnyc
-    case 'WithdrawClaimed':
-      return fns.swapOnycToUsdc
-    case 'WithdrawSwapped':
-      return fns.sendUsdcToUser
+      return fns.send
     default:
-      // 'Locked', 'Closed', 'WithdrawClosed', or any forward-compat
-      // on-chain status the cranker doesn't drive. Caller skips + bumps
-      // the `flow_skipped` counter with `reason = status`.
+      // 'Closed', 'Undecodable', or any forward-compat status the cranker
+      // doesn't drive. Caller skips + bumps `flow_skipped` with the status.
       return undefined
   }
 }

@@ -1,18 +1,7 @@
-//! Permissionless, route-agnostic swap for an in-flight flow.
-//!
-//! Replaces `swap_usdc_to_onyc` + `swap_onyc_to_usdc`. Routes on
-//! `flow.direction`: deposit swaps base→asset (fee skimmed from the asset
-//! OUTPUT, after the swap); withdraw swaps asset→base (fee skimmed from the
-//! asset INPUT, before the swap). The fee is always denominated in the asset
-//! token. The NAV floor is read from the config-pinned `price_oracle`
-//! (OnRe `Offer` PDA); no time-based freshness bound — OnRe NAV is canonical
-//! and self-accruing.
-//!
-//! Damage per call is bounded by the same independent layers the withdraw
-//! path established: NAV-anchored floor, bounded `Approve` (delegate model)
-//! or owner-signed sentinel (OnRe), exact-consume on input, floor-check on
-//! output, post-CPI `assert_ata_untampered`, and swap-account exclusion of
-//! relayer custody.
+//! Route-agnostic swap. Routes on `flow.direction`: deposit base→asset (fee
+//! from asset OUTPUT), withdraw asset→base (fee from asset INPUT); the fee is
+//! always asset-denominated. Output floor is the NAV from the config-pinned
+//! `price_oracle` (OnRe `Offer`) minus `max_slippage_bps`.
 
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::instruction::{AccountMeta, Instruction};
@@ -27,10 +16,10 @@ use crate::events::Swapped;
 use crate::onre::{apply_slippage_floor, oracle_expected_out, read_offer_nav_price};
 use crate::state::{Direction, Flow, FlowStatus, RelayerConfig};
 
-pub fn handler<'info>(
-    ctx: Context<'info, Swap<'info>>,
-    swap_ix_data: Vec<u8>,
-) -> Result<()> {
+/// Routes on `flow.direction`: deposit base→asset (fee from asset OUTPUT),
+/// withdraw asset→base (fee from asset INPUT). Fee is always asset-denominated;
+/// the output floor is the config-pinned OnRe NAV minus `max_slippage_bps`.
+pub fn handler<'info>(ctx: Context<'info, Swap<'info>>, swap_ix_data: Vec<u8>) -> Result<()> {
     let now_unix = u64::try_from(Clock::get()?.unix_timestamp)
         .map_err(|_| error!(RelayerError::OnreNavOverflow))?;
 
@@ -42,12 +31,19 @@ pub fn handler<'info>(
     );
 
     let cfg = &ctx.accounts.relayer_config;
-    require!(cfg.price_oracle != Pubkey::default(), RelayerError::BadPriceOracle);
+    require!(
+        cfg.price_oracle != Pubkey::default(),
+        RelayerError::BadPriceOracle
+    );
     require_keys_eq!(
         ctx.accounts.onre_offer.key(),
         cfg.price_oracle,
         RelayerError::BadPriceOracle
     );
+
+    // Defense-in-depth: re-entry is already blocked by the forbidden
+    // relayer_config; forbidding a self-CPI swap_program makes it explicit.
+    require_keys_neq!(ctx.accounts.swap_program.key(), crate::ID, RelayerError::SwapAccountNotAllowed);
 
     let base_ata_key = ctx.accounts.base_ata.key();
     let asset_ata_key = ctx.accounts.asset_ata.key();
@@ -58,7 +54,10 @@ pub fn handler<'info>(
         flow_key,
     ];
     for acc in ctx.remaining_accounts.iter() {
-        require!(!forbidden.contains(acc.key), RelayerError::SwapAccountNotAllowed);
+        require!(
+            !forbidden.contains(acc.key),
+            RelayerError::SwapAccountNotAllowed
+        );
         if *acc.key == base_ata_key || *acc.key == asset_ata_key {
             continue;
         }
@@ -75,23 +74,31 @@ pub fn handler<'info>(
 
     let deposit = matches!(direction, Direction::Deposit);
 
+    let token_program_info = ctx.accounts.token_program.to_account_info();
+    let asset_ata_info = ctx.accounts.asset_ata.to_account_info();
+    let asset_mint_info = ctx.accounts.asset_mint.to_account_info();
+    let fee_vault_info = ctx.accounts.fee_vault.to_account_info();
+    let authority_info = ctx.accounts.relayer_authority.to_account_info();
+    // Asset-denominated fee skim; no-ops on zero (see relayer_signed_transfer_checked).
+    let skim_fee = |amount: u64| {
+        relayer_signed_transfer_checked(
+            &token_program_info,
+            &asset_ata_info,
+            &asset_mint_info,
+            &fee_vault_info,
+            &authority_info,
+            authority_bump,
+            amount,
+            asset_decimals,
+        )
+    };
+
     let (swap_in, fee_before) = if deposit {
         (gross_in, 0u64)
     } else {
         let (net, fee) = cfg.apply_withdraw_fee(gross_in)?;
         require!(net > 0, RelayerError::ZeroAmountFlow);
-        if fee > 0 {
-            relayer_signed_transfer_checked(
-                &ctx.accounts.token_program.to_account_info(),
-                &ctx.accounts.asset_ata.to_account_info(),
-                &ctx.accounts.asset_mint.to_account_info(),
-                &ctx.accounts.fee_vault.to_account_info(),
-                &ctx.accounts.relayer_authority.to_account_info(),
-                authority_bump,
-                fee,
-                asset_decimals,
-            )?;
-        }
+        skim_fee(fee)?;
         (net, fee)
     };
 
@@ -109,11 +116,7 @@ pub fn handler<'info>(
 
     ctx.accounts.base_ata.reload()?;
     ctx.accounts.asset_ata.reload()?;
-    let (in_before, out_before) = if deposit {
-        (ctx.accounts.base_ata.amount, ctx.accounts.asset_ata.amount)
-    } else {
-        (ctx.accounts.asset_ata.amount, ctx.accounts.base_ata.amount)
-    };
+    let (in_before, out_before) = in_out(deposit, ctx.accounts.base_ata.amount, ctx.accounts.asset_ata.amount);
     require!(in_before >= swap_in, RelayerError::ZeroAmountFlow);
 
     if ctx.accounts.swap_delegate.key() != auth_key {
@@ -167,16 +170,19 @@ pub fn handler<'info>(
         auth_info.lamports() >= auth_lamports_pre,
         RelayerError::RelayerAuthorityTampered
     );
-    require_keys_eq!(*auth_info.owner, auth_owner_pre, RelayerError::RelayerAuthorityTampered);
-    require!(auth_info.data_is_empty(), RelayerError::RelayerAuthorityTampered);
+    require_keys_eq!(
+        *auth_info.owner,
+        auth_owner_pre,
+        RelayerError::RelayerAuthorityTampered
+    );
+    require!(
+        auth_info.data_is_empty(),
+        RelayerError::RelayerAuthorityTampered
+    );
 
     ctx.accounts.base_ata.reload()?;
     ctx.accounts.asset_ata.reload()?;
-    let (in_after, out_after) = if deposit {
-        (ctx.accounts.base_ata.amount, ctx.accounts.asset_ata.amount)
-    } else {
-        (ctx.accounts.asset_ata.amount, ctx.accounts.base_ata.amount)
-    };
+    let (in_after, out_after) = in_out(deposit, ctx.accounts.base_ata.amount, ctx.accounts.asset_ata.amount);
     let in_consumed = in_before
         .checked_sub(in_after)
         .ok_or(RelayerError::BalanceUnderflow)?;
@@ -190,19 +196,11 @@ pub fn handler<'info>(
     assert_ata_untampered(&ctx.accounts.asset_ata, &auth_key)?;
 
     let (net_out, fee) = if deposit {
-        let (net, fee) = ctx.accounts.relayer_config.apply_deposit_fee(out_received)?;
-        if fee > 0 {
-            relayer_signed_transfer_checked(
-                &ctx.accounts.token_program.to_account_info(),
-                &ctx.accounts.asset_ata.to_account_info(),
-                &ctx.accounts.asset_mint.to_account_info(),
-                &ctx.accounts.fee_vault.to_account_info(),
-                &ctx.accounts.relayer_authority.to_account_info(),
-                authority_bump,
-                fee,
-                asset_decimals,
-            )?;
-        }
+        let (net, fee) = ctx
+            .accounts
+            .relayer_config
+            .apply_deposit_fee(out_received)?;
+        skim_fee(fee)?;
         (net, fee)
     } else {
         (out_received, fee_before)
@@ -225,14 +223,33 @@ pub fn handler<'info>(
     Ok(())
 }
 
+/// `(input, output)` balances for the swap leg: deposit spends base for asset,
+/// withdraw spends asset for base.
+fn in_out(deposit: bool, base: u64, asset: u64) -> (u64, u64) {
+    if deposit { (base, asset) } else { (asset, base) }
+}
+
 fn assert_ata_untampered(
     ata: &InterfaceAccount<'_, TokenAccount>,
     expected_owner: &Pubkey,
 ) -> Result<()> {
-    require_keys_eq!(ata.owner, *expected_owner, RelayerError::AtaAuthorityTampered);
-    require!(matches!(ata.delegate, COption::None), RelayerError::AtaAuthorityTampered);
-    require!(ata.delegated_amount == 0, RelayerError::AtaAuthorityTampered);
-    require!(matches!(ata.close_authority, COption::None), RelayerError::AtaAuthorityTampered);
+    require_keys_eq!(
+        ata.owner,
+        *expected_owner,
+        RelayerError::AtaAuthorityTampered
+    );
+    require!(
+        matches!(ata.delegate, COption::None),
+        RelayerError::AtaAuthorityTampered
+    );
+    require!(
+        ata.delegated_amount == 0,
+        RelayerError::AtaAuthorityTampered
+    );
+    require!(
+        matches!(ata.close_authority, COption::None),
+        RelayerError::AtaAuthorityTampered
+    );
     Ok(())
 }
 
@@ -280,7 +297,7 @@ pub struct Swap<'info> {
 
     #[account(
         mut,
-        seeds = [crate::state::flow_seed(flow.direction), ntt_inbox_item.key().as_ref()],
+        seeds = [Flow::seed(flow.direction), ntt_inbox_item.key().as_ref()],
         bump = flow.bump,
     )]
     pub flow: Box<Account<'info, Flow>>,

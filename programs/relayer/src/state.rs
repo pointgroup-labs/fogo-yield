@@ -200,15 +200,6 @@ pub enum Direction {
     Withdraw,
 }
 
-/// Seed prefix for a flow PDA, selected by direction. Deposit flows live
-/// under the inbound namespace, withdraw flows under the outbound one.
-pub fn flow_seed(direction: Direction) -> &'static [u8] {
-    match direction {
-        Direction::Deposit => FLOW_INBOUND_SEED,
-        Direction::Withdraw => FLOW_OUTBOUND_SEED,
-    }
-}
-
 /// NTT manager for the token a `receive` leg pulls in.
 pub fn receive_ntt_program(direction: Direction) -> Pubkey {
     match direction {
@@ -231,8 +222,9 @@ pub fn send_ntt_program(direction: Direction) -> Pubkey {
 #[account]
 #[derive(InitSpace)]
 pub struct Flow {
-    /// Originator on FOGO; outbound recipient on the return leg.
-    pub recipient: [u8; 32],
+    /// Originator on FOGO; outbound recipient on the return leg. Both legs are
+    /// SVM, so this is a pubkey; the NTT wire ABI takes its raw bytes.
+    pub recipient: Pubkey,
 
     pub status: FlowStatus,
 
@@ -245,4 +237,15 @@ pub struct Flow {
     /// `Direction::Deposit` or `Direction::Withdraw`. Persisted at receive,
     /// read by `swap`/`send` to select fee side and NTT manager.
     pub direction: Direction,
+}
+
+impl Flow {
+    /// Seed prefix for a flow PDA, selected by direction. Deposit flows live
+    /// under the inbound namespace, withdraw flows under the outbound one.
+    pub fn seed(direction: Direction) -> &'static [u8] {
+        match direction {
+            Direction::Deposit => FLOW_INBOUND_SEED,
+            Direction::Withdraw => FLOW_OUTBOUND_SEED,
+        }
+    }
 }

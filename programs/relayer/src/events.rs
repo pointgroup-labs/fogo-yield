@@ -6,7 +6,7 @@ use crate::state::Direction;
 pub struct Received {
     pub flow: Pubkey,
     pub ntt_inbox_item: Pubkey,
-    pub recipient: [u8; 32],
+    pub recipient: Pubkey,
     pub direction: Direction,
     pub amount: u64,
 }
@@ -26,7 +26,7 @@ pub struct Swapped {
 pub struct Sent {
     pub flow: Pubkey,
     pub ntt_inbox_item: Pubkey,
-    pub recipient: [u8; 32],
+    pub recipient: Pubkey,
     pub direction: Direction,
     pub amount: u64,
 }

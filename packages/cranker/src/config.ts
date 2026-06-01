@@ -89,7 +89,7 @@ const schema = z.object({
    * followed by one `post_vaa` tx — each confirmed with this same
    * budget. Under mainnet congestion `confirmed`-commitment routinely
    * drifts to 20–40s per tx; a too-tight value aborts mid-sequence
-   * and leaves the Flow in `WithdrawPending` until the next scan.
+   * and leaves the Flow in `Pending` until the next scan.
    * The 30s minimum is *intentionally* defensive — anything lower
    * silently bricks withdraw flows during congestion windows.
    */

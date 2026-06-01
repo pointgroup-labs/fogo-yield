@@ -7,7 +7,7 @@ import type { PublicKey } from '@solana/web3.js'
  * object.
  */
 export interface FlowAccount {
-  recipient: number[] | Uint8Array
+  recipient: PublicKey
   status: { received?: object, swapped?: object }
   amount: { toString: () => string }
   payer: PublicKey

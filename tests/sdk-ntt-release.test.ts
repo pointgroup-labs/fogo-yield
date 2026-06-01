@@ -131,13 +131,14 @@ describe('buildNttReleaseWormholeOutboundAccountList', () => {
   })
 })
 
-describe('relayerClient.lockOnyc encodes transferLockAccountCount=14', () => {
+describe('relayerClient.send encodes transferLockAccountCount=14', () => {
   // Standalone provider; no on-chain calls — we only assert ix encoding.
   const connection = new Connection('http://127.0.0.1:8899', 'confirmed')
   const wallet = new Wallet(Keypair.generate())
   const provider = new AnchorProvider(connection, wallet, { commitment: 'confirmed' })
   const client = new RelayerClient(provider as any)
 
+  const baseMint = Keypair.generate().publicKey
   const assetMint = Keypair.generate().publicKey
   const nttInboxItem = Keypair.generate().publicKey
   const payer = Keypair.generate().publicKey
@@ -154,8 +155,10 @@ describe('relayerClient.lockOnyc encodes transferLockAccountCount=14', () => {
 
   it('appends transferLockAccountCount=14 (one byte) immediately after the 8-byte ix discriminator', async () => {
     const ix = await client
-      .lockOnyc({
+      .send({
+        direction: { deposit: {} },
         payer,
+        baseMint,
         assetMint,
         nttInboxItem,
         rentDestination: payer,
@@ -174,8 +177,10 @@ describe('relayerClient.lockOnyc encodes transferLockAccountCount=14', () => {
 
   it('produces 29 remainingAccounts (14 transfer_lock + 15 release)', async () => {
     const ix = await client
-      .lockOnyc({
+      .send({
+        direction: { deposit: {} },
         payer,
+        baseMint,
         assetMint,
         nttInboxItem,
         rentDestination: payer,
@@ -186,15 +191,17 @@ describe('relayerClient.lockOnyc encodes transferLockAccountCount=14', () => {
       })
       .instruction()
 
-    // Anchor's `accounts({...})` populates 9 named accounts; the rest
-    // are remaining_accounts. 9 + 29 = 38 total.
-    expect(ix.keys.length).toBe(9 + 14 + 15)
+    // Anchor's `accounts({...})` populates 11 named accounts; the rest
+    // are remaining_accounts. 11 + 29 = 40 total.
+    expect(ix.keys.length).toBe(11 + 14 + 15)
   })
 
   it('throws when release is omitted alongside outboxItem (no lock-only path post-merge)', () => {
     expect(() =>
-      client.lockOnyc({
+      client.send({
+        direction: { deposit: {} },
         payer,
+        baseMint,
         assetMint,
         nttInboxItem,
         rentDestination: payer,

@@ -28,8 +28,8 @@ export function relayerCommands(): Command {
       console.log(chalk.cyan('\nRelayerConfig'))
       console.log(chalk.dim(`  authority:        ${config.authority.toBase58()}`))
       console.log(chalk.dim(`  pendingAuthority: ${config.pendingAuthority?.toBase58() ?? '<none>'}`))
-      console.log(chalk.dim(`  usdcMint:         ${config.usdcMint.toBase58()}`))
-      console.log(chalk.dim(`  onycMint:         ${config.onycMint.toBase58()}`))
+      console.log(chalk.dim(`  baseMint:         ${config.baseMint.toBase58()}`))
+      console.log(chalk.dim(`  assetMint:        ${config.assetMint.toBase58()}`))
       console.log(chalk.dim(`  feeVault:         ${config.feeVault.toBase58()}`))
       console.log(chalk.dim(`  depositFeeBps:    ${config.depositFeeBps}`))
       console.log(chalk.dim(`  withdrawFeeBps:   ${config.withdrawFeeBps}`))
@@ -147,8 +147,8 @@ export function relayerCommands(): Command {
         client
           .initialize({
             authority,
-            usdcMint,
-            onycMint,
+            baseMint: usdcMint,
+            assetMint: onycMint,
             feeVault,
             depositFeeBps,
             withdrawFeeBps,
