@@ -49,7 +49,11 @@ export const FOGO_BRIDGE_PAYMASTER_DOMAIN = APP_DOMAIN
 export const FOGO_BRIDGE_VARIATION = 'OnReBridge'
 
 // Program the deposit `bridge_ntt_tokens` ix targets: OnRe fork of Fogo's
-// audited intent_transfer (declare_id! only). Swap to
+// audited intent_transfer (declare_id! only). No client Approve needed —
+// Fogo's token program grants debit authority to the intent_transfer
+// setter family (forks included) over the session-delegated source ATA,
+// so the fork's setter moves tokens exactly as Fogo's does
+// (docs/intent-fork-replay-argument.md). Swap to
 // `INTENT_TRANSFER_PROGRAM_ID` to revert deposits to Fogo's program.
 export const DEPOSIT_INTENT_PROGRAM_ID = ONRE_INTENT_PROGRAM_ID
 

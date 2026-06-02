@@ -1,0 +1,222 @@
+-const BRIDGE_MESSAGE_PREFIX: &str =
+-    "Fogo Bridge Transfer:\nSigning this intent will bridge out the tokens as described below.\n";
++const BRIDGE_MESSAGE_PREFIX: &str = "Fogo Bridge\n";
+-            Fogo Bridge Transfer:
+-            Signing this intent will bridge out the tokens as described below.
++            Fogo Bridge
+-            Fogo Bridge Transfer:
+-            Signing this intent will bridge out the tokens as described below.
++            Fogo Bridge
+-        approve, close_account, spl_token::try_ui_amount_into_amount, transfer_checked, Approve,
+-        CloseAccount, Mint, Token, TokenAccount, TransferChecked,
++        approve, close_account, spl_token::try_ui_amount_into_amount, Approve, CloseAccount, Mint,
++        Token, TokenAccount,
+-    pub source: Account<'info, TokenAccount>,
++    pub source: Box<Account<'info, TokenAccount>>,
+-    pub intermediate_token_account: Account<'info, TokenAccount>,
++    pub intermediate_token_account: Box<Account<'info, TokenAccount>>,
+-    pub mint: Account<'info, Mint>,
++    pub mint: Box<Account<'info, Mint>>,
++    /// Session (or wallet) authorizing the user-token debits via the FOGO
++    /// session rail; the patched token program checks it against source.owner.
++    pub signer_or_session: Signer<'info>,
++
++    /// CHECK: per-program signer PDA; the patched token program enforces its
++    /// presence-as-signer to prove this program is session-authorized.
++    #[account(seeds = [crate::session_token::PROGRAM_SIGNER_SEED], bump)]
++    pub program_signer: UncheckedAccount<'info>,
++
+-            intent_transfer_setter,
++            signer_or_session,
++            program_signer,
+-            intent_transfer_setter,
++            signer_or_session,
++            program_signer,
++        program_signer_seeds: &[&[&[u8]]],
+-                self.process_ntt_bridge(ntt_message, signer, signer_seeds, args)
++                self.process_ntt_bridge(ntt_message, signer, signer_seeds, program_signer_seeds, args)
++        program_signer_seeds: &[&[&[u8]]],
++            signer_or_session,
++            program_signer,
+-        transfer_checked(
+-            CpiContext::new_with_signer(
+-                token_program.to_account_info(),
+-                TransferChecked {
+-                    authority: intent_transfer_setter.to_account_info(),
+-                    from: source.to_account_info(),
+-                    mint: mint.to_account_info(),
+-                    to: intermediate_token_account.to_account_info(),
+-                },
+-                signer_seeds,
+-            ),
++        crate::session_token::in_session_transfer_checked(
++            token_program.to_account_info(),
++            source.to_account_info(),
++            mint.to_account_info(),
++            intermediate_token_account.to_account_info(),
++            signer_or_session.to_account_info(),
++            program_signer.to_account_info(),
++            program_signer_seeds,
+-        self.verify_and_collect_fee(fee_amount, fee_symbol_or_mint, signer_seeds)
++        self.verify_and_collect_fee(fee_amount, fee_symbol_or_mint, program_signer_seeds)
+-use anchor_spl::token::{transfer_checked, Mint, Token, TokenAccount, TransferChecked};
++use anchor_spl::token::{Mint, Token, TokenAccount};
+-use crate::{error::IntentTransferError, verify::verify_symbol_or_mint};
++use crate::{
++    error::IntentTransferError, session_token::in_session_transfer_checked,
++    verify::verify_symbol_or_mint,
++};
+-    pub intent_transfer_setter: &'a UncheckedAccount<'info>,
++    pub signer_or_session: &'a Signer<'info>,
++    pub program_signer: &'a UncheckedAccount<'info>,
++    /// Debits the fee from `fee_source` (owner = user) via the FOGO session rail.
++    /// `program_signer_seeds` must sign for `program_signer`.
+-        signer_seeds: &[&[&[u8]]],
++        program_signer_seeds: &[&[&[u8]]],
+-            intent_transfer_setter,
++            signer_or_session,
++            program_signer,
+-        transfer_checked(
+-            CpiContext::new_with_signer(
+-                token_program.to_account_info(),
+-                TransferChecked {
+-                    authority: intent_transfer_setter.to_account_info(),
+-                    from: fee_source.to_account_info(),
+-                    mint: fee_mint.to_account_info(),
+-                    to: fee_destination.to_account_info(),
+-                },
+-                signer_seeds,
+-            ),
++        in_session_transfer_checked(
++            token_program.to_account_info(),
++            fee_source.to_account_info(),
++            fee_mint.to_account_info(),
++            fee_destination.to_account_info(),
++            signer_or_session.to_account_info(),
++            program_signer.to_account_info(),
++            program_signer_seeds,
+-    token::{
+-        spl_token::try_ui_amount_into_amount, transfer_checked, Mint, Token, TokenAccount,
+-        TransferChecked,
+-    },
++    token::{spl_token::try_ui_amount_into_amount, Mint, Token, TokenAccount},
+-    pub source: Account<'info, TokenAccount>,
++    pub source: Box<Account<'info, TokenAccount>>,
+-    pub destination: Account<'info, TokenAccount>,
++    pub destination: Box<Account<'info, TokenAccount>>,
+-    pub mint: Account<'info, Mint>,
++    pub mint: Box<Account<'info, Mint>>,
++
++    /// Session (or wallet) authorizing the user-token debits via the FOGO
++    /// session rail; the patched token program checks it against source.owner.
++    pub signer_or_session: Signer<'info>,
++
++    /// CHECK: per-program signer PDA; the patched token program enforces its
++    /// presence-as-signer to prove this program is session-authorized.
++    #[account(seeds = [crate::session_token::PROGRAM_SIGNER_SEED], bump)]
++    pub program_signer: UncheckedAccount<'info>,
+-            intent_transfer_setter,
++            signer_or_session,
++            program_signer,
+-            intent_transfer_setter,
++            signer_or_session,
++            program_signer,
+-    pub fn verify_and_send(&mut self, signer_seeds: &[&[&[u8]]]) -> Result<()> {
++    pub fn verify_and_send(&mut self, program_signer_seeds: &[&[&[u8]]]) -> Result<()> {
+-            intent_transfer_setter,
++            signer_or_session,
++            program_signer,
+-        transfer_checked(
+-            CpiContext::new_with_signer(
+-                token_program.to_account_info(),
+-                TransferChecked {
+-                    authority: intent_transfer_setter.to_account_info(),
+-                    from: source.to_account_info(),
+-                    mint: mint.to_account_info(),
+-                    to: destination.to_account_info(),
+-                },
+-                signer_seeds,
+-            ),
++        crate::session_token::in_session_transfer_checked(
++            token_program.to_account_info(),
++            source.to_account_info(),
++            mint.to_account_info(),
++            destination.to_account_info(),
++            signer_or_session.to_account_info(),
++            program_signer.to_account_info(),
++            program_signer_seeds,
+-        self.verify_and_collect_fee(fee_amount, fee_symbol_or_mint, signer_seeds)
++        self.verify_and_collect_fee(fee_amount, fee_symbol_or_mint, program_signer_seeds)
+-declare_id!("Xfry4dW9m42ncAqm8LyEnyS5V6xu5DSJTMRQLiGkARD");
++declare_id!("inTFf5S7ZtYr8SkwGG85mjDwAyJwjqEPdH2p2nuyrL9");
++mod session_token;
+-        ctx.accounts
+-            .verify_and_send(&[&[INTENT_TRANSFER_SEED, &[ctx.bumps.intent_transfer_setter]]])
++        ctx.accounts.verify_and_send(&[&[
++            session_token::PROGRAM_SIGNER_SEED,
++            &[ctx.bumps.program_signer],
++        ]])
++            &[&[
++                session_token::PROGRAM_SIGNER_SEED,
++                &[ctx.bumps.program_signer],
++            ]],
++//! Canonical FOGO in-session token transfer for gasless user-token debits.
++//!
++//! FOGO's patched token program blesses a non-owner mover when the authority is
++//! a session account whose `Session.user == source.owner` and whose authorized
++//! programs include the caller — proven by the caller's program-signer PDA being
++//! present among the transfer's extra accounts as a signer. Anchor's
++//! `TransferChecked` CPI can't append that 5th meta, so we build the raw
++//! `transfer_checked` (disc 12) and `invoke_signed` it with the program-signer
++//! seeds.
++
++use anchor_lang::prelude::*;
++use anchor_lang::solana_program::instruction::{AccountMeta, Instruction};
++use anchor_lang::solana_program::program::invoke_signed;
++
++/// Seed of the per-program signer PDA the session rail requires; mirrors
++/// `fogo_sessions_sdk::token::PROGRAM_SIGNER_SEED`.
++pub const PROGRAM_SIGNER_SEED: &[u8] = b"fogo_session_program_signer";
++
++/// SPL Token `TransferChecked` instruction discriminator.
++const TRANSFER_CHECKED_IX: u8 = 12;
++
++/// Emit a `transfer_checked` authorized by a session, with `program_signer`
++/// (PDA([PROGRAM_SIGNER_SEED], this program)) appended as the in-session signer.
++/// `signer_seeds` must sign for `program_signer`.
++#[allow(clippy::too_many_arguments)]
++pub fn in_session_transfer_checked<'info>(
++    token_program: AccountInfo<'info>,
++    source: AccountInfo<'info>,
++    mint: AccountInfo<'info>,
++    destination: AccountInfo<'info>,
++    authority: AccountInfo<'info>,
++    program_signer: AccountInfo<'info>,
++    amount: u64,
++    decimals: u8,
++    signer_seeds: &[&[&[u8]]],
++) -> Result<()> {
++    let mut data = Vec::with_capacity(10);
++    data.push(TRANSFER_CHECKED_IX);
++    data.extend_from_slice(&amount.to_le_bytes());
++    data.push(decimals);
++
++    let ix = Instruction {
++        program_id: *token_program.key,
++        accounts: vec![
++            AccountMeta::new(*source.key, false),
++            AccountMeta::new_readonly(*mint.key, false),
++            AccountMeta::new(*destination.key, false),
++            AccountMeta::new_readonly(*authority.key, true),
++            AccountMeta::new_readonly(*program_signer.key, true),
++        ],
++        data,
++    };
++
++    invoke_signed(
++        &ix,
++        &[source, mint, destination, authority, program_signer, token_program],
++        signer_seeds,
++    )
++    .map_err(Into::into)
++}

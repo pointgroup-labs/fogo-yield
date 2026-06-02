@@ -1,0 +1,29 @@
+# Standalone test-only harness. NOT part of the relayer workspace (own
+# [workspace] table) so `anchor build` / `pnpm test`'s pretest never builds it.
+#
+# Stands in for the intent-transfer fork's `bridge_ntt_tokens` source debit:
+# loaded at the fork program id, it issues the byte-identical
+# `transfer_checked` signed by PDA([b"intent_transfer"], fork_id). This lets
+# the delegate-auth test exercise the FOGO patched token program's
+# authorization with the real setter PDA and none of the NTT scaffolding.
+#
+# Rebuild + install:
+#   cd tests/fixtures/programs/intent_setter_harness
+#   ~/.local/share/solana/install/active_release/bin/cargo-build-sbf
+#   cp target/deploy/intent_setter_harness.so \
+#      ../inTFf5S7ZtYr8SkwGG85mjDwAyJwjqEPdH2p2nuyrL9.so
+[workspace]
+
+[package]
+name = "intent_setter_harness"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[dependencies]
+solana-program = "2.1"
+
+[profile.release]
+overflow-checks = true

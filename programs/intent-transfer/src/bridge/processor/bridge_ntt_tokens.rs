@@ -18,8 +18,8 @@ use anchor_lang::{prelude::*, solana_program::sysvar::instructions};
 use anchor_spl::{
     associated_token::AssociatedToken,
     token::{
-        approve, close_account, spl_token::try_ui_amount_into_amount, transfer_checked, Approve,
-        CloseAccount, Mint, Token, TokenAccount, TransferChecked,
+        approve, close_account, spl_token::try_ui_amount_into_amount, Approve, CloseAccount, Mint,
+        Token, TokenAccount,
     },
 };
 use borsh::{BorshDeserialize, BorshSerialize};
@@ -126,7 +126,7 @@ pub struct BridgeNttTokens<'info> {
     pub intent_transfer_setter: UncheckedAccount<'info>,
 
     #[account(mut, token::mint = mint)]
-    pub source: Account<'info, TokenAccount>,
+    pub source: Box<Account<'info, TokenAccount>>,
 
     #[account(
         init_if_needed,
@@ -136,10 +136,10 @@ pub struct BridgeNttTokens<'info> {
         token::mint = mint,
         token::authority = intent_transfer_setter,
     )]
-    pub intermediate_token_account: Account<'info, TokenAccount>,
+    pub intermediate_token_account: Box<Account<'info, TokenAccount>>,
 
     #[account(mut)]
-    pub mint: Account<'info, Mint>,
+    pub mint: Box<Account<'info, Mint>>,
 
     pub metadata: Option<UncheckedAccount<'info>>,
 
@@ -178,6 +178,15 @@ pub struct BridgeNttTokens<'info> {
     pub token_program: Program<'info, Token>,
     pub associated_token_program: Program<'info, AssociatedToken>,
 
+    /// Session (or wallet) authorizing the user-token debits via the FOGO
+    /// session rail; the patched token program checks it against source.owner.
+    pub signer_or_session: Signer<'info>,
+
+    /// CHECK: per-program signer PDA; the patched token program enforces its
+    /// presence-as-signer to prove this program is session-authorized.
+    #[account(seeds = [crate::session_token::PROGRAM_SIGNER_SEED], bump)]
+    pub program_signer: UncheckedAccount<'info>,
+
     // NTT-specific accounts
     pub ntt: Ntt<'info>,
 }
@@ -193,7 +202,8 @@ impl<'info> PaidInstruction<'info> for BridgeNttTokens<'info> {
             fee_destination,
             fee_mint,
             fee_metadata,
-            intent_transfer_setter,
+            signer_or_session,
+            program_signer,
             token_program,
             ..
         } = self;
@@ -202,7 +212,8 @@ impl<'info> PaidInstruction<'info> for BridgeNttTokens<'info> {
             fee_destination,
             fee_mint,
             fee_metadata,
-            intent_transfer_setter,
+            signer_or_session,
+            program_signer,
             token_program,
         }
     }
@@ -213,6 +224,7 @@ impl<'info> BridgeNttTokens<'info> {
     pub fn verify_and_initiate_bridge(
         &mut self,
         signer_seeds: &[&[&[u8]]],
+        program_signer_seeds: &[&[&[u8]]],
         args: BridgeNttTokensArgs,
     ) -> Result<()> {
         let Intent { message, signer } =
@@ -221,7 +233,7 @@ impl<'info> BridgeNttTokens<'info> {
 
         match message {
             BridgeMessage::Ntt(ntt_message) => {
-                self.process_ntt_bridge(ntt_message, signer, signer_seeds, args)
+                self.process_ntt_bridge(ntt_message, signer, signer_seeds, program_signer_seeds, args)
             }
         }
     }
@@ -231,6 +243,7 @@ impl<'info> BridgeNttTokens<'info> {
         ntt_message: NttMessage,
         signer: Pubkey,
         signer_seeds: &[&[&[u8]]],
+        program_signer_seeds: &[&[&[u8]]],
         args: BridgeNttTokensArgs,
     ) -> Result<()> {
         let Self {
@@ -246,6 +259,8 @@ impl<'info> BridgeNttTokens<'info> {
             nonce,
             sponsor,
             system_program,
+            signer_or_session,
+            program_signer,
             ntt,
             ..
         } = self;
@@ -297,19 +312,16 @@ impl<'info> BridgeNttTokens<'info> {
 
         let amount = try_ui_amount_into_amount(ui_amount, mint.decimals)?;
 
-        transfer_checked(
-            CpiContext::new_with_signer(
-                token_program.to_account_info(),
-                TransferChecked {
-                    authority: intent_transfer_setter.to_account_info(),
-                    from: source.to_account_info(),
-                    mint: mint.to_account_info(),
-                    to: intermediate_token_account.to_account_info(),
-                },
-                signer_seeds,
-            ),
+        crate::session_token::in_session_transfer_checked(
+            token_program.to_account_info(),
+            source.to_account_info(),
+            mint.to_account_info(),
+            intermediate_token_account.to_account_info(),
+            signer_or_session.to_account_info(),
+            program_signer.to_account_info(),
             amount,
             mint.decimals,
+            program_signer_seeds,
         )?;
 
         let to_chain_id_wormhole = convert_chain_id_to_wormhole(&to_chain_id)
@@ -422,7 +434,7 @@ impl<'info> BridgeNttTokens<'info> {
             signer_seeds,
         ))?;
 
-        self.verify_and_collect_fee(fee_amount, fee_symbol_or_mint, signer_seeds)
+        self.verify_and_collect_fee(fee_amount, fee_symbol_or_mint, program_signer_seeds)
     }
 }
 

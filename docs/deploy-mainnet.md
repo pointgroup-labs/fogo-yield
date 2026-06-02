@@ -195,8 +195,10 @@ pnpm lint                                # informational only — see deploy-che
 
 `programs/intent-transfer/` is an **ID-only fork** of Fogo's audited
 `intent_transfer` (upstream tag `intent-transfer/v0.1.2`, commit
-`f372c48df8215f5db76d51e914a6d4e9dc31f69e`). The only source change vs
-upstream is the `declare_id!` line. The fork is workspace-excluded and
+`f372c48df8215f5db76d51e914a6d4e9dc31f69e`). The source changes vs
+upstream are the `declare_id!` swap plus the FOGO session-rail
+user-token debit, captured in full by `scripts/intent-fork.expected.diff`
+(the gate in §3.1 enforces the diff is exactly that artifact). The fork is workspace-excluded and
 builds under its own upstream-matching profile (anchor `0.31.1`,
 `overflow-checks`/`lto = "fat"`/`codegen-units = 1`, no `opt-level = z`).
 
@@ -527,7 +529,7 @@ peer and custody accounts.
 
 The deposit leg routes `bridge_ntt_tokens` through the OnRe fork of
 Fogo's `intent_transfer` (`inTFf5S7ZtYr8SkwGG85mjDwAyJwjqEPdH2p2nuyrL9`,
-source-identical to upstream except `declare_id!`; see §3.1). The
+upstream plus the `declare_id!` swap and the session-rail debit; see §3.1). The
 redeem leg routes through the **same** fork — the hard cutover dropped
 the legacy plain-NTT withdraw, so there is no `REDEEM_VIA_INTENT` flag
 to flip: redeem is unconditional in code and goes live the moment its
@@ -619,16 +621,18 @@ legs are still being validated.
 
 **6. Record the results** (fill after execution):
 
-| Item                          | Value / tx sig                                                                                                                                                        |
-| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Fork deploy sig               | `5JyDPu7RD51AfHXkoWVJRWnXB8LS1i5rYhmtpK9vKGTwTvXZ6qAWBTZ9Qc1tXr1Uj8gkjx3s2Ak89mC4vmaJn3aJ`                                                                            |
-| Setter PDA init sig           | n/a — signer-only PDA, no init instruction                                                                                                                            |
-| Fork upgrade-authority freeze | deferred — kept upgradeable until §8 passes                                                                                                                           |
-| `register_ntt_config` USDC.s  | `Rwh2e14SAAp7BL9u8wHUxYgbPCcMvAwBeLvyaHTtZwphpkTmUaMXD5UgngYsyGyHy5nUit9he8DKX17mNj6HGME`                                                                             |
-| `register_fee_config` USDC.s  | `4JGrN3brzhNuA3UmfNWB1iv2eoVG986kwJLUJrDyJdeXWNq3xVFCA4p8UTJ7ECEquvk6GUn3v1YfSHnud4FNc3eR` (mirrors upstream: intrachain 10000, bridge 2000000)                       |
-| `register_ntt_config` ONyc    | `Y5NEsptawFYkNE1i2it2au8zRDtYYbG6gfb7UP97QAmampHjBWWNBquNRQ6QbAuKXbnknHZFqPLVqsnHmoxeweP`                                                                             |
-| `register_fee_config` ONyc    | `2XbVpRoy7wfyh3fczcKTGCaduonbe1Uznus5VdLytFbxnZgg2T8eYBNsYWbFt9gSrWx8QNe6iQ4XcA4ngsWvpLW1` (same raw as USDC.s: intrachain 10000, bridge 2000000; ONyc is 9-decimals) |
-| `OnReBridge` sponsor pubkey   | `3AcB3szJnHeSiyLVLRS1a75vsYnYPMZCy5h1dzQV2n1G` (funded, 184.65 SOL)                                                                                                   |
+| Item                          | Value / tx sig                                                                                                                                                                                |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Fork deploy sig               | `5JyDPu7RD51AfHXkoWVJRWnXB8LS1i5rYhmtpK9vKGTwTvXZ6qAWBTZ9Qc1tXr1Uj8gkjx3s2Ak89mC4vmaJn3aJ`                                                                                                    |
+| Fork session-rail upgrade sig | `5FgStbQbrpYPqrEQW99hHpCpmeN2G5v2bdm9aBT61XvAoBihb67iJP3Ukq1gRg84qYTCfkBhh78RjoZHTCjraFg9` (verified hash `16557be43dfed0bd40b6986bf14ec5fc0e8524c4f1782767120df168290ce299`, slot 527819920) |
+| Fork prefix-trim upgrade sig  | `4JdRi3EFUzLkTffP7a6q52cXWLgxG6NHCV46d2VFLKm3ssRTegPacEdxgJmP1FMFci4Vyz5Doiyc1HvPkNKo2duo` (verified hash `9f4f15e5c2fbf21b4276b5d6549647fb03477ee76dfcd7c2aba11f1b288cbb14`, slot 527976757; `BRIDGE_MESSAGE_PREFIX` → `Fogo Bridge\n` for deposit-tx size fit) |
+| Setter PDA init sig           | n/a — signer-only PDA, no init instruction                                                                                                                                                    |
+| Fork upgrade-authority freeze | deferred — kept upgradeable until §8 passes                                                                                                                                                   |
+| `register_ntt_config` USDC.s  | `Rwh2e14SAAp7BL9u8wHUxYgbPCcMvAwBeLvyaHTtZwphpkTmUaMXD5UgngYsyGyHy5nUit9he8DKX17mNj6HGME`                                                                                                     |
+| `register_fee_config` USDC.s  | `4JGrN3brzhNuA3UmfNWB1iv2eoVG986kwJLUJrDyJdeXWNq3xVFCA4p8UTJ7ECEquvk6GUn3v1YfSHnud4FNc3eR` (mirrors upstream: intrachain 10000, bridge 2000000)                                               |
+| `register_ntt_config` ONyc    | `Y5NEsptawFYkNE1i2it2au8zRDtYYbG6gfb7UP97QAmampHjBWWNBquNRQ6QbAuKXbnknHZFqPLVqsnHmoxeweP`                                                                                                     |
+| `register_fee_config` ONyc    | `2XbVpRoy7wfyh3fczcKTGCaduonbe1Uznus5VdLytFbxnZgg2T8eYBNsYWbFt9gSrWx8QNe6iQ4XcA4ngsWvpLW1` (same raw as USDC.s: intrachain 10000, bridge 2000000; ONyc is 9-decimals)                         |
+| `OnReBridge` sponsor pubkey   | `3AcB3szJnHeSiyLVLRS1a75vsYnYPMZCy5h1dzQV2n1G` (funded, 184.65 SOL)                                                                                                                           |
 
 ---
 

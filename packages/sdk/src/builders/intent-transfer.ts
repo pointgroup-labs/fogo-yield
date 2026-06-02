@@ -36,7 +36,7 @@ const INTENT_VERSION_MAJOR = 0
 const INTENT_VERSION_MINOR = 2
 
 const BRIDGE_OUT_MESSAGE_HEADER
-  = 'Fogo Bridge Transfer:\nSigning this intent will bridge out the tokens as described below.\n'
+  = 'Fogo Bridge\n'
 
 export interface BuildBridgeOutIntentMessageParams {
   /** `fogo` for OnRe deposits. */
@@ -156,6 +156,15 @@ export interface BuildBridgeNttIxParams {
   feeMetadata: PublicKey | null
   feeConfig: PublicKey
 
+  /**
+   * Session account (or wallet) authorizing the user-token debits via the
+   * FOGO session rail. Signs the transaction; the patched token program
+   * checks it against `source.owner`.
+   */
+  signerOrSession: PublicKey
+  /** Per-program signer PDA: `findProgramSignerPda(intentTransferProgramId)`. */
+  programSigner: PublicKey
+
   // NTT sub-context
   ntt: NttBridgeSubAccounts
 
@@ -202,6 +211,8 @@ export function buildBridgeNttTokensIx(
     readonly(SystemProgram.programId),
     readonly(TOKEN_PROGRAM_ID),
     readonly(ASSOCIATED_TOKEN_PROGRAM_ID),
+    { pubkey: params.signerOrSession, isSigner: true, isWritable: false },
+    readonly(params.programSigner),
     // NTT sub-struct (IDL order)
     readonly(SYSVAR_CLOCK_PUBKEY),
     readonly(SYSVAR_RENT_PUBKEY),

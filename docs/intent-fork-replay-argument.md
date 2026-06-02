@@ -20,14 +20,32 @@ relayer pins inbound NTT senders to a permanent two-element allowlist
 through _either_ program is accepted on Solana.
 
 So a third party who observes a user's signed intent can, before it
-lands, replay it against the **dormant** program (Fogo's, which we no
-longer route through) and become the sponsor. The relayer accepts it
-because the Fogo setter is allowlisted. The replay **does land and does
-move the user's tokens** — Fogo's custom SPL-token program grants debit
-authority to the intent-transfer setter _family_ (forks included), so the
-dormant program's setter PDA can debit the session-delegated source ATA
-exactly as the active one does. This is a real landing vector, bounded by
-its value flow, not by authorization.
+lands, try to replay it against the **dormant** program (Fogo's, which we
+no longer route through) and become the sponsor. The relayer would accept
+the inbound NTT message because the Fogo setter is allowlisted. But the
+replay **fails at the user-token debit**: the fork debits `source` and
+`fee_source` via Fogo's in-session token rail, not a global setter PDA.
+That rail authorizes a non-owner mover only when the user's `Session`
+both (a) has `session.user == source.owner` and (b) lists the _calling
+program's_ program-signer PDA in its `authorized_programs`, proven by
+that PDA being present-as-signer among the transfer's extra accounts
+(`session_token::in_session_transfer_checked`). A replay routed through
+the dormant Fogo program presents **Fogo's** program-signer PDA, which an
+OnRe-domain session does not authorize, so the patched token program
+rejects the debit (`0x4`/owner-mismatch) and no tokens move.
+
+The earlier "setter family, forks included" framing — where any
+intent-transfer fork's setter PDA could debit the session-delegated ATA —
+was wrong: the session pins authorization to the **specific** program
+whose signer it blessed, not to a fork family.
+
+## The residual vector: same-program sponsor swap
+
+The session rail closes cross-program replay. What remains is a replay
+against the **active** fork itself with a different `sponsor`: the
+program-signer matches, the session authorizes it, so the debit lands and
+only the unpinned `sponsor` changes. The rest of this document bounds that
+residual case.
 
 ## What the value flow actually is
 
@@ -102,15 +120,19 @@ nothing" framing was wrong on both counts.
 
 ## Conclusion
 
-The unpinned `sponsor` permits cross-program replay against the dormant
-program, and that replay **does move the user's tokens**. But it cannot
-steal principal (recipient is signed), the only asset it can divert is a
-single transfer's fee revenue (from OnRe's sponsor to the replayer), and
-even that requires winning a nonce race against OnRe's own immediate
-submission on bytes that never hit a public mempool. An on-chain replay
-gate would add audited-fork surface to defend a small, bounded,
-self-front-running fee leak with no principal at stake. We therefore
-accept the risk without an on-chain gate, backed by the monitoring metric.
+The unpinned `sponsor` leaves two replay shapes. Cross-program replay
+against the dormant Fogo program is **closed on-chain**: the session rail
+debits user tokens only for the program whose signer the session
+authorized, and an OnRe-domain session does not authorize Fogo's, so that
+replay fails at the debit and moves nothing. The residual shape is a
+same-program sponsor swap on the active fork; it cannot steal principal
+(recipient is signed), the only asset it can divert is a single transfer's
+fee revenue (from OnRe's sponsor to the replayer), and even that requires
+winning a nonce race against OnRe's own immediate submission on bytes that
+never hit a public mempool. An on-chain replay gate would add audited-fork
+surface to defend a small, bounded, self-front-running fee leak with no
+principal at stake. We therefore accept the risk without an on-chain gate,
+backed by the monitoring metric.
 
 ## In-repo vs ops boundary
 

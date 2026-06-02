@@ -7,6 +7,7 @@ import {
   buildBridgeNttTokensIx,
   buildBridgeOutIntentMessage,
   buildIntentVerifierIx,
+  findProgramSignerPda,
   findUserInboxAuthorityPda,
   RELAYER_PROGRAM_ID,
 } from '@fogo-onre/sdk'
@@ -288,6 +289,8 @@ async function buildIntentBridgeIxs(args: {
   const wallet = (sessionState as { solanaWallet: { signMessage: (m: Uint8Array) => Promise<Uint8Array> } }).solanaWallet
   const signature = await wallet.signMessage(message)
 
+  const [programSigner] = findProgramSignerPda(ctx.topLevel.intentTransferProgramId)
+
   return {
     ixs: [
       // ~700k CU empirically; the runtime default (200k * num_ixs)
@@ -296,6 +299,8 @@ async function buildIntentBridgeIxs(args: {
       buildIntentVerifierIx(sessionState.walletPublicKey, signature, message),
       buildBridgeNttTokensIx({
         ...ctx.topLevel,
+        signerOrSession: sessionState.sessionPublicKey,
+        programSigner,
         ntt: ctx.ntt,
         signedQuoteBytes: ctx.signedQuoteBytes,
         payDestinationAtaRent: ctx.payDestinationAtaRent,

@@ -71,6 +71,9 @@ export const ONRE_INTENT_PROGRAM_ID = new PublicKey('inTFf5S7ZtYr8SkwGG85mjDwAyJ
 /** Singleton setter-PDA seed inside `intent_transfer`. */
 export const INTENT_TRANSFER_SETTER_SEED = Buffer.from('intent_transfer')
 
+/** Per-program signer-PDA seed required by the FOGO session token rail. */
+export const PROGRAM_SIGNER_SEED = Buffer.from('fogo_session_program_signer')
+
 export const USDC_DECIMALS = 6
 export const ONYC_DECIMALS = 9
 export const FOGO_ONYC_DECIMALS = ONYC_DECIMALS

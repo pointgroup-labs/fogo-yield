@@ -10,6 +10,7 @@ mod error;
 mod fees;
 mod intrachain;
 mod nonce;
+mod session_token;
 mod verify;
 
 use crate::config::state::fee_config::FeeConfig;
@@ -27,8 +28,10 @@ pub mod intent_transfer {
 
     #[instruction(discriminator = [0])]
     pub fn send_tokens<'info>(ctx: Context<'_, '_, '_, 'info, SendTokens<'info>>) -> Result<()> {
-        ctx.accounts
-            .verify_and_send(&[&[INTENT_TRANSFER_SEED, &[ctx.bumps.intent_transfer_setter]]])
+        ctx.accounts.verify_and_send(&[&[
+            session_token::PROGRAM_SIGNER_SEED,
+            &[ctx.bumps.program_signer],
+        ]])
     }
 
     #[instruction(discriminator = [1])]
@@ -38,6 +41,10 @@ pub mod intent_transfer {
     ) -> Result<()> {
         ctx.accounts.verify_and_initiate_bridge(
             &[&[INTENT_TRANSFER_SEED, &[ctx.bumps.intent_transfer_setter]]],
+            &[&[
+                session_token::PROGRAM_SIGNER_SEED,
+                &[ctx.bumps.program_signer],
+            ]],
             args,
         )
     }

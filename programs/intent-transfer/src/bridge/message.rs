@@ -8,8 +8,7 @@ use nom::{
 };
 use solana_intents::{tag_key_value, SymbolOrMint, Version};
 
-const BRIDGE_MESSAGE_PREFIX: &str =
-    "Fogo Bridge Transfer:\nSigning this intent will bridge out the tokens as described below.\n";
+const BRIDGE_MESSAGE_PREFIX: &str = "Fogo Bridge\n";
 
 #[derive(Debug, PartialEq)]
 pub enum BridgeMessage {
@@ -146,8 +145,7 @@ mod tests {
     #[test]
     fn test_parse() {
         let message = indoc! {"
-            Fogo Bridge Transfer:
-            Signing this intent will bridge out the tokens as described below.
+            Fogo Bridge
 
             version: 0.2
             from_chain_id: foo
@@ -179,8 +177,7 @@ mod tests {
     #[test]
     fn test_parse_with_unexpected_data_after_end() {
         let message = indoc! {"
-            Fogo Bridge Transfer:
-            Signing this intent will bridge out the tokens as described below.
+            Fogo Bridge
 
             version: 0.2
             from_chain_id: foo

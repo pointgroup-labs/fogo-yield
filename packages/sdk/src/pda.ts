@@ -5,6 +5,7 @@ import {
   FLOW_OUTBOUND_SEED,
   INTENT_TRANSFER_PROGRAM_ID,
   INTENT_TRANSFER_SETTER_SEED,
+  PROGRAM_SIGNER_SEED,
   RELAYER_PROGRAM_ID,
   RELAYER_SEED,
   USER_INBOX_SEED,
@@ -79,4 +80,16 @@ export function findIntentTransferSetterPda(
     [INTENT_TRANSFER_SETTER_SEED],
     programId,
   )
+}
+
+/**
+ * `intent_transfer`'s per-program signer PDA. The FOGO patched token
+ * program requires this account, present-as-signer among a session
+ * transfer's extra accounts, to prove the program is session-authorized.
+ * Pass the same `intent_transfer` program targeted by the bridge ix.
+ */
+export function findProgramSignerPda(
+  programId: PublicKey = INTENT_TRANSFER_PROGRAM_ID,
+) {
+  return PublicKey.findProgramAddressSync([PROGRAM_SIGNER_SEED], programId)
 }

@@ -10,10 +10,7 @@ use crate::{
 use anchor_lang::{prelude::*, solana_program::sysvar::instructions};
 use anchor_spl::{
     associated_token::AssociatedToken,
-    token::{
-        spl_token::try_ui_amount_into_amount, transfer_checked, Mint, Token, TokenAccount,
-        TransferChecked,
-    },
+    token::{spl_token::try_ui_amount_into_amount, Mint, Token, TokenAccount},
 };
 use chain_id::ChainId;
 use solana_intents::Intent;
@@ -32,12 +29,12 @@ pub struct SendTokens<'info> {
     pub intent_transfer_setter: UncheckedAccount<'info>,
 
     #[account(mut, token::mint = mint)]
-    pub source: Account<'info, TokenAccount>,
+    pub source: Box<Account<'info, TokenAccount>>,
 
     #[account(init_if_needed, payer = sponsor, associated_token::mint = mint, associated_token::authority = destination_owner)]
-    pub destination: Account<'info, TokenAccount>,
+    pub destination: Box<Account<'info, TokenAccount>>,
 
-    pub mint: Account<'info, Mint>,
+    pub mint: Box<Account<'info, Mint>>,
 
     pub metadata: Option<UncheckedAccount<'info>>,
 
@@ -72,6 +69,15 @@ pub struct SendTokens<'info> {
     pub system_program: Program<'info, System>,
     pub token_program: Program<'info, Token>,
     pub associated_token_program: Program<'info, AssociatedToken>,
+
+    /// Session (or wallet) authorizing the user-token debits via the FOGO
+    /// session rail; the patched token program checks it against source.owner.
+    pub signer_or_session: Signer<'info>,
+
+    /// CHECK: per-program signer PDA; the patched token program enforces its
+    /// presence-as-signer to prove this program is session-authorized.
+    #[account(seeds = [crate::session_token::PROGRAM_SIGNER_SEED], bump)]
+    pub program_signer: UncheckedAccount<'info>,
 }
 
 impl<'info> PaidInstruction<'info> for SendTokens<'info> {
@@ -85,7 +91,8 @@ impl<'info> PaidInstruction<'info> for SendTokens<'info> {
             fee_destination,
             fee_mint,
             fee_metadata,
-            intent_transfer_setter,
+            signer_or_session,
+            program_signer,
             token_program,
             ..
         } = self;
@@ -94,18 +101,20 @@ impl<'info> PaidInstruction<'info> for SendTokens<'info> {
             fee_destination,
             fee_mint,
             fee_metadata,
-            intent_transfer_setter,
+            signer_or_session,
+            program_signer,
             token_program,
         }
     }
 }
 
 impl<'info> SendTokens<'info> {
-    pub fn verify_and_send(&mut self, signer_seeds: &[&[&[u8]]]) -> Result<()> {
+    pub fn verify_and_send(&mut self, program_signer_seeds: &[&[&[u8]]]) -> Result<()> {
         let Self {
             chain_id,
             destination,
-            intent_transfer_setter,
+            signer_or_session,
+            program_signer,
             metadata,
             mint,
             source,
@@ -147,21 +156,18 @@ impl<'info> SendTokens<'info> {
 
         verify_and_update_nonce(nonce, new_nonce)?;
 
-        transfer_checked(
-            CpiContext::new_with_signer(
-                token_program.to_account_info(),
-                TransferChecked {
-                    authority: intent_transfer_setter.to_account_info(),
-                    from: source.to_account_info(),
-                    mint: mint.to_account_info(),
-                    to: destination.to_account_info(),
-                },
-                signer_seeds,
-            ),
+        crate::session_token::in_session_transfer_checked(
+            token_program.to_account_info(),
+            source.to_account_info(),
+            mint.to_account_info(),
+            destination.to_account_info(),
+            signer_or_session.to_account_info(),
+            program_signer.to_account_info(),
             try_ui_amount_into_amount(amount, mint.decimals)?,
             mint.decimals,
+            program_signer_seeds,
         )?;
 
-        self.verify_and_collect_fee(fee_amount, fee_symbol_or_mint, signer_seeds)
+        self.verify_and_collect_fee(fee_amount, fee_symbol_or_mint, program_signer_seeds)
     }
 }
