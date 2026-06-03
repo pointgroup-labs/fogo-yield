@@ -80,14 +80,28 @@ jobs:
       - name: Lint
         run: pnpm lint
 
-      # `pnpm test`'s pretest runs `anchor build` to produce the relayer .so
-      # the LiteSVM suite loads, so this job needs the Solana + Anchor
-      # toolchain (versions pinned in Anchor.toml). Placed after Lint so a
-      # cheap lint failure fails fast before paying the toolchain cost.
-      # rust-cache speeds the relayer SBF compile in `anchor build`.
-      - uses: Swatinem/rust-cache@v2
+      # The LiteSVM suite loads exactly one build artifact —
+      # `target/deploy/fogo_onre_relayer.so`. The committed IDL + generated
+      # types (`packages/sdk/src/{idl,types}`) mean nothing else consumes
+      # `anchor build` output, so cache the .so and skip the ~5-min SBF
+      # compile (plus the Solana + Anchor toolchain install) whenever the
+      # relayer source, lockfile, and toolchain pins are unchanged.
+      # Exact-key only — no restore-keys — so any input change rebuilds
+      # rather than ever loading a stale .so against new source.
+      - name: Cache relayer .so
+        id: relayer-so
+        uses: actions/cache@v4
+        with:
+          path: target/deploy/fogo_onre_relayer.so
+          key: relayer-so-${{ hashFiles('programs/relayer/**', 'Cargo.lock', 'Cargo.toml', 'Anchor.toml', 'rust-toolchain.toml') }}
+
+      # Everything down to `Build relayer .so` is the cold-build path only;
+      # on a cache hit the .so is restored and these are all skipped.
+      - if: steps.relayer-so.outputs.cache-hit != 'true'
+        uses: Swatinem/rust-cache@v2
 
       - name: Install Solana
+        if: steps.relayer-so.outputs.cache-hit != 'true'
         run: |
           sh -c "$(curl -sSfL https://release.anza.xyz/v3.1.8/install)"
           echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
@@ -95,6 +109,7 @@ jobs:
       # Prebuilt binary — far cheaper than compiling anchor-cli from source.
       # 1.0.2 matches Anchor.toml's pin, so no avm version switch is needed.
       - name: Install Anchor
+        if: steps.relayer-so.outputs.cache-hit != 'true'
         run: |
           mkdir -p "$HOME/.local/bin"
           curl -sSfL https://github.com/coral-xyz/anchor/releases/download/v1.0.2/anchor-1.0.2-x86_64-unknown-linux-gnu -o "$HOME/.local/bin/anchor"
@@ -102,8 +117,17 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           "$HOME/.local/bin/anchor" --version
 
+      - name: Build relayer .so
+        if: steps.relayer-so.outputs.cache-hit != 'true'
+        run: anchor build --ignore-keys
+
+      # Call vitest directly, NOT `pnpm test`: its `pretest` hook reruns
+      # `anchor build`, which would defeat the cache above. Local `pnpm
+      # test` keeps its rebuild-then-test behavior unchanged.
       - name: Tests
-        run: pnpm test
+        run: |
+          pnpm sdk build
+          pnpm exec vitest run
 
       # Webapp typecheck + Next.js build. Without this, a webapp-only
       # type break (or missing env-gate misuse) ships green to main.
