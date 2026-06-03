@@ -23,7 +23,7 @@ import {
 import { getSettings } from '@/store/settings'
 import { getFogoConnection } from '@/utils/connections'
 import { formatBaseUnitsExact } from '@/utils/transfer'
-import { readBridgeTransferFee } from './feeConfig'
+import { readFeeConfig } from './feeConfig'
 import {
   assertRecipientIsUserInbox,
   deriveIntentPdas,
@@ -57,15 +57,14 @@ export function createWithdrawBridgeContextProvider(
 ): BridgeContextProvider {
   return async ({ walletPublicKey, recipientAddress, amount, outboxItem }) => {
     const bridgeSponsor = await fetchBridgeSponsor()
-    // Redeem pays its fee in ONyc: fee_source is the user's ONyc ATA,
-    // fee_destination the sponsor's; symbol byte-matches metadata (`ONyc`).
+    // Redeem pays its fee in ONyc: fee_source is the user's ONyc ATA. The fee
+    // receiver comes from the on-chain FeeConfig `fee_recipient` (an ATA OnRe
+    // controls); `bridgeSponsor` stays the gas payer / `sponsor` account.
     const pdas = deriveIntentPdas(walletPublicKey, REDEEM_INTENT_PROGRAM_ID, FOGO_ONYC_MINT, FOGO_ONYC_MINT)
 
     const resolvedFeeConfig = overrides.feeConfig ?? pdas.feeConfig
     const feeSource = overrides.feeSource
       ?? getAssociatedTokenAddressSync(FOGO_ONYC_MINT, walletPublicKey)
-    const feeDestination = overrides.feeDestination
-      ?? getAssociatedTokenAddressSync(FOGO_ONYC_MINT, bridgeSponsor, true)
 
     assertRecipientIsUserInbox(walletPublicKey, recipientAddress)
 
@@ -73,9 +72,9 @@ export function createWithdrawBridgeContextProvider(
     const fogoConn = getFogoConnection(fogoRpcUrl)
     const destinationAta = getAssociatedTokenAddressSync(ONYC_MINT, recipientAddress, true)
 
-    const [nonceValue, bridgeFeeRaw, payDestinationAtaRent, wormhole] = await Promise.all([
+    const [nonceValue, feeConfigData, payDestinationAtaRent, wormhole] = await Promise.all([
       readNonceCount(fogoConn, pdas.noncePda),
-      readBridgeTransferFee(fogoConn, resolvedFeeConfig),
+      readFeeConfig(fogoConn, resolvedFeeConfig),
       destinationAtaIsMissing(destinationAta, solanaRpcUrl),
       import('./wormholeNttQuote').then(m => m.fetchOnycRedeemQuote({
         walletPublicKey,
@@ -87,8 +86,13 @@ export function createWithdrawBridgeContextProvider(
       })),
     ])
 
+    // Fee ATA is owned by the configured `fee_recipient`; fall back to the
+    // legacy sponsor-owned ATA only while the FeeConfig PDA is un-migrated.
+    const feeDestination = overrides.feeDestination
+      ?? getAssociatedTokenAddressSync(FOGO_ONYC_MINT, feeConfigData.feeRecipient ?? bridgeSponsor, true)
+
     const feeAmount = overrides.feeAmount
-      ?? formatBaseUnitsExact(bridgeFeeRaw, ONYC_DECIMALS)
+      ?? formatBaseUnitsExact(feeConfigData.bridgeTransferFee, ONYC_DECIMALS)
 
     return {
       signedQuoteBytes: wormhole.signedQuoteBytes,

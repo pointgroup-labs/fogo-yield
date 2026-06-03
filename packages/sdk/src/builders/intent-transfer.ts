@@ -2,6 +2,7 @@ import type { PublicKey } from '@solana/web3.js'
 import { ASSOCIATED_TOKEN_PROGRAM_ID, TOKEN_PROGRAM_ID } from '@solana/spl-token'
 import {
   Ed25519Program,
+  PublicKey as PublicKeyCtor,
   SystemProgram,
   SYSVAR_CLOCK_PUBKEY,
   SYSVAR_INSTRUCTIONS_PUBKEY,
@@ -203,11 +204,11 @@ export function buildBridgeNttTokensIx(
     readonly(params.expectedNttConfig),
     writable(params.nonce),
     signerWritable(params.sponsor),
+    readonly(params.feeConfig),
     writable(params.feeSource),
     writable(params.feeDestination),
     readonly(params.feeMint),
     readonly(params.feeMetadata ?? PUBKEY_NULL),
-    readonly(params.feeConfig),
     readonly(SystemProgram.programId),
     readonly(TOKEN_PROGRAM_ID),
     readonly(ASSOCIATED_TOKEN_PROGRAM_ID),
@@ -242,6 +243,74 @@ export function buildBridgeNttTokensIx(
   data[0] = BRIDGE_NTT_TOKENS_DISCRIMINATOR
   data.set(params.signedQuoteBytes, 1)
   data[1 + 165] = params.payDestinationAtaRent ? 1 : 0
+
+  return new TransactionInstruction({ programId, keys, data })
+}
+
+/** Non-Anchor 1-byte tag (IDL `discriminator: [5]`). */
+const UPDATE_FEE_CONFIG_DISCRIMINATOR = 0x05
+
+const FEE_CONFIG_SEED = Buffer.from('fee_config')
+const BPF_LOADER_UPGRADEABLE_ID = new PublicKeyCtor(
+  'BPFLoaderUpgradeab1e11111111111111111111111',
+)
+
+/** Canonical per-mint `FeeConfig` PDA under a given intent_transfer program. */
+export function findFeeConfigPda(
+  intentTransferProgramId: PublicKey,
+  mint: PublicKey,
+): PublicKey {
+  return PublicKeyCtor.findProgramAddressSync(
+    [FEE_CONFIG_SEED, mint.toBuffer()],
+    intentTransferProgramId,
+  )[0]
+}
+
+export interface BuildUpdateFeeConfigIxParams {
+  /** Which intent_transfer program owns the FeeConfig PDA. */
+  intentTransferProgramId: PublicKey
+  /** Program upgrade authority — signs and pays the realloc. */
+  upgradeAuthority: PublicKey
+  /** Mint whose FeeConfig is edited (PDA seed). */
+  mint: PublicKey
+  /** New fee receiver wallet (ATA owner for collected fees). */
+  feeRecipient: PublicKey
+  /** Intrachain (`send_tokens`) fee in fee-mint base units. */
+  intrachainTransferFee: bigint
+  /** Bridge (`bridge_ntt_tokens`) fee in fee-mint base units. */
+  bridgeTransferFee: bigint
+}
+
+/**
+ * Build the upgrade-authority-gated `update_fee_config` instruction. Reallocs
+ * the existing per-mint FeeConfig PDA to the current size and overwrites all
+ * fields, including the appended `fee_recipient`. Used for the live-state
+ * migration and any later fee/recipient edit.
+ */
+export function buildUpdateFeeConfigIx(
+  params: BuildUpdateFeeConfigIxParams,
+): TransactionInstruction {
+  const programId = params.intentTransferProgramId
+  const [programData] = PublicKeyCtor.findProgramAddressSync(
+    [programId.toBuffer()],
+    BPF_LOADER_UPGRADEABLE_ID,
+  )
+  const feeConfig = findFeeConfigPda(programId, params.mint)
+
+  const keys = [
+    signerWritable(params.upgradeAuthority),
+    readonly(programData),
+    readonly(params.mint),
+    writable(feeConfig),
+    readonly(SystemProgram.programId),
+  ]
+
+  // disc(1) + BorshSerialize(FeeConfig): u64 LE + u64 LE + Pubkey(32)
+  const data = Buffer.alloc(1 + 8 + 8 + 32)
+  data[0] = UPDATE_FEE_CONFIG_DISCRIMINATOR
+  data.writeBigUInt64LE(params.intrachainTransferFee, 1)
+  data.writeBigUInt64LE(params.bridgeTransferFee, 9)
+  data.set(params.feeRecipient.toBuffer(), 17)
 
   return new TransactionInstruction({ programId, keys, data })
 }

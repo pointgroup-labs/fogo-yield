@@ -4,7 +4,7 @@ import type { PublicKey } from '@solana/web3.js'
 import { useQuery } from '@tanstack/react-query'
 import { FOGO_ONYC_DECIMALS, FOGO_ONYC_MINT, USDC_DECIMALS, USDC_S_MINT } from '@/constants'
 import { useDocumentVisible } from '@/hooks/useDocumentVisible'
-import { findFeeConfigPda, readBridgeTransferFee } from '@/lib/bridge/feeConfig'
+import { findFeeConfigPda, readFeeConfig } from '@/lib/bridge/feeConfig'
 import { useSettings } from '@/store/settings'
 import { getFogoConnection } from '@/utils/connections'
 
@@ -49,7 +49,7 @@ export function useBridgeFee(kind: 'deposit' | 'withdraw' = 'deposit'): BridgeFe
     queryFn: async (): Promise<bigint> => {
       const feeConfig = findFeeConfigPda(leg.mint)
       const conn = getFogoConnection(fogoRpcUrl)
-      return readBridgeTransferFee(conn, feeConfig)
+      return (await readFeeConfig(conn, feeConfig)).bridgeTransferFee
     },
   })
 

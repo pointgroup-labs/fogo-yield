@@ -161,18 +161,18 @@ pub struct BridgeNttTokens<'info> {
     #[account(mut)]
     pub sponsor: Signer<'info>,
 
+    #[account(seeds = [FEE_CONFIG_SEED, fee_mint.key().as_ref()], bump)]
+    pub fee_config: Account<'info, FeeConfig>,
+
     #[account(mut, token::mint = fee_mint, token::authority = source.owner )]
     pub fee_source: Account<'info, TokenAccount>,
 
-    #[account(init_if_needed, payer = sponsor, associated_token::mint = fee_mint, associated_token::authority = sponsor)]
+    #[account(mut, associated_token::mint = fee_mint, associated_token::authority = fee_config.fee_recipient)]
     pub fee_destination: Account<'info, TokenAccount>,
 
     pub fee_mint: Account<'info, Mint>,
 
     pub fee_metadata: Option<UncheckedAccount<'info>>,
-
-    #[account(seeds = [FEE_CONFIG_SEED, fee_mint.key().as_ref()], bump)]
-    pub fee_config: Account<'info, FeeConfig>,
 
     pub system_program: Program<'info, System>,
     pub token_program: Program<'info, Token>,

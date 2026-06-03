@@ -17,6 +17,7 @@ use crate::config::state::fee_config::FeeConfig;
 use bridge::processor::bridge_ntt_tokens::*;
 use config::processor::register_fee_config::*;
 use config::processor::register_ntt_config::*;
+use config::processor::update_fee_config::*;
 use intrachain::processor::send_native::*;
 use intrachain::processor::send_tokens::*;
 
@@ -68,6 +69,14 @@ pub mod intent_transfer {
     pub fn send_native<'info>(ctx: Context<'_, '_, '_, 'info, SendNative<'info>>) -> Result<()> {
         ctx.accounts
             .verify_and_send(&[&[INTENT_TRANSFER_SEED, &[ctx.bumps.intent_transfer_setter]]])
+    }
+
+    #[instruction(discriminator = [5])]
+    pub fn update_fee_config<'info>(
+        ctx: Context<'_, '_, '_, 'info, UpdateFeeConfig<'info>>,
+        fee_config: FeeConfig,
+    ) -> Result<()> {
+        ctx.accounts.process(fee_config)
     }
 }
 

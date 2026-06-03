@@ -17,6 +17,14 @@
 +    pub intermediate_token_account: Box<Account<'info, TokenAccount>>,
 -    pub mint: Account<'info, Mint>,
 +    pub mint: Box<Account<'info, Mint>>,
++    #[account(seeds = [FEE_CONFIG_SEED, fee_mint.key().as_ref()], bump)]
++    pub fee_config: Account<'info, FeeConfig>,
++
+-    #[account(init_if_needed, payer = sponsor, associated_token::mint = fee_mint, associated_token::authority = sponsor)]
++    #[account(mut, associated_token::mint = fee_mint, associated_token::authority = fee_config.fee_recipient)]
+-    #[account(seeds = [FEE_CONFIG_SEED, fee_mint.key().as_ref()], bump)]
+-    pub fee_config: Account<'info, FeeConfig>,
+-
 +    /// Session (or wallet) authorizing the user-token debits via the FOGO
 +    /// session rail; the patched token program checks it against source.owner.
 +    pub signer_or_session: Signer<'info>,
@@ -59,6 +67,62 @@
 +            program_signer_seeds,
 -        self.verify_and_collect_fee(fee_amount, fee_symbol_or_mint, signer_seeds)
 +        self.verify_and_collect_fee(fee_amount, fee_symbol_or_mint, program_signer_seeds)
++pub mod update_fee_config;
++use crate::config::access_control::*;
++use crate::config::state::fee_config::{FeeConfig, FEE_CONFIG_SEED};
++use anchor_lang::prelude::*;
++use anchor_lang::system_program;
++use anchor_spl::token::Mint;
++
++/// Upgrade-authority-gated edit of an existing per-mint `FeeConfig`. The live
++/// PDA predates `fee_recipient`, so a typed `Account<FeeConfig>` would fail
++/// `try_from` (borsh can't read the missing 32 trailing bytes) before realloc
++/// ever runs. We take it `UncheckedAccount`, grow it to the current layout, and
++/// write all fields manually. Leading u64 fees are supplied by the caller.
++#[derive(Accounts)]
++pub struct UpdateFeeConfig<'info> {
++    pub upgrade_authority: UpgradeAuthority<'info>,
++
++    pub mint: Account<'info, Mint>,
++
++    /// CHECK: PDA validated by seeds; migrated manually (see struct doc).
++    #[account(mut, seeds = [FEE_CONFIG_SEED, mint.key().as_ref()], bump)]
++    pub fee_config: UncheckedAccount<'info>,
++    pub system_program: Program<'info, System>,
++}
++
++impl<'info> UpdateFeeConfig<'info> {
++    pub fn process(&mut self, fee_config: FeeConfig) -> Result<()> {
++        let info = self.fee_config.to_account_info();
++        let new_len = FeeConfig::DISCRIMINATOR.len() + FeeConfig::INIT_SPACE;
++
++        let needed = Rent::get()?.minimum_balance(new_len);
++        let current = info.lamports();
++        if needed > current {
++            system_program::transfer(
++                CpiContext::new(
++                    self.system_program.to_account_info(),
++                    system_program::Transfer {
++                        from: self.upgrade_authority.signer.to_account_info(),
++                        to: info.clone(),
++                    },
++                ),
++                needed - current,
++            )?;
++        }
++        info.realloc(new_len, false)?;
++
++        let disc_len = FeeConfig::DISCRIMINATOR.len();
++        let mut data = info.try_borrow_mut_data()?;
++        data[..disc_len].copy_from_slice(FeeConfig::DISCRIMINATOR);
++        let mut body = &mut data[disc_len..];
++        fee_config.serialize(&mut body)?;
++        Ok(())
++    }
++}
++    /// Fee receiver. Appended last so the offset-16 `bridge_transfer_fee`
++    /// reader stays valid across the +32-byte migration.
++    pub fee_recipient: Pubkey,
 -use anchor_spl::token::{transfer_checked, Mint, Token, TokenAccount, TransferChecked};
 +use anchor_spl::token::{Mint, Token, TokenAccount};
 -use crate::{error::IntentTransferError, verify::verify_symbol_or_mint};
@@ -106,6 +170,14 @@
 +    pub destination: Box<Account<'info, TokenAccount>>,
 -    pub mint: Account<'info, Mint>,
 +    pub mint: Box<Account<'info, Mint>>,
++    #[account(seeds = [FEE_CONFIG_SEED, fee_mint.key().as_ref()], bump)]
++    pub fee_config: Account<'info, FeeConfig>,
++
+-    #[account(init_if_needed, payer = sponsor, associated_token::mint = fee_mint, associated_token::authority = sponsor)]
++    #[account(mut, associated_token::mint = fee_mint, associated_token::authority = fee_config.fee_recipient)]
+-    #[account(seeds = [FEE_CONFIG_SEED, fee_mint.key().as_ref()], bump)]
+-    pub fee_config: Account<'info, FeeConfig>,
+-
 +
 +    /// Session (or wallet) authorizing the user-token debits via the FOGO
 +    /// session rail; the patched token program checks it against source.owner.
@@ -150,6 +222,7 @@
 -declare_id!("Xfry4dW9m42ncAqm8LyEnyS5V6xu5DSJTMRQLiGkARD");
 +declare_id!("inTFf5S7ZtYr8SkwGG85mjDwAyJwjqEPdH2p2nuyrL9");
 +mod session_token;
++use config::processor::update_fee_config::*;
 -        ctx.accounts
 -            .verify_and_send(&[&[INTENT_TRANSFER_SEED, &[ctx.bumps.intent_transfer_setter]]])
 +        ctx.accounts.verify_and_send(&[&[
@@ -160,6 +233,14 @@
 +                session_token::PROGRAM_SIGNER_SEED,
 +                &[ctx.bumps.program_signer],
 +            ]],
++    }
++
++    #[instruction(discriminator = [5])]
++    pub fn update_fee_config<'info>(
++        ctx: Context<'_, '_, '_, 'info, UpdateFeeConfig<'info>>,
++        fee_config: FeeConfig,
++    ) -> Result<()> {
++        ctx.accounts.process(fee_config)
 +//! Canonical FOGO in-session token transfer for gasless user-token debits.
 +//!
 +//! FOGO's patched token program blesses a non-owner mover when the authority is

@@ -25,7 +25,7 @@ import {
 import { getSettings } from '@/store/settings'
 import { getFogoConnection } from '@/utils/connections'
 import { formatBaseUnitsExact } from '@/utils/transfer'
-import { readBridgeTransferFee } from './feeConfig'
+import { readFeeConfig } from './feeConfig'
 import {
   assertRecipientIsUserInbox,
   deriveIntentPdas,
@@ -56,9 +56,10 @@ export function createDepositBridgeContextProvider(
   overrides: DepositBridgeConfig = {},
 ): BridgeContextProvider {
   return async ({ walletPublicKey, recipientAddress, amount, outboxItem }) => {
-    // One pubkey in three roles — `bridge_ntt_tokens.sponsor`,
-    // `feeDestination` ATA owner, and tx fee payer — so the
-    // paymaster-rebuilt tx stays under the 1232 B legacy limit.
+    // `bridgeSponsor` plays two roles — `bridge_ntt_tokens.sponsor` and the
+    // tx fee payer (gas). The fee *receiver* is now separate: it comes from
+    // the on-chain FeeConfig `fee_recipient`, so collected fees land in an
+    // ATA OnRe controls rather than the paymaster-custodied sponsor ATA.
     const bridgeSponsor = await fetchBridgeSponsor()
     // Fee token defaults to USDC.s; the symbol must byte-match the mint's
     // Metaplex metadata (`verify_symbol_or_mint`), which reads `USDC.s`.
@@ -68,8 +69,6 @@ export function createDepositBridgeContextProvider(
     const resolvedFeeConfig = overrides.feeConfig ?? pdas.feeConfig
     const feeSource = overrides.feeSource
       ?? getAssociatedTokenAddressSync(feeMint, walletPublicKey)
-    const feeDestination = overrides.feeDestination
-      ?? getAssociatedTokenAddressSync(feeMint, bridgeSponsor, true)
 
     assertRecipientIsUserInbox(walletPublicKey, recipientAddress)
 
@@ -80,11 +79,12 @@ export function createDepositBridgeContextProvider(
     const fogoConn = getFogoConnection(fogoRpcUrl)
     const destinationAta = getAssociatedTokenAddressSync(SOLANA_USDC_MINT, recipientAddress, true)
 
-    // Run all network work in parallel: nonce, fee, dest-ATA check, and
-    // the heavy (dynamically imported) Wormhole quote + PDA derivation.
-    const [nonceValue, bridgeFeeRaw, payDestinationAtaRent, wormhole] = await Promise.all([
+    // Run all network work in parallel: nonce, fee config (fee + recipient,
+    // one fetch), dest-ATA check, and the heavy (dynamically imported)
+    // Wormhole quote + PDAs.
+    const [nonceValue, feeConfigData, payDestinationAtaRent, wormhole] = await Promise.all([
       readNonceCount(fogoConn, pdas.noncePda),
-      readBridgeTransferFee(fogoConn, resolvedFeeConfig),
+      readFeeConfig(fogoConn, resolvedFeeConfig),
       destinationAtaIsMissing(destinationAta, solanaRpcUrl),
       import('./wormholeNttQuote').then(m => m.fetchUsdcSDepositQuote({
         walletPublicKey,
@@ -96,10 +96,15 @@ export function createDepositBridgeContextProvider(
       })),
     ])
 
+    // Fee ATA is owned by the configured `fee_recipient`; fall back to the
+    // legacy sponsor-owned ATA only while the FeeConfig PDA is un-migrated.
+    const feeDestination = overrides.feeDestination
+      ?? getAssociatedTokenAddressSync(feeMint, feeConfigData.feeRecipient ?? bridgeSponsor, true)
+
     // User-facing fee comes from the on-chain FeeConfig PDA; tests can pin
     // a fixed string via `overrides.feeAmount`.
     const feeAmount = overrides.feeAmount
-      ?? formatBaseUnitsExact(bridgeFeeRaw, USDC_DECIMALS)
+      ?? formatBaseUnitsExact(feeConfigData.bridgeTransferFee, USDC_DECIMALS)
 
     return {
       signedQuoteBytes: wormhole.signedQuoteBytes,

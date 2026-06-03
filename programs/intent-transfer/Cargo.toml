@@ -1,16 +1,9 @@
-# Vendored ID-only fork of fogo-foundation/fogo-sessions
-# `programs/intent-transfer` at tag intent-transfer/v0.1.2 (commit f372c48).
-# The ONLY source change vs upstream is the `declare_id!` line in
-# src/lib.rs (verified by scripts/verify-intent-fork.sh). This crate is
-# EXCLUDED from the repo workspace (root Cargo.toml) and is its own
-# workspace root so it builds under upstream's anchor 0.31.1 toolchain
-# and profile, isolated from the relayer's anchor 1.0.x graph.
 [workspace]
 
 [package]
 name = "intent-transfer"
 version = "0.1.2"
-description = "Fogo Sessions intent-transfer program (OnRe ID-only fork)"
+description = "Fogo Sessions intent-transfer program"
 license = "Apache-2.0"
 repository = "https://github.com/fogo-foundation/fogo-sessions"
 edition = "2021"
@@ -36,14 +29,10 @@ mpl-token-metadata = "5.1.0"
 nom = "8.0.0"
 solana-intents = "=0.1.2"
 
-# Upstream's dev-dependencies (litesvm, indoc, fogo-sessions-sdk, solana-*)
-# are intentionally omitted: we vendor for the deployable .so + source-diff
-# gate, not to run upstream's test suite. cargo build-sbf / solana-verify
-# build do not compile the #[cfg(test)] modules that reference them.
+[dev-dependencies]
+indoc = "2.0.7"
+fogo-sessions-sdk = "0.7.5"
 
-# Matches upstream root [profile.release] verbatim. Do NOT add
-# opt-level = "z" or other hardening here: the audit-carryover guarantee
-# requires byte-faithful build semantics relative to the audited source.
 [profile.release]
 overflow-checks = true
 lto = "fat"
