@@ -63,11 +63,10 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      # Bumping pnpm requires updating `packageManager` in package.json too.
+      # Version derives from `packageManager` in package.json (single source
+      # of truth) — do not also set `version:` here or action-setup errors.
       - name: Install pnpm
         uses: pnpm/action-setup@v4
-        with:
-          version: 10.33.0
 
       - name: Install Node
         uses: actions/setup-node@v6

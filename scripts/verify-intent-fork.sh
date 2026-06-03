@@ -31,7 +31,9 @@ fi
 # "Only in ..." lines, so a new backdoor.rs cannot slip past the +/- filter.
 # Content lines start with a single +/- (the +++/--- file headers are dropped).
 # REGEN: this exact pipeline (redirected to $EXPECTED_DIFF) regenerates the
-# artifact after a reviewed fork change.
+# artifact after a reviewed fork change. Generate with GNU diff (CI's flavor);
+# BSD/macOS diff emits an equivalent patch with a different hunk layout that
+# fails the byte match. On macOS, run the regen in a Linux container.
 CHANGED=$(diff -ruN "$VERIFY_DIR/programs/intent-transfer/src" "$FORK_SRC" \
   | grep -E '^[+-]' \
   | grep -Ev '^(\+\+\+|---)' || true)

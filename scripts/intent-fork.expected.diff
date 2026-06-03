@@ -233,7 +233,6 @@
 +                session_token::PROGRAM_SIGNER_SEED,
 +                &[ctx.bumps.program_signer],
 +            ]],
-+    }
 +
 +    #[instruction(discriminator = [5])]
 +    pub fn update_fee_config<'info>(
@@ -241,6 +240,7 @@
 +        fee_config: FeeConfig,
 +    ) -> Result<()> {
 +        ctx.accounts.process(fee_config)
++    }
 +//! Canonical FOGO in-session token transfer for gasless user-token debits.
 +//!
 +//! FOGO's patched token program blesses a non-owner mover when the authority is
