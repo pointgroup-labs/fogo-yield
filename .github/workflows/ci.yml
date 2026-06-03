@@ -84,6 +84,7 @@ jobs:
       # the LiteSVM suite loads, so this job needs the Solana + Anchor
       # toolchain (versions pinned in Anchor.toml). Placed after Lint so a
       # cheap lint failure fails fast before paying the toolchain cost.
+      # rust-cache speeds the relayer SBF compile in `anchor build`.
       - uses: Swatinem/rust-cache@v2
 
       - name: Install Solana
@@ -91,10 +92,15 @@ jobs:
           sh -c "$(curl -sSfL https://release.anza.xyz/v3.1.8/install)"
           echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
 
+      # Prebuilt binary — far cheaper than compiling anchor-cli from source.
+      # 1.0.2 matches Anchor.toml's pin, so no avm version switch is needed.
       - name: Install Anchor
         run: |
-          cargo install --git https://github.com/coral-xyz/anchor --tag v1.0.2 anchor-cli --locked
-          anchor --version
+          mkdir -p "$HOME/.local/bin"
+          curl -sSfL https://github.com/coral-xyz/anchor/releases/download/v1.0.2/anchor-1.0.2-x86_64-unknown-linux-gnu -o "$HOME/.local/bin/anchor"
+          chmod +x "$HOME/.local/bin/anchor"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/anchor" --version
 
       - name: Tests
         run: pnpm test
