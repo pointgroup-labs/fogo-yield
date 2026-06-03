@@ -1,35 +1,34 @@
 'use client'
 
-import type {
-  BridgeContextProvider,
-} from '@/hooks/useFogoNttTransfer'
+import type { AddressLookupTableAccount, TransactionInstruction } from '@solana/web3.js'
+import type { BridgeContextProvider } from '@/lib/bridge/context'
 import type { FlowKind, PersistedFlowStatus } from '@/lib/flow-status/types'
 import {
   buildBridgeNttTokensIx,
   buildBridgeOutIntentMessage,
-  buildFogoNttWithdrawIx,
   buildIntentVerifierIx,
-  findAuthorityPda,
-  findSessionAuthorityPda,
+  findProgramSignerPda,
   findUserInboxAuthorityPda,
-  nttTransferArgsHash,
   RELAYER_PROGRAM_ID,
-  SOLANA_WORMHOLE_CHAIN_ID,
 } from '@fogo-onre/sdk'
 import { isEstablished, TransactionResultType, useSession } from '@fogo/sessions-sdk-react'
-import { createApproveCheckedInstruction, getAssociatedTokenAddressSync } from '@solana/spl-token'
-import { ComputeBudgetProgram, Keypair, PublicKey, TransactionInstruction, TransactionMessage, VersionedTransaction } from '@solana/web3.js'
+import { getAssociatedTokenAddressSync } from '@solana/spl-token'
+import {
+  ComputeBudgetProgram,
+  Keypair,
+  PublicKey,
+  TransactionMessage,
+  VersionedTransaction,
+} from '@solana/web3.js'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import {
   FOGO_BRIDGE_PAYMASTER_DOMAIN,
   FOGO_BRIDGE_VARIATION,
-  FOGO_ONYC_DECIMALS,
-  FOGO_ONYC_MINT,
-  FOGO_ONYC_NTT_MANAGER_ID,
 } from '@/constants'
-import { findFeeConfigPda, readBridgeTransferFee } from '@/lib/bridge/feeConfig'
-import { buildFogoReleaseOnycOutboundIx } from '@/lib/bridge/releaseFogoOutbound'
+import { findFeeConfigPda, readFeeConfig } from '@/lib/bridge/feeConfig'
+import { fetchBridgeSponsor } from '@/lib/bridge/intentBridgeShared'
+import { assertSessionActive } from '@/lib/bridge/sessionLiveness'
 import { addFlow, pendingWithdrawExists } from '@/lib/flow-status/store'
 import { useSettings } from '@/store/settings'
 import { getFogoConnection } from '@/utils/connections'
@@ -37,25 +36,24 @@ import { fogoTxUrl, shortSig } from '@/utils/explorers'
 
 /**
  * Central submit hook wrapping the full deposit/withdraw flow under a
- * single TanStack mutation. Supersedes `useFogoNttTransfer`'s ad-hoc
- * `useState` lifecycle: the mutation surface gives callers
- * `mutate/mutateAsync`, `isPending`, and uniform error propagation while
- * the on-chain CPI semantics (intent verifier + `bridge_ntt_tokens` for
- * deposit, raw `transfer_burn` for withdraw) are mirrored verbatim from
- * the legacy hook.
+ * single TanStack mutation. Both legs share one on-chain shape: an
+ * Ed25519 intent verifier ix + `intent_transfer.bridge_ntt_tokens`
+ * routed at OUR paymaster lane so the bridge fee accrues to OnRe. The
+ * leg-specific wiring (mint, NTT manager, fee token) is resolved by the
+ * caller-supplied `bridgeContextProvider`.
  *
  * Two-layer withdraw guard:
  *   1. Caller-owned: parent component disables submit while
- *      `mutation.isPending` is true (T15 wires this).
+ *      `mutation.isPending` is true.
  *   2. Cache guard (this layer): `pendingWithdrawExists(qc)` runs
- *      inside* `mutationFn` so retries re-evaluate freshly.
+ *      inside `mutationFn` so retries re-evaluate freshly.
  */
 
 export interface UseTransferMutationOptions {
   /**
-   * Required for deposits. Pass `null` to keep the form mounted but
-   * non-submittable while the caller wires the Wormhole quote / NTT
-   * sub-account derivation.
+   * Resolves the leg's bridge wiring (Wormhole quote + NTT
+   * sub-accounts). Pass `null` to keep the form mounted but
+   * non-submittable while the caller wires the provider.
    */
   bridgeContextProvider?: BridgeContextProvider | null
 }
@@ -82,12 +80,12 @@ export function useTransferMutation(options: UseTransferMutationOptions = {}) {
       if (!isEstablished(sessionState)) {
         throw new Error('Wallet not connected')
       }
+      // `isEstablished` only reflects the cached session keypair, not the
+      // chain. A session revoked/expired out-of-band still reads as
+      // connected but the patched token program rejects its debit
+      // (`0xee6b2809`), which the paymaster returns as an opaque 502.
+      await assertSessionActive(getFogoConnection(fogoRpcUrl), sessionState.sessionPublicKey)
       if (args.kind === 'withdraw' && pendingWithdrawExists(qc)) {
-        // Friendlier than "Withdraw already in flight" — explains *why*
-        // it's blocked and what the user can do (the journal is
-        // self-clearing past the 2h stuck-pending window in
-        // `pendingWithdrawExists`, but they shouldn't have to read
-        // source to figure that out).
         throw new Error(
           'A previous redeem is still in flight. Wait for it to finish or check Bridge history.',
         )
@@ -102,72 +100,60 @@ export function useTransferMutation(options: UseTransferMutationOptions = {}) {
       const destMint = new PublicKey(args.destMintB58)
       const baselineDestBalance = await readDestinationBalance(destOwner, destMint, fogoRpcUrl)
 
-      // Cache-warm the bridge-fee preview so the form's gate doesn't
-      // race the next refetch. Withdraw skipped: the on-chain withdraw
-      // path doesn't deduct via `FeeConfig.bridge_transfer_fee`.
+      // Cache-warm the bridge-fee preview so the form's gate doesn't race
+      // the next refetch. Withdraw skipped: its fee row isn't shown.
       if (args.kind === 'deposit') {
         await qc.fetchQuery({
           queryKey: ['bridge-fee', fogoRpcUrl] as const,
           staleTime: 30_000,
           queryFn: async () => {
             const feeConfig = findFeeConfigPda(new PublicKey(args.mintB58))
-            return readBridgeTransferFee(getFogoConnection(fogoRpcUrl), feeConfig)
+            return (await readFeeConfig(getFogoConnection(fogoRpcUrl), feeConfig)).bridgeTransferFee
           },
         })
       }
 
-      const built = args.kind === 'deposit'
-        ? await buildDepositIxs({ sessionState, amount, provider: bridgeContextProvider })
-        : buildWithdrawIxs({ sessionState, amount })
+      const built = await buildIntentBridgeIxs({
+        sessionState,
+        amount,
+        provider: bridgeContextProvider,
+      })
 
-      let signature: string
-      if (args.kind === 'withdraw') {
-        // Withdraw bypasses the session paymaster: the raw NTT
-        // `transfer_burn` ix shape doesn't match any registered
-        // paymaster variation, so the `'sessions'` policy gate rejects
-        // the ephemeral `outboxItem` keypair as an unauthorized signer
-        // ("Missing or invalid signature for account <outboxItem>").
-        // Until Fogo Labs registers `FeeConfig(ONyc)` (which would let
-        // withdraw route through `intent_transfer.bridge_ntt_tokens`
-        // and ride the existing `'Intent NTT Bridge'` variation), the
-        // user's main wallet pays gas directly. UX cost: one extra
-        // wallet popup on withdraw — acceptable on a deliberate,
-        // higher-stakes action.
-        signature = await sendWithMainWallet({
-          sessionState,
-          ixs: built.ixs,
-          extraSigners: built.extraSigners,
-          fogoRpcUrl,
-        })
-      } else {
-        const sendOptions: {
-          extraSigners: Keypair[]
-          addressLookupTable?: string
-          paymasterDomain?: string
-          variation?: string
-        } = {
-          extraSigners: built.extraSigners,
-          paymasterDomain: FOGO_BRIDGE_PAYMASTER_DOMAIN,
-          variation: FOGO_BRIDGE_VARIATION,
-        }
-        if (built.addressLookupTable) {
-          sendOptions.addressLookupTable = built.addressLookupTable.toBase58()
-        }
-        const result = await sessionState.sendTransaction(built.ixs, sendOptions)
-        if (result.type === TransactionResultType.Failed) {
-          const message = result.error instanceof Error
-            ? result.error.message
-            : typeof result.error === 'string'
-              ? result.error
-              : 'Transaction failed'
-          throw new Error(message)
-        }
-        signature = result.signature
+      const sendOptions: {
+        extraSigners: Keypair[]
+        addressLookupTable?: string
+        paymasterDomain?: string
+        variation?: string
+      } = {
+        extraSigners: built.extraSigners,
+        paymasterDomain: FOGO_BRIDGE_PAYMASTER_DOMAIN,
+        variation: FOGO_BRIDGE_VARIATION,
       }
+      if (built.addressLookupTable) {
+        sendOptions.addressLookupTable = built.addressLookupTable.toBase58()
+      }
+      const result = await sessionState.sendTransaction(built.ixs, sendOptions)
+      if (result.type === TransactionResultType.Failed) {
+        // The paymaster strips logs from its response (the SDK's zod
+        // schema keeps only InstructionError), so re-simulate locally to
+        // surface the failing CPI's program logs in the console.
+        await logFailedTxSimulation({
+          ixs: built.ixs,
+          lut: built.addressLookupTable,
+          fogoRpcUrl,
+          error: result.error,
+        })
+        const message = result.error instanceof Error
+          ? result.error.message
+          : typeof result.error === 'string'
+            ? result.error
+            : 'Transaction failed'
+        throw new Error(message)
+      }
+      const signature = result.signature
 
-      // Signatures are unique per landed tx, so reusing the signature
-      // as flowId gives a deterministic key that survives reload
-      // without an additional derivation table.
+      // Signatures are unique per landed tx, so reusing one as flowId gives
+      // a deterministic, reload-safe key with no extra derivation table.
       const flowId = signature
       const persisted: PersistedFlowStatus = {
         flowId,
@@ -209,6 +195,43 @@ export function useTransferMutation(options: UseTransferMutationOptions = {}) {
   })
 }
 
+async function logFailedTxSimulation(args: {
+  ixs: TransactionInstruction[]
+  lut: PublicKey | undefined
+  fogoRpcUrl: string
+  error: unknown
+}): Promise<void> {
+  const { ixs, lut, fogoRpcUrl, error } = args
+  try {
+    const conn = getFogoConnection(fogoRpcUrl)
+    const sponsor = await fetchBridgeSponsor()
+    const luts: AddressLookupTableAccount[] = []
+    if (lut) {
+      const fetched = (await conn.getAddressLookupTable(lut)).value
+      if (fetched) {
+        luts.push(fetched)
+      }
+    }
+    const { blockhash } = await conn.getLatestBlockhash('confirmed')
+    const msg = new TransactionMessage({
+      payerKey: sponsor,
+      recentBlockhash: blockhash,
+      instructions: ixs,
+    }).compileToV0Message(luts)
+    const sim = await conn.simulateTransaction(new VersionedTransaction(msg), {
+      sigVerify: false,
+      replaceRecentBlockhash: true,
+      commitment: 'confirmed',
+    })
+    console.error('[bridge-debug] paymaster error:', JSON.stringify(error))
+    console.error('[bridge-debug] simulation err:', JSON.stringify(sim.value.err))
+    console.error('[bridge-debug] units consumed:', sim.value.unitsConsumed)
+    console.error(`[bridge-debug] simulation logs:\n${(sim.value.logs ?? []).join('\n')}`)
+  } catch (e) {
+    console.error('[bridge-debug] re-simulation failed:', e)
+  }
+}
+
 function parseAmountStrict(amountStr: string, decimals: number): bigint {
   if (!/^\d*(?:\.\d*)?$/.test(amountStr) || amountStr === '') {
     throw new Error('Invalid amount')
@@ -222,7 +245,7 @@ function parseAmountStrict(amountStr: string, decimals: number): bigint {
 }
 
 // Fall back to 0n on any RPC failure (most commonly: ATA doesn't exist
-// yet on a fresh wallet). Matches `useFogoNttTransfer.readDestinationBalance`.
+// yet on a fresh wallet).
 async function readDestinationBalance(
   destOwner: PublicKey,
   destMint: PublicKey,
@@ -237,47 +260,13 @@ async function readDestinationBalance(
   }
 }
 
-// Submits a tx with the user's main (Solana) wallet as fee payer,
-// bypassing the session paymaster. Used for withdraw because the raw
-// NTT `transfer_burn` shape isn't covered by any registered paymaster
-// variation; the session-paymaster policy gate rejects the ephemeral
-// `outboxItem` keypair as an unauthorized signer regardless of the
-// signature being mathematically valid.
-async function sendWithMainWallet(args: {
-  sessionState: Extract<ReturnType<typeof useSession>, { walletPublicKey: PublicKey }>
-  ixs: TransactionInstruction[]
-  extraSigners: Keypair[]
-  fogoRpcUrl: string
-}): Promise<string> {
-  const { sessionState, ixs, extraSigners, fogoRpcUrl } = args
-  const wallet = (sessionState as unknown as {
-    solanaWallet: {
-      signTransaction: <T extends VersionedTransaction>(tx: T) => Promise<T>
-    }
-  }).solanaWallet
-  const conn = getFogoConnection(fogoRpcUrl)
-  const { blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash('confirmed')
-  const message = new TransactionMessage({
-    payerKey: sessionState.walletPublicKey,
-    recentBlockhash: blockhash,
-    instructions: ixs,
-  }).compileToV0Message()
-  const tx = new VersionedTransaction(message)
-  if (extraSigners.length > 0) {
-    tx.sign(extraSigners)
-  }
-  const signed = await wallet.signTransaction(tx)
-  const signature = await conn.sendRawTransaction(signed.serialize(), { skipPreflight: false })
-  const conf = await conn.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, 'confirmed')
-  if (conf.value.err !== null) {
-    throw new Error(`Withdraw transaction failed: ${JSON.stringify(conf.value.err)}`)
-  }
-  return signature
-}
-
-// Mirrors `useFogoNttTransfer.buildDepositIxs` — kept private here so
-// the legacy hook stays the lockstep reference until T15 retires it.
-async function buildDepositIxs(args: {
+/**
+ * Builds the shared intent-bridge tx for either leg: an Ed25519 verifier
+ * ix over the signed intent message + `bridge_ntt_tokens`, both pinned
+ * to the per-user inbox PDA on Solana. The provider supplies the
+ * leg-specific Wormhole quote and NTT sub-accounts.
+ */
+async function buildIntentBridgeIxs(args: {
   sessionState: Extract<ReturnType<typeof useSession>, { walletPublicKey: PublicKey, payer: PublicKey }>
   amount: bigint
   provider: BridgeContextProvider | null | undefined
@@ -285,7 +274,7 @@ async function buildDepositIxs(args: {
   const { sessionState, amount, provider } = args
   if (!provider) {
     throw new Error(
-      'Deposit not configured: pass a `bridgeContextProvider` to useTransferMutation to enable submission.',
+      'Bridge not configured: pass a `bridgeContextProvider` to useTransferMutation to enable submission.',
     )
   }
 
@@ -306,14 +295,18 @@ async function buildDepositIxs(args: {
   const wallet = (sessionState as { solanaWallet: { signMessage: (m: Uint8Array) => Promise<Uint8Array> } }).solanaWallet
   const signature = await wallet.signMessage(message)
 
+  const [programSigner] = findProgramSignerPda(ctx.topLevel.intentTransferProgramId)
+
   return {
     ixs: [
-      // ~700k CU empirically; runtime default of 200k * num_ixs is
-      // insufficient for the deep CPI chain.
+      // ~700k CU empirically; the runtime default (200k * num_ixs)
+      // is insufficient for the deep CPI chain.
       ComputeBudgetProgram.setComputeUnitLimit({ units: 1_400_000 }),
       buildIntentVerifierIx(sessionState.walletPublicKey, signature, message),
       buildBridgeNttTokensIx({
         ...ctx.topLevel,
+        signerOrSession: sessionState.sessionPublicKey,
+        programSigner,
         ntt: ctx.ntt,
         signedQuoteBytes: ctx.signedQuoteBytes,
         payDestinationAtaRent: ctx.payDestinationAtaRent,
@@ -321,71 +314,5 @@ async function buildDepositIxs(args: {
     ],
     extraSigners: [outboxItemKp],
     addressLookupTable: ctx.addressLookupTable,
-  }
-}
-
-function buildWithdrawIxs(args: {
-  sessionState: Extract<ReturnType<typeof useSession>, { walletPublicKey: PublicKey }>
-  amount: bigint
-}) {
-  const { sessionState, amount } = args
-  const [recipientOnSolana] = findAuthorityPda(RELAYER_PROGRAM_ID)
-  const outboxItemKp = Keypair.generate()
-  // NTT v1 `transfer_burn` invokes SPL `TransferChecked` from the
-  // user's ATA into the manager's custody, with a `session_authority`
-  // PDA as the spend authority. That PDA isn't the ATA owner, so the
-  // ATA owner (the user wallet) must first approve the PDA as a
-  // delegate for `amount`. Without this approve, the Token program
-  // returns `OwnerMismatch` (custom error 0x4) at the TransferChecked
-  // CPI. Deposit doesn't need this step because `bridge_ntt_tokens`
-  // runs the approve internally, gated on the intent verifier's
-  // signed-message proof.
-  const transferArgsHash = nttTransferArgsHash({
-    amount,
-    recipientChain: SOLANA_WORMHOLE_CHAIN_ID,
-    recipientAddress: recipientOnSolana.toBuffer(),
-    shouldQueue: false,
-  })
-  const [sessionAuthorityPda] = findSessionAuthorityPda(
-    sessionState.walletPublicKey,
-    transferArgsHash,
-    FOGO_ONYC_NTT_MANAGER_ID,
-  )
-  const userAta = getAssociatedTokenAddressSync(
-    FOGO_ONYC_MINT,
-    sessionState.walletPublicKey,
-  )
-  const approveIx = createApproveCheckedInstruction(
-    userAta,
-    FOGO_ONYC_MINT,
-    sessionAuthorityPda,
-    sessionState.walletPublicKey,
-    amount,
-    FOGO_ONYC_DECIMALS,
-  )
-  const transferBurnIx = buildFogoNttWithdrawIx({
-    payer: sessionState.walletPublicKey,
-    nttManagerProgramId: FOGO_ONYC_NTT_MANAGER_ID,
-    mint: FOGO_ONYC_MINT,
-    outboxItem: outboxItemKp.publicKey,
-    amount,
-    recipientOnSolana,
-  })
-  // NTT v1 splits outbound into stage + publish: `transfer_burn` only
-  // creates the OutboxItem PDA, it does NOT call wormhole_core
-  // post_message. Without an explicit `release_wormhole_outbound`
-  // here, the burn lands but no VAA ever appears — the user's funds
-  // get stuck in custody on FOGO and the Solana side has nothing to
-  // redeem. Deposit hides this split inside
-  // `intent_transfer.bridge_ntt_tokens`; withdraw must do it manually
-  // until `FeeConfig(ONyc)` is registered with intent_transfer.
-  const releaseIx = buildFogoReleaseOnycOutboundIx({
-    payer: sessionState.walletPublicKey,
-    outboxItem: outboxItemKp.publicKey,
-  })
-  return {
-    ixs: [approveIx, transferBurnIx, releaseIx],
-    extraSigners: [outboxItemKp],
-    addressLookupTable: undefined as PublicKey | undefined,
   }
 }

@@ -20,7 +20,7 @@ export type AdvanceContext = {
    * + post_vaa) where each tx is confirmed individually, and mainnet
    * congestion routinely pushes per-tx confirm to 20–40 s. Using
    * `rpcTimeoutMs` (15 s default) here aborts mid-sequence and leaves
-   * the flow `WithdrawPending` until the next scan.
+   * the flow `Pending` until the next scan.
    */
   txConfirmTimeoutMs: number
   /**
@@ -30,6 +30,12 @@ export type AdvanceContext = {
    * `utils/priority-fee.ts` for rationale.
    */
   priorityFeeMicroLamports: number
+  /**
+   * Optional Address Lookup Table compressing the `send` leg's stable
+   * NTT/Wormhole accounts so the v0 tx fits under 1232 bytes. When unset,
+   * the send tx is built without compression and will overflow.
+   */
+  sendLookupTable?: PublicKey
   metrics: Metrics
   /** Structured logger; threaded through scan + enumerate + (future) advance fns. */
   log: Logger

@@ -1,15 +1,19 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
 
-use crate::constants::{CONFIG_SEED, RELAYER_SEED};
-use crate::error::RelayerError;
-use crate::state::RelayerConfig;
+use crate::{
+    constants::{CONFIG_SEED, RELAYER_SEED},
+    error::RelayerError,
+    state::RelayerConfig,
+};
 
 pub fn handler(
     ctx: Context<Configure>,
     deposit_fee_bps: Option<u16>,
     withdraw_fee_bps: Option<u16>,
     new_authority: Option<Pubkey>,
+    slippage_bps: Option<u16>,
+    price_oracle: Option<Pubkey>,
 ) -> Result<()> {
     let config = &mut ctx.accounts.relayer_config;
     let now = Clock::get()?.slot;
@@ -24,33 +28,33 @@ pub fn handler(
     if let Some(proposed) = withdraw_fee_bps {
         config.propose_withdraw_fee(proposed, now)?;
     }
+    if let Some(bps) = slippage_bps {
+        config.max_slippage_bps = bps;
+    }
+    if let Some(oracle) = price_oracle {
+        config.price_oracle = oracle;
+    }
 
     if let Some(vault) = &ctx.accounts.fee_vault {
-        require_keys_neq!(
-            vault.key(),
-            ctx.accounts.onyc_ata.key(),
-            RelayerError::FeeVaultAliasesUserAta
-        );
+        require_keys_neq!(vault.key(), ctx.accounts.asset_ata.key(), RelayerError::FeeVaultAliasesUserAta);
         config.fee_vault = vault.key();
     }
     if let Some(proposed) = new_authority {
         config.pending_authority = if proposed == Pubkey::default() {
             None
         } else {
-            require_keys_neq!(
-                proposed,
-                config.authority,
-                RelayerError::PendingAuthorityIsCurrent
-            );
+            require_keys_neq!(proposed, config.authority, RelayerError::PendingAuthorityIsCurrent);
             Some(proposed)
         };
     }
     config.validate()?;
 
     msg!(
-        "Relayer reconfigured. deposit_fee_bps: {}, withdraw_fee_bps: {}, pending_fee: {:?}, fee_vault: {}, authority: {}, pending_authority: {:?}.",
+        "Relayer reconfigured. deposit_fee_bps: {}, withdraw_fee_bps: {}, max_slippage_bps: {}, pending_fee: {:?}, \
+         fee_vault: {}, authority: {}, pending_authority: {:?}.",
         config.deposit_fee_bps,
         config.withdraw_fee_bps,
+        config.max_slippage_bps,
         config.pending_fee,
         config.fee_vault,
         config.authority,
@@ -69,7 +73,7 @@ pub struct Configure<'info> {
         seeds = [CONFIG_SEED],
         bump = relayer_config.bump,
         has_one = authority @ RelayerError::UnauthorizedAuthority,
-        has_one = onyc_mint,
+        has_one = asset_mint,
     )]
     pub relayer_config: Account<'info, RelayerConfig>,
 
@@ -80,18 +84,18 @@ pub struct Configure<'info> {
     )]
     pub relayer_authority: UncheckedAccount<'info>,
 
-    pub onyc_mint: InterfaceAccount<'info, Mint>,
+    pub asset_mint: InterfaceAccount<'info, Mint>,
 
     #[account(
-        associated_token::mint = onyc_mint,
+        associated_token::mint = asset_mint,
         associated_token::authority = relayer_authority,
         associated_token::token_program = token_program,
     )]
-    pub onyc_ata: InterfaceAccount<'info, TokenAccount>,
+    pub asset_ata: InterfaceAccount<'info, TokenAccount>,
 
     /// `None` leaves the stored vault unchanged.
     #[account(
-        token::mint = onyc_mint,
+        token::mint = asset_mint,
         token::token_program = token_program,
     )]
     pub fee_vault: Option<InterfaceAccount<'info, TokenAccount>>,

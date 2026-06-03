@@ -1,3 +1,4 @@
+/* eslint-disable style/max-statements-per-line -- arg-parsing one-liners and binary-offset helpers read better unsplit */
 /**
  * One-shot recovery: publish a stranded NTT OutboxItem on FOGO via
  * `release_wormhole_outbound`, producing the missing VAA so the

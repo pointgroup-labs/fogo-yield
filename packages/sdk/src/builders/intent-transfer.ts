@@ -1,55 +1,30 @@
 import type { PublicKey } from '@solana/web3.js'
+import { Buffer } from 'node:buffer'
 import { ASSOCIATED_TOKEN_PROGRAM_ID, TOKEN_PROGRAM_ID } from '@solana/spl-token'
 import {
   Ed25519Program,
+  PublicKey as PublicKeyCtor,
   SystemProgram,
   SYSVAR_CLOCK_PUBKEY,
   SYSVAR_INSTRUCTIONS_PUBKEY,
   SYSVAR_RENT_PUBKEY,
   TransactionInstruction,
 } from '@solana/web3.js'
-import { INTENT_TRANSFER_PROGRAM_ID } from '../constants'
 import { readonly, signerWritable, writable } from '../utils/accountMeta'
 
 /**
  * Wire-format primitives for FOGO `intent_transfer.bridge_ntt_tokens`.
+ * Re-implemented (not `@fogo/sessions-sdk`'s `bridgeOut`) because OnRe
+ * deposits need `recipient_address` = the per-user inbox PDA, which
+ * `bridgeOut` can't override.
  *
- * Why this exists
- * ---------------
- * The off-the-shelf `bridgeOut` helper in `@fogo/sessions-sdk` hardcodes
- * `recipient_address: walletPublicKey.toBase58()` in the signed intent.
- * For OnRe deposits we need `recipient_address` to be the per-user inbox
- * PDA on Solana (`findUserInboxAuthorityPda(wallet)`), so the relayer
- * can sweep + record the originator. The SDK's `bridgeOut` cannot
- * accommodate that override, so we re-implement the wire format here.
- *
- * Format invariant
- * ----------------
- * The on-chain parser `programs/intent-transfer/src/bridge/message.rs`
- * accepts version `0.2` only and matches the exact prefix string +
- * key/value lines below. Any drift (whitespace, key order, version
- * bump) breaks the deposit path silently. `INTENT_BRIDGE_OUT_MESSAGE`
- * is the byte-identical contract surface — pin the upstream
- * `@fogo/sessions-idls` version when this SDK ships, and add an
- * integration test that round-trips this message through the on-chain
- * deserializer.
- *
- * What's NOT here
- * ---------------
- * - Wormhole executor quote fetch (`signedQuoteBytes`) — caller's job;
- *   webapp uses `@wormhole-foundation/sdk`'s NTT route helpers.
- * - NTT sub-context PDA derivation — caller-supplied via
- *   `NttBridgeSubAccounts`. Webapp computes via Wormhole SDK helpers
- *   that already exist in the prior `bridgeOut` flow.
- * - On-chain nonce fetch — caller passes the next `nonce`. Derive PDA:
- *   `["bridge_ntt_nonce", source_ata.owner]` under intent_transfer.
+ * Format invariant: the on-chain parser
+ * `programs/intent-transfer/src/bridge/message.rs` accepts version `0.2`
+ * only and matches the exact prefix + key/value lines below. Any drift
+ * (whitespace, key order, version bump) breaks deposit silently.
  */
 
-/**
- * Single-byte instruction discriminator. Intent_transfer uses non-Anchor
- * 1-byte tags (NOT sha256 sighash). Confirmed against IDL `discriminator: [1]`
- * for `bridge_ntt_tokens`.
- */
+/** Non-Anchor 1-byte tag (IDL `discriminator: [1]`), not a sha256 sighash. */
 const BRIDGE_NTT_TOKENS_DISCRIMINATOR = 0x01
 
 /** Pinned by upstream parser `version: 0.2`. */
@@ -57,7 +32,7 @@ const INTENT_VERSION_MAJOR = 0
 const INTENT_VERSION_MINOR = 2
 
 const BRIDGE_OUT_MESSAGE_HEADER
-  = 'Fogo Bridge Transfer:\nSigning this intent will bridge out the tokens as described below.\n'
+  = 'Fogo Bridge\n'
 
 export interface BuildBridgeOutIntentMessageParams {
   /** `fogo` for OnRe deposits. */
@@ -80,8 +55,7 @@ export interface BuildBridgeOutIntentMessageParams {
 
 /**
  * Encode the bridge-out intent message exactly as the on-chain parser
- * `BridgeMessage::TryFrom<Vec<u8>>` expects. Output is the bytes the
- * user signs with their wallet.
+ * `BridgeMessage::TryFrom<Vec<u8>>` expects — the bytes the user signs.
  */
 export function buildBridgeOutIntentMessage(
   params: BuildBridgeOutIntentMessageParams,
@@ -102,11 +76,9 @@ export function buildBridgeOutIntentMessage(
 }
 
 /**
- * Wrap a signed intent in the SVM `Ed25519Program` native verifier
- * instruction. The wallet signature must precede `bridge_ntt_tokens`
- * in the same transaction; the on-chain handler reads
- * `Sysvar1nstructions` to pull this signature back out and verify it
- * against the intent message.
+ * Wrap a signed intent in the SVM `Ed25519Program` verifier ix. It must
+ * precede `bridge_ntt_tokens` in the same tx; the handler reads
+ * `Sysvar1nstructions` to recover and verify the signature.
  */
 export function buildIntentVerifierIx(
   walletPublicKey: PublicKey,
@@ -121,15 +93,10 @@ export function buildIntentVerifierIx(
 }
 
 /**
- * NTT sub-account context. All entries are caller-derived:
- * - PDAs: via Wormhole NTT SDK (`NTT.pdas`, `NTT.transceiverPdas`,
- *   `NTT.custodyAccountAddress`).
- * - `payeeNttWithExecutor`: from the signed-quote payee address.
- * - `nttOutboxItem`: fresh ephemeral keypair pubkey (caller adds the
- *   `Keypair` to the tx's `extraSigners`).
- * - `nttSessionAuthority`: derived against `intent_transfer_setter`
- *   (NOT the user wallet) since intent_transfer's intermediate ATA owner
- *   is the setter PDA.
+ * NTT sub-account context — all caller-derived (Wormhole NTT SDK for PDAs,
+ * signed-quote for `payeeNttWithExecutor`, fresh keypair for `nttOutboxItem`).
+ * `nttSessionAuthority` derives against `intent_transfer_setter`, not the
+ * user wallet — the intermediate ATA owner is the setter PDA.
  */
 export interface NttBridgeSubAccounts {
   nttManager: PublicKey
@@ -154,8 +121,11 @@ export interface NttBridgeSubAccounts {
 }
 
 export interface BuildBridgeNttIxParams {
-  /** Defaults to `INTENT_TRANSFER_PROGRAM_ID`. */
-  intentTransferProgramId?: PublicKey
+  /**
+   * Target `intent_transfer` program. Required and explicit — no default,
+   * so a caller can never silently route to the dormant Fogo program.
+   */
+  intentTransferProgramId: PublicKey
 
   // Common accounts
   fromChainId: PublicKey
@@ -172,6 +142,15 @@ export interface BuildBridgeNttIxParams {
   feeMint: PublicKey
   feeMetadata: PublicKey | null
   feeConfig: PublicKey
+
+  /**
+   * Session account (or wallet) authorizing the user-token debits via the
+   * FOGO session rail. Signs the transaction; the patched token program
+   * checks it against `source.owner`.
+   */
+  signerOrSession: PublicKey
+  /** Per-program signer PDA: `findProgramSignerPda(intentTransferProgramId)`. */
+  programSigner: PublicKey
 
   // NTT sub-context
   ntt: NttBridgeSubAccounts
@@ -195,7 +174,7 @@ export function buildBridgeNttTokensIx(
       `signedQuoteBytes must be exactly 165 bytes, got ${params.signedQuoteBytes.length}`,
     )
   }
-  const programId = params.intentTransferProgramId ?? INTENT_TRANSFER_PROGRAM_ID
+  const programId = params.intentTransferProgramId
 
   const PUBKEY_NULL = SystemProgram.programId // sentinel for `Option<None>` Anchor accounts
 
@@ -211,14 +190,16 @@ export function buildBridgeNttTokensIx(
     readonly(params.expectedNttConfig),
     writable(params.nonce),
     signerWritable(params.sponsor),
+    readonly(params.feeConfig),
     writable(params.feeSource),
     writable(params.feeDestination),
     readonly(params.feeMint),
     readonly(params.feeMetadata ?? PUBKEY_NULL),
-    readonly(params.feeConfig),
     readonly(SystemProgram.programId),
     readonly(TOKEN_PROGRAM_ID),
     readonly(ASSOCIATED_TOKEN_PROGRAM_ID),
+    { pubkey: params.signerOrSession, isSigner: true, isWritable: false },
+    readonly(params.programSigner),
     // NTT sub-struct (IDL order)
     readonly(SYSVAR_CLOCK_PUBKEY),
     readonly(SYSVAR_RENT_PUBKEY),
@@ -248,6 +229,74 @@ export function buildBridgeNttTokensIx(
   data[0] = BRIDGE_NTT_TOKENS_DISCRIMINATOR
   data.set(params.signedQuoteBytes, 1)
   data[1 + 165] = params.payDestinationAtaRent ? 1 : 0
+
+  return new TransactionInstruction({ programId, keys, data })
+}
+
+/** Non-Anchor 1-byte tag (IDL `discriminator: [5]`). */
+const UPDATE_FEE_CONFIG_DISCRIMINATOR = 0x05
+
+const FEE_CONFIG_SEED = Buffer.from('fee_config')
+const BPF_LOADER_UPGRADEABLE_ID = new PublicKeyCtor(
+  'BPFLoaderUpgradeab1e11111111111111111111111',
+)
+
+/** Canonical per-mint `FeeConfig` PDA under a given intent_transfer program. */
+export function findFeeConfigPda(
+  intentTransferProgramId: PublicKey,
+  mint: PublicKey,
+): PublicKey {
+  return PublicKeyCtor.findProgramAddressSync(
+    [FEE_CONFIG_SEED, mint.toBuffer()],
+    intentTransferProgramId,
+  )[0]
+}
+
+export interface BuildUpdateFeeConfigIxParams {
+  /** Which intent_transfer program owns the FeeConfig PDA. */
+  intentTransferProgramId: PublicKey
+  /** Program upgrade authority — signs and pays the realloc. */
+  upgradeAuthority: PublicKey
+  /** Mint whose FeeConfig is edited (PDA seed). */
+  mint: PublicKey
+  /** New fee receiver wallet (ATA owner for collected fees). */
+  feeRecipient: PublicKey
+  /** Intrachain (`send_tokens`) fee in fee-mint base units. */
+  intrachainTransferFee: bigint
+  /** Bridge (`bridge_ntt_tokens`) fee in fee-mint base units. */
+  bridgeTransferFee: bigint
+}
+
+/**
+ * Build the upgrade-authority-gated `update_fee_config` instruction. Reallocs
+ * the existing per-mint FeeConfig PDA to the current size and overwrites all
+ * fields, including the appended `fee_recipient`. Used for the live-state
+ * migration and any later fee/recipient edit.
+ */
+export function buildUpdateFeeConfigIx(
+  params: BuildUpdateFeeConfigIxParams,
+): TransactionInstruction {
+  const programId = params.intentTransferProgramId
+  const [programData] = PublicKeyCtor.findProgramAddressSync(
+    [programId.toBuffer()],
+    BPF_LOADER_UPGRADEABLE_ID,
+  )
+  const feeConfig = findFeeConfigPda(programId, params.mint)
+
+  const keys = [
+    signerWritable(params.upgradeAuthority),
+    readonly(programData),
+    readonly(params.mint),
+    writable(feeConfig),
+    readonly(SystemProgram.programId),
+  ]
+
+  // disc(1) + BorshSerialize(FeeConfig): u64 LE + u64 LE + Pubkey(32)
+  const data = Buffer.alloc(1 + 8 + 8 + 32)
+  data[0] = UPDATE_FEE_CONFIG_DISCRIMINATOR
+  data.writeBigUInt64LE(params.intrachainTransferFee, 1)
+  data.writeBigUInt64LE(params.bridgeTransferFee, 9)
+  data.set(params.feeRecipient.toBuffer(), 17)
 
   return new TransactionInstruction({ programId, keys, data })
 }

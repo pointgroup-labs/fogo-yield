@@ -363,6 +363,7 @@ async function main(): Promise<void> {
     rpcTimeoutMs: cfg.rpcTimeoutMs,
     txConfirmTimeoutMs: cfg.txConfirmTimeoutMs,
     priorityFeeMicroLamports: cfg.solanaPriorityFeeMicroLamports,
+    sendLookupTable: cfg.sendLookupTable ? new PublicKey(cfg.sendLookupTable) : undefined,
     metrics,
     log,
     // Cross-scan cache: FOGO source-tx → user wallet. claim_usdc resolves
@@ -381,6 +382,7 @@ async function main(): Promise<void> {
     // poisoned). Gates dispatch to skip flows already in flight or
     // backing off after errors. On-chain Flow PDA remains the truth.
     const flowState = new FlowStateTracker()
+    metrics.setStuckFlowProvider(() => flowState.stuckCounts())
 
     // WakeFlag wakes the daemon early when either leg makes progress —
     // chain busy ⇒ next tick runs sooner than the 30s floor. Sticky-flag

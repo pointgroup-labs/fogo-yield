@@ -1,5 +1,9 @@
+import { Buffer } from 'node:buffer'
 import { PublicKey } from '@solana/web3.js'
 import IDL from './idl/fogo_onre_relayer.json' with { type: 'json' }
+
+export const SOLANA_WORMHOLE_CHAIN_ID = 1
+export const FOGO_WORMHOLE_CHAIN_ID = 51
 
 export const RELAYER_PROGRAM_ID = new PublicKey(IDL.address)
 export const ONRE_PROGRAM_ID = new PublicKey('onreuGhHHgVzMWSkj2oQDLDtvvGvoepBPkqyaubFcwe')
@@ -11,29 +15,10 @@ export const NTT_USDC_PROGRAM_ID = new PublicKey('nttu74CdAmsErx5daJVCQNoDZujswF
 export const NTT_ONYC_PROGRAM_ID = new PublicKey('nttpna5vXW7BN2Aa4AfTbkCncJWTEoBsnWvjS87Xgsd')
 
 /**
- * Wormhole NTT-transceiver program for ONyc on both Solana and FOGO
- * mainnet.
- *
- * **This deploy uses the bundled-transceiver mode** (NTT v3 supports two:
- * standalone, where the transceiver is its own on-chain program; and
- * bundled, where the transceiver lives inside the manager program). In
- * bundled mode the upstream SDK keys all transceiver-side derivations
- * (`registered_transceiver`, `transceiver_message`, etc.) on the
- * **manager's program ID**, and CPI calls into the "transceiver" go to
- * the manager. So this constant is a deliberate alias of
- * `NTT_ONYC_PROGRAM_ID`.
- *
- * Trap to avoid: the OnRe `deployment.json` lists
- * `"transceivers.wormhole.address": "9pCpHZW9W55xT…"` on both chains.
- * That value is **not a program ID** — it is the manager's `emitter` PDA
- * (seeds=["emitter"], programId=manager). It exists in `deployment.json`
- * as a marker that the SDK uses to detect bundled mode (see
- * `@wormhole-foundation/sdk-solana-ntt/dist/.../sdk/ntt.js:402-405`):
- * if the address equals either the manager pubkey or its emitter PDA,
- * the SDK switches to bundled mode and uses the manager as the
- * transceiver program. Treating that PDA as a program ID — as we did
- * before — produces phantom `registered_transceiver` PDAs that are
- * always empty, which silently breaks redeem.
+ * Wormhole NTT-transceiver program for ONyc — a deliberate alias of the
+ * manager. This deploy uses NTT v3 *bundled* mode, where the transceiver
+ * lives inside the manager and all transceiver-side PDAs key on the
+ * manager's program ID.
  */
 export const WH_TRANSCEIVER_ONYC_PROGRAM_ID = NTT_ONYC_PROGRAM_ID
 
@@ -42,9 +27,6 @@ export const ONYC_MINT = new PublicKey('5Y8NV33Vv7WbnLfq3zBcKSdYPrk7g2KoiQoe7M2t
 
 /** Canonical USDC on Solana mainnet — the Solana-side counterpart of FOGO USDC.s. */
 export const USDC_MINT = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v')
-
-export const FOGO_WORMHOLE_CHAIN_ID = 51
-export const SOLANA_WORMHOLE_CHAIN_ID = 1
 
 export const CONFIG_SEED = Buffer.from('relayer_config')
 export const RELAYER_SEED = Buffer.from('relayer')
@@ -55,14 +37,24 @@ export const NTT_SESSION_AUTHORITY_SEED = Buffer.from('session_authority')
 export const USER_INBOX_SEED = Buffer.from('user_inbox')
 
 /**
- * FOGO `intent_transfer` program ID (mainnet, same on testnet). The webapp
- * routes deposit `bridge_ntt_tokens` calls through this program; the relayer
- * pins it as the only valid VAA originator (via the singleton setter PDA).
+ * FOGO `intent_transfer` program ID. The webapp routes deposit
+ * `bridge_ntt_tokens` here; the relayer pins it as the only valid VAA
+ * originator (via the singleton setter PDA).
  */
 export const INTENT_TRANSFER_PROGRAM_ID = new PublicKey('Xfry4dW9m42ncAqm8LyEnyS5V6xu5DSJTMRQLiGkARD')
 
+/**
+ * OnRe fork of Fogo's `intent_transfer` (source-identical, `declare_id!`
+ * only). Deposit + redeem route here once activated; keep
+ * `INTENT_TRANSFER_PROGRAM_ID` for switch-back.
+ */
+export const ONRE_INTENT_PROGRAM_ID = new PublicKey('inTFf5S7ZtYr8SkwGG85mjDwAyJwjqEPdH2p2nuyrL9')
+
 /** Singleton setter-PDA seed inside `intent_transfer`. */
 export const INTENT_TRANSFER_SETTER_SEED = Buffer.from('intent_transfer')
+
+/** Per-program signer-PDA seed required by the FOGO session token rail. */
+export const PROGRAM_SIGNER_SEED = Buffer.from('fogo_session_program_signer')
 
 export const USDC_DECIMALS = 6
 export const ONYC_DECIMALS = 9

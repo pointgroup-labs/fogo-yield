@@ -1,0 +1,23 @@
+# Standalone test-only router. NOT part of the relayer workspace (own
+# [workspace] table) so `anchor build` / `pnpm test`'s pretest never builds it.
+#
+# Rebuild + install:
+#   cd tests/fixtures/programs/evil_router
+#   ~/.local/share/solana/install/active_release/bin/cargo-build-sbf
+#   cp target/deploy/evil_router.so \
+#      ../8uyMF1riG7YSjvPrJcd5VbRaDCnYeqWyPe6HzMevn4bT.so
+[workspace]
+
+[package]
+name = "evil_router"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[dependencies]
+solana-program = "2.1"
+
+[profile.release]
+overflow-checks = true

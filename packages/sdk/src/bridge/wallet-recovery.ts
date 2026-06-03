@@ -1,25 +1,23 @@
 import type { Connection } from '@solana/web3.js'
 import { PublicKey } from '@solana/web3.js'
-import { INTENT_TRANSFER_PROGRAM_ID } from '../constants'
+import { INTENT_TRANSFER_PROGRAM_ID, ONRE_INTENT_PROGRAM_ID } from '../constants'
+
+/** Deposit may route through the OnRe fork or Fogo's program (switch-back). */
+const DEFAULT_INTENT_PROGRAM_IDS: PublicKey[] = [ONRE_INTENT_PROGRAM_ID, INTENT_TRANSFER_PROGRAM_ID]
 
 /**
  * Recover the user's Solana wallet from the FOGO source tx that emitted
- * the deposit VAA.
+ * the deposit VAA. Needed because the VAA carries only the inbox PDA and
+ * setter PDA, neither invertible to the wallet. The source ATA at IDL
+ * position 3 of `bridge_ntt_tokens` has the wallet in its `owner` field
+ * (SPL layout: mint(32) || owner(32)).
  *
- * Required because the VAA carries only the per-user inbox PDA
- * (recipient) and the `intent_transfer_setter` PDA (sender) — neither
- * is invertible to the user wallet. The original FOGO `bridge_ntt_tokens`
- * ix has the source ATA at IDL position 3; that ATA's `owner` field
- * (SPL TokenAccount layout: mint(32) || owner(32)) IS the user wallet.
- *
- * Two RPCs per uncached VAA: `getTransaction(fogoTx)` +
- * `getAccountInfo(sourceAta)`. Returns null when the tx isn't findable,
- * doesn't contain a `bridge_ntt_tokens` ix, or the source ATA can't be
- * read.
+ * Two RPCs per uncached VAA. Returns null when the tx/ix/ATA isn't findable.
  */
 export async function deriveUserWalletFromFogoTx(
   fogoConnection: Connection,
   fogoTx: string,
+  intentProgramIds: PublicKey[] = DEFAULT_INTENT_PROGRAM_IDS,
 ): Promise<PublicKey | null> {
   if (!fogoTx) {
     return null
@@ -36,7 +34,7 @@ export async function deriveUserWalletFromFogoTx(
   const keys = msg.getAccountKeys({ accountKeysFromLookups: tx.meta?.loadedAddresses })
   for (const ix of msg.compiledInstructions) {
     const programId = keys.get(ix.programIdIndex)
-    if (!programId?.equals(INTENT_TRANSFER_PROGRAM_ID)) {
+    if (!programId || !intentProgramIds.some(p => p.equals(programId))) {
       continue
     }
     // intent_transfer.bridge_ntt_tokens IDL: keys[3] = source ATA

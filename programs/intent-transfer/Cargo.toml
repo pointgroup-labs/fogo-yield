@@ -1,0 +1,47 @@
+[workspace]
+
+[package]
+name = "intent-transfer"
+version = "0.1.2"
+description = "Fogo Sessions intent-transfer program"
+license = "Apache-2.0"
+repository = "https://github.com/fogo-foundation/fogo-sessions"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "intent_transfer"
+
+[features]
+default = []
+cpi = ["no-entrypoint"]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
+
+[dependencies]
+anchor-lang = { version = "0.31.1", features = ["init-if-needed"] }
+anchor-spl = "0.31.1"
+chain-id = { version = "=0.1.0", features = ["no-entrypoint"] }
+hex = "0.4.3"
+mpl-token-metadata = "5.1.0"
+nom = "8.0.0"
+solana-intents = "=0.1.2"
+
+[dev-dependencies]
+indoc = "2.0.7"
+fogo-sessions-sdk = "0.7.5"
+
+[profile.release]
+overflow-checks = true
+lto = "fat"
+codegen-units = 1
+
+[profile.release.build-override]
+opt-level = 3
+incremental = false
+codegen-units = 1
+
+[lints.rust]
+unsafe_code = "deny"

@@ -1,4 +1,4 @@
-import type { FlowStatusName, ResolvedNttVaa, WormholescanVaa } from '@fogo-onre/sdk'
+import type { ResolvedNttVaa, WormholescanVaa } from '@fogo-onre/sdk'
 import type { PublicKey } from '@solana/web3.js'
 import type { WatermarkStore } from '../state/watermarks'
 import type { FlowStatus, ScannedFlow } from './scan'
@@ -8,12 +8,27 @@ import {
   describeStatus,
   NTT_ONYC_PROGRAM_ID,
   NTT_USDC_PROGRAM_ID,
+  ONYC_MINT,
   resolveNttVaa,
+  USDC_MINT,
   WormholescanClient,
 } from '@fogo-onre/sdk'
+import { getAssociatedTokenAddressSync } from '@solana/spl-token'
 import { recordSeen } from '../state/watermarks'
+import { BoundedMap } from '../utils/bounded-map'
 import { errorFields, errorFieldsCompact } from '../utils/log'
 import { harvestVaaPages } from '../utils/wormholescan-pages'
+import { readSplTokenAmount } from './account-layouts'
+
+/**
+ * Cap on the per-enumerator memo of inbox-items proven `Closed`. A
+ * `Closed` Flow is permanently terminal (the relayer's `send` closed the
+ * PDA for rent), so caching it lets repeated backstop sweeps skip *all*
+ * RPC reads for that VAA. 50k entries is ~hours of historical flows at
+ * realistic volume; FIFO eviction at the cap only costs one re-derivation
+ * the next time that ancient VAA is paged.
+ */
+const TERMINAL_CACHE_MAX = 50_000
 
 const VAA_LEG = {
   deposit: { nttProgramId: NTT_USDC_PROGRAM_ID },
@@ -75,17 +90,22 @@ type VaaResolution = {
 
 /**
  * Polls Wormholescan for recent VAAs from the FOGO USDC and ONyc NTT
- * managers, parses each to a deposit-leg `nttInboxItem`, and synthesizes
- * its current state by checking whether a Flow PDA exists on-chain:
+ * managers, parses each to its `nttInboxItem`, and synthesizes its
+ * current state by checking whether a Flow PDA exists on-chain:
  *
- *   - No Flow PDA → status = 'Pending'  (claim_usdc dispatch)
+ *   - No Flow PDA → status = 'Pending'  (receive dispatch)
  *   - Flow exists → status = describeStatus(flow.status)
  *
+ * The VAA leg (`deposit`/`withdraw`) rides on `ScannedFlow.direction`;
  * VAA bytes are carried through as `vaaHex` so the advance fns don't
  * need a second Wormholescan round-trip.
  */
 export function makeEnumerator(opts: EnumerateOptions) {
   const ws = new WormholescanClient({ baseUrl: opts.baseUrl, fetchImpl: opts.fetchImpl })
+  // Memo of inbox-items proven `Closed`. Lives across scans (incremental
+  // *and* backstop) for the enumerator's lifetime so a flow the deep
+  // backstop sweep re-pages every cycle costs zero RPC after the first.
+  const terminalCache = new BoundedMap<string, true>(TERMINAL_CACHE_MAX)
 
   return async function enumerateFlows(ctx: AdvanceContext): Promise<ScannedFlow[]> {
     const out: ScannedFlow[] = []
@@ -118,7 +138,7 @@ export function makeEnumerator(opts: EnumerateOptions) {
         // Per-VAA Flow PDA lookups are independent reads; fan them out so a
         // 50-item page costs ~1 RPC RTT, not 50.
         const resolutions = await Promise.all(
-          items.map(async item => scanWormholescanVaa(ctx, item, leg)),
+          items.map(async item => scanWormholescanVaa(ctx, item, leg, terminalCache)),
         )
         if (ctx.abortSignal.aborted) {
           return
@@ -142,12 +162,13 @@ export function makeEnumerator(opts: EnumerateOptions) {
       }
     }
 
-    if (opts.fogoUsdcEmitterHex) {
-      await harvest(opts.fogoUsdcEmitterHex, 'deposit')
-    }
-    if (opts.fogoOnycEmitterHex) {
-      await harvest(opts.fogoOnycEmitterHex, 'withdraw')
-    }
+    // Independent emitters (distinct Wormholescan queries, distinct Flow
+    // PDAs, distinct watermark keys) — scan in parallel so a cold start
+    // with no checkpoint backfills both legs in one round-trip window.
+    await Promise.all([
+      opts.fogoUsdcEmitterHex ? harvest(opts.fogoUsdcEmitterHex, 'deposit') : undefined,
+      opts.fogoOnycEmitterHex ? harvest(opts.fogoOnycEmitterHex, 'withdraw') : undefined,
+    ])
     ctx.log.debug('scan iteration enumerated', { flows: out.length })
     return out
   }
@@ -157,12 +178,31 @@ async function scanWormholescanVaa(
   ctx: AdvanceContext,
   item: WormholescanVaa,
   leg: VaaLeg,
+  terminalCache: BoundedMap<string, true>,
 ): Promise<VaaResolution> {
   const resolved = resolveVaaForLeg(ctx, item.vaa, leg)
   if (!resolved) {
     // Non-NTT VAA from this emitter (or malformed bytes). Permanently
     // uninteresting — recording lets the floor advance past it.
     return { sequence: item.sequence, flow: null, recordable: true }
+  }
+  // Known-terminal short-circuit: a `Closed` Flow never reopens, so skip
+  // both the Flow-PDA fetch and the inbox/ATA peek `classifyMissingFlow`
+  // would do. This is what keeps the deep backstop sweep from re-reading
+  // every historical flow each cycle (the 429 storm's main amplifier).
+  const inboxKey = resolved.nttInboxItem.toBase58()
+  if (terminalCache.has(inboxKey)) {
+    return {
+      sequence: item.sequence,
+      flow: {
+        pubkey: resolved.nttInboxItem,
+        status: 'Closed',
+        direction: leg,
+        fogoTx: item.txHash ?? '',
+        vaaHex: Buffer.from(item.vaa).toString('hex'),
+      },
+      recordable: true,
+    }
   }
   // Distinguish four Flow PDA fetch outcomes:
   //   - `resolved`    — PDA exists and decoded cleanly under the current IDL.
@@ -220,43 +260,48 @@ async function scanWormholescanVaa(
     return { sequence: item.sequence, flow: null, recordable: false }
   }
   if (fetchOutcome === 'undecodable') {
-    // Synthesize a leg-prefixed sentinel status so the FSM's
-    // `pickAdvanceForStatus` default-skips it (no handler will ever
-    // match an `*Undecodable` status). The VAA is recordable — we've
-    // logged + emitted metric — so the watermark moves past it and
-    // the scanner stops re-fetching the same stuck PDA on every poll.
+    // `Undecodable` sentinel: `pickAdvanceForStatus` default-skips it (no
+    // handler matches). The VAA is recordable — we've logged + emitted
+    // metric — so the watermark moves past the stuck PDA.
     return {
       sequence: item.sequence,
       flow: {
         pubkey: resolved.nttInboxItem,
-        status: leg === 'withdraw' ? 'WithdrawUndecodable' : 'DepositUndecodable',
+        status: 'Undecodable',
+        direction: leg,
         fogoTx: item.txHash ?? '',
         vaaHex: Buffer.from(item.vaa).toString('hex'),
       },
       recordable: true,
     }
   }
-  // Withdraw-leg post-completion disambiguation. After `send_usdc_to_user`
-  // closes the Flow PDA, `fetchOutflightFlow` returns `missing` — same as
-  // the pre-`unlock_onyc` state — so a naive `null -> WithdrawPending`
-  // classification re-dispatches `unlock_onyc` against an already-redeemed
-  // NTT inbox-item, which NTT correctly aborts with
-  // `TransferCannotBeRedeemed (6008)`. Peek the inbox-item's release_status
-  // to break the ambiguity: `Released` means the chain is complete, route
-  // to the terminal `WithdrawClosed` so `pickAdvanceForStatus` skips it.
-  // Mirrors the deposit-side guard at `bridge/redeem.ts:134`.
-  let synthesizedStatus = synthesizeStatus(leg, flow ? describeStatus(flow.status) : null)
-  if (leg === 'withdraw' && fetchOutcome === 'missing') {
-    const terminal = await classifyMissingWithdrawFlow(ctx, resolved.nttInboxItem)
+  // Post-completion disambiguation for *both* legs. After the relayer's
+  // `send` closes the Flow PDA, `fetchFlow` returns `missing` — identical
+  // to the pre-`receive` state, where a generic NTT relayer has already
+  // run the raw redeem (inbox `Released`) but the OnRe relayer hasn't
+  // swept the unlocked tokens yet. A naive `null -> Pending` either
+  // re-dispatches `receive` against an already-redeemed inbox-item (NTT
+  // aborts `TransferCannotBeRedeemed 6008`) or — the inverse bug —
+  // abandons a genuinely-pending flow as `Closed`. `classifyMissingFlow`
+  // reads whether the unlocked tokens are still parked in the recipient
+  // ATA to tell the two apart.
+  let status: FlowStatus = flow ? (describeStatus(flow.status) as FlowStatus) : 'Pending'
+  if (fetchOutcome === 'missing') {
+    const terminal = await classifyMissingFlow(ctx, leg, resolved.nttInboxItem)
     if (terminal) {
-      synthesizedStatus = terminal
+      status = terminal
     }
+  }
+  // Memoize terminal flows so later sweeps short-circuit to zero reads.
+  if (status === 'Closed') {
+    terminalCache.set(inboxKey, true)
   }
   return {
     sequence: item.sequence,
     flow: {
       pubkey: resolved.nttInboxItem,
-      status: synthesizedStatus,
+      status,
+      direction: leg,
       fogoTx: item.txHash ?? '',
       vaaHex: Buffer.from(item.vaa).toString('hex'),
     },
@@ -265,95 +310,91 @@ async function scanWormholescanVaa(
 }
 
 /**
- * Decide whether a withdraw-leg Flow PDA that's *missing* on-chain is
- * pre-`unlock_onyc` (genuinely pending) or post-`send_usdc_to_user`
- * (chain complete, Flow closed for rent).
+ * Decide whether a Flow PDA that's *missing* on-chain is genuinely
+ * pending (the OnRe relayer hasn't run `receive` yet) or terminal (the
+ * relayer completed and closed the Flow for rent).
  *
- * Returns `'WithdrawClosed'` only when we can affirmatively prove the NTT
- * inbox-item is `Released`. RPC failures and undecodable bytes return
- * `null`, leaving the caller's default `'WithdrawPending'` synthesis in
- * place — the on-chain handler will give the authoritative answer on the
- * next dispatch attempt (and the `TransferCannotBeRedeemed` it throws is
- * already classified as a known race elsewhere). This conservatism keeps
- * a transient RPC blip from hiding a genuinely-pending withdraw.
+ * The trap: a generic NTT relayer performs the raw `redeem` +
+ * `release_inbound` independently of OnRe, so the inbox-item reads
+ * `Released` in *both* states. `Released` alone is therefore not a
+ * completion signal. The decisive signal is whether the unlocked tokens
+ * still sit in the recipient ATA:
+ *
+ *   - ATA still holds >= the inbox amount → tokens unswept, the relayer's
+ *     `receive` hasn't run → return `null` (caller's default `Pending`
+ *     stands, `receive` is dispatched and sweeps them).
+ *   - ATA swept (< amount, typically 0) → `send` already moved the funds
+ *     onward and closed the Flow → `'Closed'`.
+ *
+ * Returns `null` (→ `Pending`) on every ambiguous outcome — inbox not
+ * `Released`, missing, undecodable, or any RPC failure — so a transient
+ * blip can never strand a genuinely-pending flow. A redundant `receive`
+ * against a finished flow is the cheap failure (on-chain
+ * `TransferCannotBeRedeemed 6008`, already classified as a known race);
+ * abandoning a stuck flow as `Closed` is the expensive one.
  */
-async function classifyMissingWithdrawFlow(
+export async function classifyMissingFlow(
   ctx: AdvanceContext,
+  leg: VaaLeg,
   nttInboxItem: PublicKey,
 ): Promise<FlowStatus | null> {
   let info: Awaited<ReturnType<AdvanceContext['connection']['getAccountInfo']>>
   try {
     info = await ctx.connection.getAccountInfo(nttInboxItem)
   } catch (err) {
-    ctx.log.debug('inbox-item peek failed (transient) — defaulting to WithdrawPending', {
+    ctx.log.debug('inbox-item peek failed (transient) — defaulting to Pending', {
+      leg,
       nttInboxItem: nttInboxItem.toBase58(),
       ...errorFieldsCompact(err),
     })
     return null
   }
   if (!info) {
-    // No inbox-item exists yet — NTT `Redeem` hasn't materialised it.
-    // Genuinely pre-unlock; let the default `WithdrawPending` stand.
+    // No inbox-item yet — NTT `redeem` hasn't materialised it. Genuinely
+    // pre-receive; let the default `Pending` stand.
     return null
   }
+  let inbox: ReturnType<typeof decodeNttInboxItem>
   try {
-    const inboxState = decodeNttInboxItem(Buffer.from(info.data))
-    if (inboxState.releaseStatus.kind === 'Released') {
-      return 'WithdrawClosed'
-    }
+    inbox = decodeNttInboxItem(Buffer.from(info.data))
   } catch (err) {
-    ctx.log.debug('inbox-item present but undecodable — defaulting to WithdrawPending', {
+    ctx.log.debug('inbox-item present but undecodable — defaulting to Pending', {
+      leg,
       nttInboxItem: nttInboxItem.toBase58(),
       ...errorFieldsCompact(err),
     })
+    return null
   }
-  return null
-}
+  if (inbox.releaseStatus.kind !== 'Released') {
+    // Not released yet — genuinely pre-receive.
+    return null
+  }
 
-/**
- * Map the on-chain `(leg, FlowStatus)` pair to a synthetic status
- * string the cranker FSM dispatches on. The on-chain `FlowStatus` enum
- * is shared between deposit and withdraw legs (Borsh tag-stable per
- * `state.rs`'s `flow_status_borsh_tag_invariant` test), so status
- * alone cannot pick a handler — the deposit-leg `Claimed` means
- * "USDC swept" and routes to `swap_usdc_to_onyc`, while the
- * withdraw-leg `Claimed` means "ONyc unlocked" and routes to
- * `swap_onyc_to_usdc`. Synthesizing leg-prefixed strings here
- * lets `pickAdvanceForStatus` stay a flat switch.
- *
- * `null` flow ⇒ "no Flow PDA exists yet" — the entry-point status for
- * either leg.
- */
-function synthesizeStatus(
-  leg: VaaLeg,
-  status: FlowStatusName | null,
-): FlowStatus {
-  if (leg === 'deposit') {
-    if (status === null) {
-      return 'Pending'
-    }
-    if (status === 'Claimed') {
-      return 'Claimed'
-    }
-    if (status === 'Swapped') {
-      return 'Swapped'
-    }
-    // Unknown on a deposit-leg Flow shouldn't happen — pass through
-    // verbatim so the dispatcher's default skip + skip-counter labels
-    // it for triage.
-    return status as FlowStatus
+  // Released. Distinguish "send completed & swept" from "raw-redeemed but
+  // relayer hasn't swept yet" by reading the recipient ATA balance.
+  const recvMint = leg === 'withdraw' ? ONYC_MINT : USDC_MINT
+  const recipientAta = getAssociatedTokenAddressSync(recvMint, inbox.recipientAddress, true)
+  let ataInfo: Awaited<ReturnType<AdvanceContext['connection']['getAccountInfo']>>
+  try {
+    ataInfo = await ctx.connection.getAccountInfo(recipientAta)
+  } catch (err) {
+    ctx.log.debug('recipient-ATA peek failed (transient) — defaulting to Pending', {
+      leg,
+      recipientAta: recipientAta.toBase58(),
+      ...errorFieldsCompact(err),
+    })
+    return null
   }
-  // withdraw
-  if (status === null) {
-    return 'WithdrawPending'
+  const parked = readSplTokenAmount(ataInfo?.data) ?? 0n
+  if (parked >= inbox.amount) {
+    // Tokens unlocked but not swept — the relayer `receive` still needs to
+    // run. Leave it `Pending` so the cranker drives receive → swap → send.
+    // Surface it: a healthy sweep clears within a scan or two, so sustained
+    // growth of this counter is the stranded-flow alert.
+    ctx.metrics.flowUnsweptObserved.inc({ leg })
+    return null
   }
-  if (status === 'Claimed') {
-    return 'WithdrawClaimed'
-  }
-  if (status === 'Swapped') {
-    return 'WithdrawSwapped'
-  }
-  return status as FlowStatus
+  return 'Closed'
 }
 
 function isAccountMissingError(err: unknown): boolean {

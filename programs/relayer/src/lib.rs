@@ -13,6 +13,8 @@ pub mod state;
 
 use instructions::*;
 
+use crate::state::Direction;
+
 declare_id!("onrenRKgX54qtWeK3cuaTBE71xx7dWMXn82ubH61vAp");
 
 /// Cross-chain relayer: USDC.s on FOGO ↔ ONyc on Solana, both legs over
@@ -23,79 +25,50 @@ pub mod fogo_onre_relayer {
     use super::*;
 
     /// One-time setup: config PDA + relayer-authority-owned ATAs.
-    pub fn initialize(
-        ctx: Context<Initialize>,
-        deposit_fee_bps: u16,
-        withdraw_fee_bps: u16,
-    ) -> Result<()> {
+    pub fn initialize(ctx: Context<Initialize>, deposit_fee_bps: u16, withdraw_fee_bps: u16) -> Result<()> {
         initialize::handler(ctx, deposit_fee_bps, withdraw_fee_bps)
     }
 
-    /// Redeem inbound USDC.s VAA, create inbound `Flow` receipt.
-    pub fn claim_usdc<'info>(
-        ctx: Context<'info, ClaimUsdc<'info>>,
+    /// Redeem an inbound NTT VAA (deposit: base/USDC, withdraw: asset/ONyc),
+    /// create the `Flow` receipt. Direction selects the NTT manager + flow seed.
+    pub fn receive<'info>(
+        ctx: Context<'info, Receive<'info>>,
+        direction: Direction,
         redeem_accounts_len: u8,
     ) -> Result<()> {
-        claim_usdc::handler(ctx, redeem_accounts_len)
+        instructions::receive::handler(ctx, direction, redeem_accounts_len)
     }
 
-    /// Lock ONyc via NTT and atomically emit the outbound VAA.
-    /// `transfer_lock_account_count` splits `remaining_accounts` between
-    /// `transfer_lock` and `release_wormhole_outbound`.
-    pub fn lock_onyc<'info>(
-        ctx: Context<'info, LockOnyc<'info>>,
-        transfer_lock_account_count: u8,
-    ) -> Result<()> {
-        lock_onyc::handler(ctx, transfer_lock_account_count)
+    /// Route-agnostic outbound send. Routes on `flow.direction`: deposit
+    /// pushes asset (ONyc) out, withdraw pushes base (USDC) out, each via NTT
+    /// `transfer_lock` + atomic `release_wormhole_outbound`.
+    /// `transfer_lock_account_count` splits `remaining_accounts` between the
+    /// two NTT CPIs.
+    pub fn send<'info>(ctx: Context<'info, Send<'info>>, transfer_lock_account_count: u8) -> Result<()> {
+        instructions::send::handler(ctx, transfer_lock_account_count)
     }
 
-    /// Release ONyc from NTT custody, create outbound `Flow` receipt.
-    pub fn unlock_onyc<'info>(
-        ctx: Context<'info, UnlockOnyc<'info>>,
-        redeem_accounts_len: u8,
-    ) -> Result<()> {
-        unlock_onyc::handler(ctx, redeem_accounts_len)
-    }
-
-    /// Lock USDC via NTT and atomically emit the outbound VAA back to
-    /// `flow.fogo_sender`. `transfer_lock_account_count` splits
-    /// `remaining_accounts` between `transfer_lock` and
-    /// `release_wormhole_outbound` (mirrors `lock_onyc`).
-    pub fn send_usdc_to_user<'info>(
-        ctx: Context<'info, SendUsdcToUser<'info>>,
-        transfer_lock_account_count: u8,
-    ) -> Result<()> {
-        send_usdc_to_user::handler(ctx, transfer_lock_account_count)
-    }
-
-    pub fn swap_usdc_to_onyc<'info>(ctx: Context<'info, SwapUsdcToOnyc<'info>>) -> Result<()> {
-        swap_usdc_to_onyc::handler(ctx)
-    }
-
-    /// Permissionless: convert outbound flow's ONyc → USDC via any swap
-    /// program under NAV-anchored slippage protection. Withdraw fee is
-    /// taken in ONyc up front, the post-fee remainder swapped under a
-    /// bounded SPL `Approve` to `swap_delegate`. The swap CPI runs under
-    /// plain `invoke` — PDA-signer privilege does not propagate. Replaces
-    /// the OnRe redemption-request chain (KYC-gated, never executes for
-    /// the relayer PDA).
-    pub fn swap_onyc_to_usdc<'info>(
-        ctx: Context<'info, SwapOnycToUsdc<'info>>,
-        swap_ix_data: Vec<u8>,
-    ) -> Result<()> {
-        swap_onyc_to_usdc::handler(ctx, swap_ix_data)
+    /// Permissionless, route-agnostic swap. Routes on `flow.direction`:
+    /// deposit swaps base→asset (fee from the asset output), withdraw swaps
+    /// asset→base (fee from the asset input).
+    pub fn swap<'info>(ctx: Context<'info, Swap<'info>>, swap_ix_data: Vec<u8>) -> Result<()> {
+        instructions::swap::handler(ctx, swap_ix_data)
     }
 
     /// Authority-only. `None` args leave fields unchanged. Fee decreases
     /// apply instantly; increases stage for `FEE_TIMELOCK_SLOTS` (~2 days)
     /// then auto-promote on the next `configure` after the window.
+    /// `slippage_bps` (capped at `MAX_SLIPPAGE_BPS` via `validate`) applies
+    /// immediately to both swap legs' NAV floor.
     pub fn configure(
         ctx: Context<Configure>,
         deposit_fee_bps: Option<u16>,
         withdraw_fee_bps: Option<u16>,
         new_authority: Option<Pubkey>,
+        slippage_bps: Option<u16>,
+        price_oracle: Option<Pubkey>,
     ) -> Result<()> {
-        configure::handler(ctx, deposit_fee_bps, withdraw_fee_bps, new_authority)
+        configure::handler(ctx, deposit_fee_bps, withdraw_fee_bps, new_authority, slippage_bps, price_oracle)
     }
 
     /// Two-step rotation, step 2. Signer must equal `pending_authority`;

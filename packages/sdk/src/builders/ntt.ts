@@ -1,4 +1,5 @@
 import type { AccountMeta } from '@solana/web3.js'
+import { Buffer } from 'node:buffer'
 import { keccak_256 } from '@noble/hashes/sha3.js'
 import { getAssociatedTokenAddressSync, TOKEN_PROGRAM_ID } from '@solana/spl-token'
 import {
@@ -8,7 +9,7 @@ import {
   SYSVAR_RENT_PUBKEY,
 } from '@solana/web3.js'
 import { FOGO_WORMHOLE_CHAIN_ID } from '../constants'
-import { readonly, signerWritable, writable } from '../utils/accountMeta'
+import { assertAccountCount, readonly, signerWritable, writable } from '../utils/accountMeta'
 
 const CONFIG_SEED = Buffer.from('config')
 const NTT_MANAGER_PEER_SEED = Buffer.from('peer')
@@ -83,16 +84,7 @@ export function findInboxItemPda(
   )
 }
 
-/**
- * NTT's `Config.custody` is set during `initialize` via the
- * `associated_token::mint = mint, associated_token::authority =
- * token_authority` Anchor constraints — i.e. the (possibly off-curve) ATA
- * of the manager's `token_authority` PDA for the bridged mint. Because
- * `initialize` is the only writer of `Config.custody` and the constraint
- * pins the address, custody is fully derivable from `(mint, programId)`
- * without an RPC fetch. Verified against FOGO mainnet USDC.s
- * (`uSd2czE…` / manager `nttu74…` → custody `F1dShvAq…`).
- */
+/** `Config.custody` = `token_authority` PDA's ATA for `mint`; pinned at `initialize`, so derivable without an RPC fetch. */
 export function findNttCustodyAta(
   mint: PublicKey,
   programId: PublicKey,
@@ -102,10 +94,9 @@ export function findNttCustodyAta(
 }
 
 /**
- * NTT binds the per-call `session_authority` PDA to a hash of the
- * outbound transfer args. The relayer pre-approves this PDA as SPL
- * delegate before invoking `transfer_lock`, so the SDK must compute the
- * exact same PDA the on-chain handler computes.
+ * Per-call `session_authority` PDA, bound to a hash of the transfer args.
+ * The relayer pre-approves it as SPL delegate before `transfer_lock`, so
+ * this must match the on-chain derivation exactly.
  */
 export function findSessionAuthorityPda(
   fromOwner: PublicKey,
@@ -118,11 +109,6 @@ export function findSessionAuthorityPda(
   )
 }
 
-/**
- * Compute the 32-byte hash of NTT `TransferArgs`, matching the on-chain
- * `TransferArgs::keccak256()` implementation:
- *   keccak256(amount BE u64 ‖ recipient_chain BE u16 ‖ recipient_address[32] ‖ should_queue u8)
- */
 export interface NttTransferArgs {
   amount: bigint
   recipientChain: number
@@ -131,11 +117,9 @@ export interface NttTransferArgs {
 }
 
 /**
- * Shared 43-byte buffer-builder for `TransferArgs`. The on-chain
- * `keccak256()` hash uses big-endian; the Borsh-encoded instruction
- * data uses little-endian. Same field layout otherwise — extracting
- * here removes the duplicated body and the duplicated 32-byte
- * recipient-address validation.
+ * 43-byte `TransferArgs` layout: amount u64 ‖ chain u16 ‖ recipient[32] ‖
+ * should_queue u8. On-chain `keccak256()` reads big-endian; Borsh ix data
+ * reads little-endian — same fields otherwise.
  */
 function serializeTransferArgs(args: NttTransferArgs, littleEndian: boolean): Uint8Array {
   if (args.recipientAddress.length !== 32) {
@@ -154,43 +138,22 @@ export function nttTransferArgsHash(args: NttTransferArgs): Uint8Array {
   return keccak_256(serializeTransferArgs(args, false))
 }
 
-/**
- * Borsh-encode `TransferArgs` for the NTT instruction `data` payload.
- * Distinct from `nttTransferArgsHash`: borsh is little-endian, ChainId is
- * a single u16 field, and the encoder produces 43 bytes (no discriminator).
- */
+/** Borsh-encode `TransferArgs` (little-endian) for the NTT ix `data` payload. */
 export function encodeNttTransferArgsBorsh(args: NttTransferArgs): Uint8Array {
   return serializeTransferArgs(args, true)
 }
 
-/**
- * Inputs needed to build the NTT redeem + release_inbound_unlock account
- * lists for `unlock_onyc`. Everything here is derivable from on-chain NTT
- * state EXCEPT the per-VAA accounts (`nttInboxItem`, `nttTransceiverMessage`)
- * which are addressable only off-chain via the relayer's VAA pipeline.
- *
- * NOTE: source chain is fixed to FOGO (51). The relayer-program does not
- * support any other source, and exposing a chain override would let the
- * SDK build PDAs (peer, inbox_rate_limit) that the on-chain code can never
- * match, silently breaking the CPI.
- */
+/** Per-VAA redeem inputs for `receive` (not derivable from on-chain NTT state). */
 export interface NttRedeemContext {
-  /** Address of the registered transceiver program (for OnRe = NTT itself). */
+  /** Registered transceiver program (for OnRe = the NTT manager itself). */
   transceiverAddress: PublicKey
 }
 
 /**
- * Build the 14-entry account list expected by NTT v1's outbound
- * `transfer_lock` instruction. Mode-, mint-, and program-id-agnostic — the
- * relayer's Solana-side `lock_onyc` / `send_usdc_to_user` use it under the
- * canonical per-leg NTT program ID (USDC.s or ONyc) with the relayer authority PDA as the
- * non-signer source owner; FOGO-side user-signed flows use it with the
- * FOGO NTT manager program ID and the user's wallet as a signer source.
- *
- * The order matches the NTT v1 `TransferLock` Anchor accounts struct
- * (verified against the relayer's Rust `lock_onyc` handler). Reordering
- * any entry silently breaks the CPI — keep these in lockstep with NTT
- * upstream.
+ * Params for the 14-entry NTT v1 `transfer_lock` account list. Used by
+ * both relayer-side `send` (PDA source) and FOGO-side user flows (wallet
+ * source). Order matches the NTT `TransferLock` struct — reordering
+ * silently breaks the CPI.
  */
 export interface BuildNttTransferLockAccountListParams {
   /** NTT manager program id — Solana for relayer-side, FOGO-side for user-signed. */
@@ -215,13 +178,7 @@ export interface BuildNttTransferLockAccountListParams {
   shouldQueue?: boolean
 }
 
-/**
- * Account count for the NTT `transfer_lock` instruction. The handler
- * unpacks exactly this many trailing accounts; the relayer instructions
- * (`lockOnyc`, `sendUsdcToUser`) pass it as the split-marker so the
- * on-chain program knows where the NTT slice ends and the next builder
- * (release-wormhole-outbound) begins.
- */
+/** Trailing-account count NTT `transfer_lock` unpacks; relayer `send` uses it as the split marker. */
 export const NTT_TRANSFER_LOCK_ACCOUNT_COUNT = 14
 
 export function buildNttTransferLockAccountList(
@@ -264,30 +221,17 @@ export function buildNttTransferLockAccountList(
     readonly(tokenAuthorityPda),
     readonly(params.nttProgramId),
   ]
-  if (accounts.length !== NTT_TRANSFER_LOCK_ACCOUNT_COUNT) {
-    throw new Error(
-      `NTT transfer_lock account list drift: expected ${NTT_TRANSFER_LOCK_ACCOUNT_COUNT}, got ${accounts.length}`,
-    )
-  }
-  return accounts
+  return assertAccountCount(accounts, NTT_TRANSFER_LOCK_ACCOUNT_COUNT, 'NTT transfer_lock')
 }
 
-/**
- * NTT transceiver-emitter PDA: `["emitter"]` under the transceiver
- * program ID. For the OnRe stack, the manager program *is* the
- * transceiver, so callers pass `nttProgramId` here.
- */
+/** NTT transceiver-emitter PDA `["emitter"]`. OnRe's manager *is* the transceiver. */
 export function findNttEmitterPda(
   transceiverProgramId: PublicKey,
 ): [PublicKey, number] {
   return PublicKey.findProgramAddressSync([EMITTER_SEED], transceiverProgramId)
 }
 
-/**
- * Per-outbox Wormhole message PDA: `["message", outbox_item]` under the
- * transceiver program ID. NTT v3 init's this account during
- * `release_wormhole_outbound`, so it must be writable.
- */
+/** Per-outbox Wormhole message PDA `["message", outbox_item]`. Writable — NTT v3 inits it in `release_wormhole_outbound`. */
 export function findNttWormholeMessagePda(
   outboxItem: PublicKey,
   transceiverProgramId: PublicKey,
@@ -299,31 +243,16 @@ export function findNttWormholeMessagePda(
 }
 
 /**
- * Inputs for the NTT v3 outbound publish step
- * (`release_wormhole_outbound`). This is the *second* CPI in a
- * lock-then-publish flow on the relayer side: `transfer_lock` mints the
- * outbox item, `release_wormhole_outbound` posts it to Wormhole Core.
- *
- * Mainnet-verified ordering & writability via tx `3NR6EEbk…`'s top-level
- * accounts array (15 entries, manager + outbox_item_signer at the v3
- * tail, system/clock/rent grouped inside the wormhole composite, NOT at
- * the tail).
- *
- * Wormhole Core PDAs (`bridge`, `fee_collector`, `sequence`) are
- * caller-supplied because their derivation depends on the deployed
- * Wormhole Core program ID — we deliberately don't hardcode that here
- * to keep the SDK cluster-agnostic.
+ * Inputs for NTT v3 `release_wormhole_outbound` — the publish CPI that
+ * follows `transfer_lock`. Wormhole Core PDAs are caller-supplied (their
+ * derivation depends on the cluster's Wormhole Core program ID).
  */
 export interface BuildNttReleaseWormholeOutboundAccountListParams {
   /** Permissionless cranker (signs + pays). */
   payer: PublicKey
   /** NTT manager program id (USDC.s or ONyc on Solana). */
   nttProgramId: PublicKey
-  /**
-   * NTT manager-as-transceiver program id. For the OnRe stack this is
-   * the same as `nttProgramId`; kept separate to match upstream NTT's
-   * "manager ≠ transceiver" generality and future-proof against a split.
-   */
+  /** Manager-as-transceiver program id. Defaults to `nttProgramId` on this stack. */
   transceiverProgramId?: PublicKey
   /** Outbox item PDA created by the preceding `transfer_lock`. */
   outboxItem: PublicKey
@@ -339,19 +268,16 @@ export interface BuildNttReleaseWormholeOutboundAccountListParams {
   wormholeFeeCollector: PublicKey
   /** Wormhole Core per-emitter sequence tracker. */
   wormholeSequence: PublicKey
-  /**
-   * NTT v3 outbox-item signer PDA (per upstream NTT v3 release ABI).
-   * Caller derives via Wormhole NTT SDK.
-   */
+  /** NTT v3 outbox-item signer PDA — caller derives via Wormhole NTT SDK. */
   outboxItemSigner: PublicKey
 }
 
 /**
- * Build the 15-entry account list for NTT v3
- * `release_wormhole_outbound`. Order matches mainnet tx `3NR6EEbk…`
- * exactly — see `BuildNttReleaseWormholeOutboundAccountListParams`
- * docs. Reordering silently breaks the CPI.
+ * 15-entry account list for NTT v3 `release_wormhole_outbound`. Order
+ * verified against mainnet tx `3NR6EEbk…` — reordering breaks the CPI.
  */
+export const NTT_RELEASE_WORMHOLE_OUTBOUND_ACCOUNT_COUNT = 15
+
 export function buildNttReleaseWormholeOutboundAccountList(
   params: BuildNttReleaseWormholeOutboundAccountListParams,
 ): AccountMeta[] {
@@ -366,7 +292,7 @@ export function buildNttReleaseWormholeOutboundAccountList(
       ?? findNttWormholeMessagePda(params.outboxItem, transceiverProgramId)[0]
   const emitter = params.emitter ?? findNttEmitterPda(transceiverProgramId)[0]
 
-  return [
+  return assertAccountCount([
     signerWritable(params.payer), //  0
     readonly(configPda), //  1
     writable(params.outboxItem), //  2
@@ -382,14 +308,10 @@ export function buildNttReleaseWormholeOutboundAccountList(
     readonly(SYSVAR_RENT_PUBKEY), // 12  wormhole.rent
     readonly(params.nttProgramId), // 13  manager (v3)
     readonly(params.outboxItemSigner), // 14  outbox_item_signer (v3)
-  ]
+  ], NTT_RELEASE_WORMHOLE_OUTBOUND_ACCOUNT_COUNT, 'NTT release_wormhole_outbound')
 }
 
-/**
- * Inputs for `buildNttRedeemReleaseAccounts`. Caller resolves the
- * authority/recipient ATA so this function stays free of `RelayerClient`
- * coupling — it lives next to the other NTT account-meta builders.
- */
+/** Inputs for `buildNttRedeemReleaseAccounts`. Caller resolves the authority/recipient ATA. */
 export interface BuildNttRedeemReleaseAccountsParams {
   mint: PublicKey
   nttInboxItem: PublicKey
@@ -398,25 +320,30 @@ export interface BuildNttRedeemReleaseAccountsParams {
   programId: PublicKey
   /** PDA that signs the redeem+release CPIs (relayer authority on this stack). */
   authority: PublicKey
-  /**
-   * Destination ATA for the release leg. Caller picks per-instruction:
-   *  `claim_usdc` routes to the per-user inbox ATA, `unlock_onyc` routes
-   *  to the long-lived relayer custody ATA.
-   */
+  /** Release-leg destination ATA: per-user inbox ATA on deposit, relayer custody on withdraw. */
   recipientAta: PublicKey
 }
 
 /**
- * Build the concatenated `redeem ‖ release ‖ NTT program` account list
- * for `claim_usdc` / `unlock_onyc`. Mint-agnostic — caller supplies the
- * NTT-managed mint (USDC.s on the deposit leg, ONyc on the withdraw leg).
+ * NTT ix account counts the on-chain `receive` validator pins
+ * (`programs/relayer/src/ntt.rs` `REDEEM_ACCOUNTS_MIN_LEN` /
+ * `RELEASE_ACCOUNTS_MIN_LEN`). The builder appends the NTT program meta to
+ * each slice, so `redeemAccountsLen = NTT_REDEEM_ACCOUNT_COUNT + 1`.
+ */
+export const NTT_REDEEM_ACCOUNT_COUNT = 10
+export const NTT_RELEASE_INBOUND_ACCOUNT_COUNT = 8
+
+/**
+ * Concatenated `redeem ‖ NTT ‖ release ‖ NTT` account list for `receive`.
+ * Source chain is pinned to FOGO — the relayer supports no other source,
+ * and a chain override would build peer/rate-limit PDAs the on-chain code
+ * can never match.
  *
- *   Redeem (10):  payer, config, peer, validatedMsg, registeredTransceiver,
+ *   Redeem (10):  authority, config, peer, validatedMsg, registeredTransceiver,
  *                 mint, inboxItem(mut), inboxRateLimit(mut),
  *                 outboxRateLimit(mut), systemProgram
- *   Release (8):  payer, config, inboxItem(mut), recipientAta(mut),
+ *   Release (8):  authority, config, inboxItem(mut), recipientAta(mut),
  *                 tokenAuthority, mint(mut), tokenProgram, custody(mut)
- *   + NTT program appended after each slice (for invoke_signed resolution)
  */
 export function buildNttRedeemReleaseAccounts(
   params: BuildNttRedeemReleaseAccountsParams,
@@ -433,7 +360,7 @@ export function buildNttRedeemReleaseAccounts(
   const [tokenAuthorityPda] = findTokenAuthorityPda(params.programId)
   const custody = findNttCustodyAta(params.mint, params.programId)
 
-  const redeem: AccountMeta[] = [
+  const redeem = assertAccountCount([
     writable(params.authority),
     readonly(configPda),
     readonly(peerPda),
@@ -444,9 +371,9 @@ export function buildNttRedeemReleaseAccounts(
     writable(inboxRateLimitPda),
     writable(outboxRateLimitPda),
     readonly(SystemProgram.programId),
-  ]
+  ], NTT_REDEEM_ACCOUNT_COUNT, 'NTT redeem')
 
-  const release: AccountMeta[] = [
+  const release = assertAccountCount([
     writable(params.authority),
     readonly(configPda),
     writable(params.nttInboxItem),
@@ -455,7 +382,7 @@ export function buildNttRedeemReleaseAccounts(
     writable(params.mint),
     readonly(TOKEN_PROGRAM_ID),
     writable(custody),
-  ]
+  ], NTT_RELEASE_INBOUND_ACCOUNT_COUNT, 'NTT release (inbound)')
 
   const nttProgramMeta = readonly(params.programId)
   return {

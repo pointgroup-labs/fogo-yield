@@ -26,6 +26,9 @@ export default antfu(
       // The file itself says "should not be edited" — so we ignore it
       // rather than fight the regenerator.
       'packages/webapp/next-env.d.ts',
+      // Verbatim test artifacts: keypairs, .so binaries, dumped mainnet
+      // accounts. Byte-exact fixtures, not code — style-linting is noise.
+      'tests/fixtures/**',
     ],
   },
   {

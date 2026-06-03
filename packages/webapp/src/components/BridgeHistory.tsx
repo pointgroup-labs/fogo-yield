@@ -1,9 +1,9 @@
 'use client'
 
-import type { TimelineRow } from '@/lib/bridgeHistory/types'
+import type { DisplayAction } from '@/lib/bridgeHistory/bridgeAction'
 import { isEstablished, useSession } from '@fogo/sessions-sdk-react'
 import { useIsRestoring } from '@tanstack/react-query'
-import { ArrowDownLeft, ArrowUpRight, Check, ChevronDown, ChevronRight, ChevronUp, Inbox, Loader2 } from 'lucide-react'
+import { ArrowDownLeft, ArrowUpRight, Check, ChevronDown, ChevronRight, ChevronUp, HelpCircle, Inbox, Loader2 } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { useEffect, useMemo, useState } from 'react'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -11,9 +11,11 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
-import { FOGO_ONYC_DECIMALS, USDC_DECIMALS } from '@/constants'
+import { FOGO_ONYC_DECIMALS, USDC_DECIMALS, USDC_S_MINT } from '@/constants'
 import { useBridgeHistory } from '@/hooks/useBridgeHistory'
+import { useDepositUsdcAmount } from '@/hooks/useDepositUsdcAmount'
 import { dismissBridge } from '@/lib/bridgeHistory/dismissed'
+import { UNCONFIRMED_AFTER_MS } from '@/lib/bridgeHistory/displaySla'
 
 /**
  * How many rows to show before collapsing the rest behind a "Show more"
@@ -41,7 +43,7 @@ export default function BridgeHistory() {
 
   const session = useSession()
   const owner = isEstablished(session) ? session.walletPublicKey : null
-  const { rows, isLoading, isError, hasNextPage, fetchNextPage, isFetchingNextPage } = useBridgeHistory(owner)
+  const { actions, isLoading, isError, hasNextPage, fetchNextPage, isFetchingNextPage } = useBridgeHistory(owner)
 
   // Collapse state — keep the default view tight (5 rows). Older rows
   // are still in the DOM tree only when expanded; this keeps row-count
@@ -61,34 +63,34 @@ export default function BridgeHistory() {
     return <SkeletonList count={3} />
   }
 
-  if (isError && rows.length === 0) {
+  if (isError && actions.length === 0) {
     return (
       <Alert>
-        <AlertTitle>Bridge history unavailable</AlertTitle>
+        <AlertTitle>History unavailable</AlertTitle>
         <AlertDescription>Couldn&apos;t load history. Try again in a moment.</AlertDescription>
       </Alert>
     )
   }
 
-  if (rows.length === 0) {
+  if (actions.length === 0) {
     return (
       <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed py-8 text-center">
         <Inbox aria-hidden className="size-6 text-muted-foreground" />
-        <p className="text-sm font-medium">No bridges yet</p>
+        <p className="text-sm font-medium">No transactions yet</p>
         <p className="text-xs text-muted-foreground">Your deposits and withdrawals will appear here.</p>
       </div>
     )
   }
 
-  const visibleRows = expanded ? rows : rows.slice(0, COLLAPSED_ROWS)
-  const hiddenCount = rows.length - visibleRows.length
-  const canCollapse = rows.length > COLLAPSED_ROWS
+  const visibleActions = expanded ? actions : actions.slice(0, COLLAPSED_ROWS)
+  const hiddenCount = actions.length - visibleActions.length
+  const canCollapse = actions.length > COLLAPSED_ROWS
 
   return (
     <div className="flex flex-col gap-3">
       <div className="relative">
-        <ul aria-label="Bridge history" className="flex flex-col gap-2">
-          {visibleRows.map(r => <li key={r.signature}><BridgeRow row={r} nowMs={nowMs} /></li>)}
+        <ul aria-label="Transaction history" className="flex flex-col gap-2">
+          {visibleActions.map(a => <li key={a.anchorSig}><BridgeRow action={a} nowMs={nowMs} /></li>)}
         </ul>
         {/*
           Soft fade overlay when collapsed AND there are hidden rows —
@@ -154,13 +156,27 @@ function SkeletonList({ count }: { count: number }) {
   )
 }
 
-function BridgeRow({ row, nowMs }: { row: TimelineRow, nowMs: number }) {
-  const isDeposit = row.kind === 'deposit'
-  const decimals = isDeposit ? USDC_DECIMALS : FOGO_ONYC_DECIMALS
-  const ticker = isDeposit ? 'USDC.s' : 'ONyc'
+function BridgeRow({ action, nowMs }: { action: DisplayAction, nowMs: number }) {
+  const isDeposit = action.kind === 'deposit'
+  const mintIsUsdc = action.displayMintB58 === USDC_S_MINT.toBase58()
+  // Deposits read as the USDC the user sent, never the ONyc received.
+  // Same-device deposits already carry USDC (journal overlay); orphan
+  // deposits (cross-device / journal-less) arrive ONyc-denominated, so
+  // recover the USDC on demand for this visible row — cached + persisted,
+  // ~3 RPC once per deposit rather than eagerly across all history.
+  const needsUsdcRecovery = isDeposit && !mintIsUsdc && action.anchorChain === 'Solana'
+  const recoveredUsdc = useDepositUsdcAmount(needsUsdcRecovery ? action.anchorSig : null)
+  const depositAmountPending = isDeposit && !mintIsUsdc && recoveredUsdc === null
+  const depositUsdcRaw = isDeposit && !mintIsUsdc ? recoveredUsdc : null
+  const ticker = isDeposit ? 'USDC' : (mintIsUsdc ? 'USDC' : 'ONyc')
+  const decimals = mintIsUsdc ? USDC_DECIMALS : FOGO_ONYC_DECIMALS
+  const amountText = depositAmountPending
+    ? '—'
+    : depositUsdcRaw !== null
+      ? formatAmount(depositUsdcRaw, USDC_DECIMALS)
+      : formatAmount(action.displayAmountRaw, decimals)
   const label = isDeposit ? 'Deposit' : 'Redeem'
-  const amount = formatAmount(row.amountRaw, decimals)
-  const blockMs = row.blockTime * 1000
+  const blockMs = action.startedAt * 1000
   const relTime = formatRelativeTime(blockMs, nowMs)
   const { absTime, isoTime } = useMemo(() => {
     const d = new Date(blockMs)
@@ -176,7 +192,15 @@ function BridgeRow({ row, nowMs }: { row: TimelineRow, nowMs: number }) {
   // because the webapp ships under `output: 'export'` — see the JSDoc
   // on `/tx/page.tsx` for the rationale.
   const router = useRouter()
-  const txHref = `/tx?signature=${row.signature}`
+  // Prefer the FOGO-side sig the user can recognize. For paymaster-
+  // wrapped deposits `action.anchorSig` is the Solana NTT lock (the
+  // only anchor Wormholescan returns); `originSig` is the user's FOGO
+  // burn when journal-matched, `finalSig` is the FOGO receipt — both
+  // are strictly more meaningful than the relayer's Solana lock.
+  const preferredSig = isDeposit
+    ? (action.originSig ?? action.finalSig ?? action.anchorSig)
+    : action.anchorSig
+  const txHref = `/tx?signature=${preferredSig}`
   const onRowClick = () => {
     router.push(txHref)
   }
@@ -201,7 +225,7 @@ function BridgeRow({ row, nowMs }: { row: TimelineRow, nowMs: number }) {
       className="group cursor-pointer py-0 ring-foreground/10 transition-shadow hover:ring-foreground/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:hover:ring-white/70"
       role="link"
       tabIndex={0}
-      aria-label={`View details for ${label} ${amount} ${ticker}`}
+      aria-label={`View details for ${label} ${amountText} ${ticker}`}
       onClick={onRowClick}
       onKeyDown={onRowKey}
     >
@@ -214,16 +238,9 @@ function BridgeRow({ row, nowMs }: { row: TimelineRow, nowMs: number }) {
         </span>
         <div className="flex min-w-0 flex-1 flex-col leading-tight">
           <span className="truncate text-sm font-medium tabular-nums">
-            {row.amountIsApproximate
-              ? (
-                  <span
-                    title="Approximate — reconstructed from on-chain data, may differ slightly from your typed amount"
-                  >
-                    ~
-                    {amount}
-                  </span>
-                )
-              : amount}
+            <span title={depositAmountPending ? 'Recovering the deposit amount from chain history…' : undefined}>
+              {amountText}
+            </span>
             {' '}
             <span className="font-normal text-muted-foreground">{ticker}</span>
           </span>
@@ -233,45 +250,28 @@ function BridgeRow({ row, nowMs }: { row: TimelineRow, nowMs: number }) {
             <time dateTime={isoTime} title={absTime}>{relTime}</time>
           </span>
         </div>
-        <StatusBadge row={row} nowMs={nowMs} />
+        <StatusBadge action={action} nowMs={nowMs} />
         <ChevronRight aria-hidden className="size-4 shrink-0 text-muted-foreground/50 transition-colors group-hover:text-foreground/50 dark:group-hover:text-white/70" />
       </CardContent>
     </Card>
   )
 }
 
-/**
- * Past this point, an unresolved row is almost certainly delivered —
- * the on-chain bridge SLA is minutes, not hours. The lazy
- * flow/op-status queries in `useBridgeHistory` only fire on first
- * mount of each row, so older entries that scrolled out before their
- * resolution round can stay stuck on "Pending" forever in the UI.
- * Treating anything older than this as "Likely delivered" turns that
- * dead state into a soft positive, while keeping the Mark-delivered
- * affordance available for the user to confirm.
- *
- * 2 hours is a generous bound: deposit happy path is ~3 min, redeem
- * happy path is ~10 min, and the Hero's slow-threshold (8/30 min)
- * already covers the "actually slow" range.
- */
-const STUCK_PENDING_AGE_MS = 2 * 60 * 60_000
-
-function StatusBadge({ row, nowMs }: { row: TimelineRow, nowMs: number }) {
+function StatusBadge({ action, nowMs }: { action: DisplayAction, nowMs: number }) {
   // Three render shapes — delivered (check), in-flight (spinner + phase),
   // pending (spinner + "Pending" + dismiss affordance).
   //
   // Precedence rationale:
-  //   1. **Delivered first.** Wormholescan (`row.status`) and the
-  //      per-device manual dismissal flag are the only *positive*
-  //      delivery oracles we have. If either confirms delivery, we
-  //      surface "Delivered" even when the local journal still says
-  //      "In progress" — the journal is a soft local progress label
-  //      driven by `LiveJournalTracker`'s FOGO-balance watch, which can
-  //      lag, miss the balance bump (non-monotonic ATA writes), or
-  //      simply never get patched to terminal if its observer race
-  //      doesn't resolve. Checking the oracle first prevents the row
-  //      from getting stuck on "In progress" forever after the tx
-  //      detail page already confirmed delivery.
+  //   1. **Delivered first.** Four positive delivery oracles, any of
+  //      which wins: Wormholescan (`action.status`), the per-device
+  //      manual dismissal flag, the device-local journal reaching
+  //      `terminal-success` (`action.journalDelivered`), and the
+  //      destination-ATA balance scan (`action.chainDelivered`, overlaid
+  //      in `useBridgeHistory`). Wormholescan NEVER flips to delivered
+  //      for OnRe's custom relayer-CPI redeem, so the latter two are what
+  //      stop a row getting stuck on "Pending"/"Unconfirmed": the journal
+  //      covers same-device rows, the ATA scan covers cross-device /
+  //      cold-link rows with no journal.
   //   2. **In-flight phase second.** Once we've ruled out a delivery
   //      oracle, the journal phase is the next best signal: it's the
   //      local "we're bridging" label and shows up before any oracle
@@ -285,11 +285,11 @@ function StatusBadge({ row, nowMs }: { row: TimelineRow, nowMs: number }) {
   //
   // Manual dismissals render as the *same* Delivered badge as oracle-
   // confirmed deliveries; the distinction is preserved on
-  // `row.manuallyDismissed` for debugging / analytics but is
+  // `action.manuallyDismissed` for debugging / analytics but is
   // intentionally invisible in the UI to avoid two near-identical
   // "Delivered" states confusing the user. Per-device, cosmetic,
   // reversible (clear `fogo-onre.dismissed-bridges.v1`).
-  if (row.status === 'delivered' || row.manuallyDismissed) {
+  if (action.status === 'delivered' || action.manuallyDismissed || action.journalDelivered || action.chainDelivered) {
     return (
       <Badge
         variant="outline"
@@ -301,17 +301,17 @@ function StatusBadge({ row, nowMs }: { row: TimelineRow, nowMs: number }) {
       </Badge>
     )
   }
-  if (row.phase !== null) {
+  if (action.phase !== null) {
     return (
-      <Badge variant="secondary" aria-label={`status: ${row.phase}`} className="gap-1">
+      <Badge variant="secondary" aria-label={`status: ${action.phase}`} className="gap-1">
         <Loader2 aria-hidden className="size-3 animate-spin" />
-        {row.phase}
+        {action.phase}
       </Badge>
     )
   }
   return (
     <div className="flex items-center gap-1.5">
-      <PendingBadge row={row} nowMs={nowMs} />
+      <PendingBadge action={action} nowMs={nowMs} />
       <Button
         variant="ghost"
         size="sm"
@@ -321,7 +321,7 @@ function StatusBadge({ row, nowMs }: { row: TimelineRow, nowMs: number }) {
           // navigates to the detail page; "Mark delivered" should stay
           // on the list.
           e.stopPropagation()
-          dismissBridge(row.signature)
+          dismissBridge(action.anchorSig)
         }}
         title="Funds already in your wallet? Mark this row delivered. Per-device only; does not affect on-chain state."
         aria-label="Mark this bridge as delivered"
@@ -334,21 +334,21 @@ function StatusBadge({ row, nowMs }: { row: TimelineRow, nowMs: number }) {
 
 /**
  * Renders the actual pending pill — split out so we can swap it for
- * a quieter "Likely delivered" variant on rows past the SLA window
- * without duplicating the surrounding Mark-delivered affordance.
+ * a neutral "Unconfirmed" variant on rows past the SLA window without
+ * duplicating the surrounding Mark-delivered affordance.
  */
-function PendingBadge({ row, nowMs }: { row: TimelineRow, nowMs: number }) {
-  const ageMs = nowMs - row.blockTime * 1000
-  if (ageMs > STUCK_PENDING_AGE_MS) {
+function PendingBadge({ action, nowMs }: { action: DisplayAction, nowMs: number }) {
+  const ageMs = nowMs - action.startedAt * 1000
+  if (ageMs > UNCONFIRMED_AFTER_MS) {
     return (
       <Badge
         variant="outline"
-        aria-label="status: likely delivered"
-        title="Older than the typical bridge window with no failure signal — almost certainly delivered. Open the row to verify, or use Mark delivered to confirm."
+        aria-label="status: unconfirmed"
+        title="Older than the typical bridge window and we couldn't confirm the delivery on the indexer. If the funds arrived in your wallet, use Mark delivered to confirm."
         className="gap-1 border-muted-foreground/20 text-muted-foreground"
       >
-        <Check aria-hidden className="size-3" />
-        Likely delivered
+        <HelpCircle aria-hidden className="size-3" />
+        Unconfirmed
       </Badge>
     )
   }

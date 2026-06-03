@@ -1,4 +1,5 @@
 import type { AccountMeta } from '@solana/web3.js'
+import { Buffer } from 'node:buffer'
 import {
   ASSOCIATED_TOKEN_PROGRAM_ID,
   getAssociatedTokenAddressSync,
@@ -10,7 +11,7 @@ import {
   SYSVAR_INSTRUCTIONS_PUBKEY,
 } from '@solana/web3.js'
 import { ONRE_PROGRAM_ID } from '../constants'
-import { readonly, writable } from '../utils/accountMeta'
+import { assertAccountCount, readonly, writable } from '../utils/accountMeta'
 
 export function findOnreStatePda(
   programId: PublicKey = ONRE_PROGRAM_ID,
@@ -76,11 +77,10 @@ export const OFFER_TOKEN_IN_MINT_OFFSET = 8
 export const OFFER_TOKEN_OUT_MINT_OFFSET = 40
 
 /**
- * Coupled OnRe deployment identifiers. `state` is a PDA of `programId`, and
- * `boss` is the pubkey stored INSIDE that State account — they only make
- * sense as a set. Mixing a custom `programId` with mainnet `boss` (or vice
- * versa) silently produces an invalid account list, so the API forces them
- * to travel together.
+ * Coupled OnRe deployment identifiers — `state` is a PDA of `programId`
+ * and `boss` is stored inside that State account, so they only make sense
+ * as a set. The API forces them to travel together; mixing a custom
+ * `programId` with a foreign `boss` silently yields an invalid account list.
  */
 export interface OnreDeployment {
   programId: PublicKey
@@ -113,13 +113,10 @@ export const ONRE_MAINNET_DEPLOYMENT: OnreDeployment = makeOnreDeployment(
 )
 
 /**
- * Optional overrides for `buildOnreSwapRemainingAccounts`. Defaults are wired
- * for OnRe mainnet (the same fixtures cloned into LiteSVM in the E2E tests).
- *
- * `deployment` is a single coupled object so partial overrides can't mix
- * mainnet defaults with a custom program. `tokenInProgram` and
- * `tokenOutProgram` are independent so Token-2022 mints can sit on either
- * side of the swap without forcing the other side to match.
+ * Optional overrides for `buildOnreSwapRemainingAccounts`; defaults wired
+ * for OnRe mainnet. `deployment` is one coupled object so partial overrides
+ * can't mix mainnet defaults with a custom program. The two token-program
+ * fields are independent so a Token-2022 mint can sit on either side.
  */
 export interface OnreSwapContext {
   /** OnRe deployment (programId, state PDA, boss). Defaults to mainnet. */
@@ -148,6 +145,9 @@ function resolveContext(ctx: OnreSwapContext | undefined): {
     tokenOutProgram: ctx?.tokenOutProgram ?? TOKEN_PROGRAM_ID,
   }
 }
+
+/** Entry count of OnRe's `take_offer_permissionless` account list (incl. trailing program id). */
+export const ONRE_TAKE_OFFER_ACCOUNT_COUNT = 22
 
 /**
  * Build the 22-entry `remainingAccounts` array for OnRe's
@@ -204,7 +204,7 @@ export function buildOnreSwapRemainingAccounts(params: {
   const bossTokenIn = params.ctx?.bossTokenInAccount
     ?? getAssociatedTokenAddressSync(params.tokenInMint, boss, true, tokenInProgram)
 
-  return [
+  return assertAccountCount([
     writable(offerPda),
     readonly(statePda),
     readonly(boss),
@@ -229,5 +229,5 @@ export function buildOnreSwapRemainingAccounts(params: {
     // Final entry: OnRe program ID. Required in account_infos for the CPI on
     // strict validators (Agave). LiteSVM is permissive without it; mainnet is not.
     readonly(programId),
-  ]
+  ], ONRE_TAKE_OFFER_ACCOUNT_COUNT, 'OnRe take_offer_permissionless')
 }

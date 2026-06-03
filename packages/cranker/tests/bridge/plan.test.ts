@@ -1,3 +1,4 @@
+/* eslint-disable style/max-statements-per-line -- binary buffer assembly: `buf.set(...); off += N` reads more naturally on one line than split */
 /**
  * Unit tests for `planBridgeRedeem`. Stubs out `target.destConnection`
  * so we never touch a real RPC — every branch (filter mismatches, the
@@ -149,10 +150,10 @@ function makeTarget(opts: {
       // probe to pass by default — return a stub buffer with any 8+ bytes.
       : { data: Buffer.alloc(64, 0xAA), executable: false, lamports: 1, owner: NTT_ONYC_PROGRAM_ID, rentEpoch: 0 },
   )
+  void defaultGetAccountInfo
 
-  // Route by pubkey if a custom resolver was provided (for the empty-
-  // transceiver-message test); otherwise, use the default for inbox AND
-  // any subsequent calls.
+  // Custom resolver routes by pubkey (empty-transceiver-message test);
+  // otherwise the default handles inbox plus subsequent calls.
   let inboxQueryCount = 0
   const resolver = opts.getAccountInfo
     ? vi.fn(opts.getAccountInfo)
@@ -296,15 +297,10 @@ describe('planBridgeRedeem', () => {
     expect(plan.ixs).toHaveLength(3)
   })
 
-  // Note: a former test asserted that Burning vs Locking modes produced
-  // different release-ix discriminators in the redeem-and-release plan.
-  // Release-mode dispatch for the redeem-and-release path now lives in
-  // the SDK (executeSdkBundledRedeem picks the right release variant via
-  // Ntt.Contracts), so the planner emits an empty ix list and the test
-  // is no longer meaningful here. The release-only branch (which still
-  // hand-builds the release ix in the planner) is covered by
-  // 'plans release-only when inbox is NotApproved' and
-  // 'plans release-only when ReleaseAfter timestamp is in the past'.
+  // Release-mode dispatch for the redeem-and-release path now lives in the
+  // SDK (executeSdkBundledRedeem), so the planner emits an empty ix list;
+  // the former Burning-vs-Locking discriminator test no longer applies. The
+  // release-only branch stays covered by the NotApproved / past-ReleaseAfter cases.
 
   it('returns noop when inbox bytes are present but undecodable', async () => {
     const vaa = buildVaa({ emitterChain: SOLANA_CHAIN, toChain: FOGO_CHAIN, recipient })

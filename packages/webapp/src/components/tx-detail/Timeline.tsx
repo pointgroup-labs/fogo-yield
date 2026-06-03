@@ -22,6 +22,13 @@ interface Step {
   state: StepState
   /** Optional timestamp once the step is reached (ms). */
   atMs?: number
+  /**
+   * Copy shown beside the spinner while the step is `active`. Lets a step
+   * whose on-chain work is multi-stage and unobservable from the browser
+   * (e.g. the Solana relayer leg) explain *what* is pending instead of the
+   * generic "waiting for confirmation" default.
+   */
+  activeHint?: string
   /** On-chain signature proving this step happened, if known. */
   receipt?: {
     signature: string
@@ -75,7 +82,7 @@ interface TimelineProps {
 export function Timeline({ detail }: TimelineProps) {
   const visited = useVisitedSignatures()
   const steps = buildSteps(detail)
-  const confirmedCount = steps.filter(s => s.receipt !== undefined).length
+  const confirmedCount = steps.filter(s => s.state === 'done').length
   const allDelivered = steps.every(s => s.state === 'done')
 
   return (
@@ -97,7 +104,8 @@ export function Timeline({ detail }: TimelineProps) {
         </ol>
         <TrackerFooter
           sourceSignature={detail.signature}
-          destinationSignature={detail.row?.destinationSignature ?? null}
+          destinationSignature={detail.action?.destinationSig ?? detail.action?.finalSig ?? null}
+          sourceIsSolana={detail.action?.anchorChain === 'Solana'}
           visited={visited}
         />
       </CardContent>
@@ -224,24 +232,25 @@ function StepRow({ step, isLast, visited }: { step: Step, isLast: boolean, visit
  *   - `active`         → a quiet "waiting" placeholder so the row
  *                        keeps its vertical rhythm and the user
  *                        knows we're tracking, not silent
- *   - `idle`           → nothing (the step hasn't been reached yet,
- *                        a placeholder would just add noise)
+ *   - everything else (idle, or `done` with no receipt because the
+ *     underlying tx isn't user-visible — e.g. paymaster-wrapped
+ *     FOGO burns on orphan deposit-delivery rows) → render nothing
  */
 function ReceiptArea({ step }: { step: Step }) {
-  if (step.state === 'idle') {
-    return null
+  if (step.state === 'done' && step.receipt !== undefined) {
+    return <ReceiptRow receipt={step.receipt} title={step.title} />
   }
-  if (step.state === 'active' || step.receipt === undefined) {
+  if (step.state === 'active') {
     return (
       <div className="mt-2 flex items-center gap-2">
         <span className="inline-flex items-center gap-1.5 rounded bg-muted/60 px-2 py-1 text-xs text-muted-foreground">
           <Loader2 aria-hidden className="size-3 animate-spin" />
-          Waiting for on-chain confirmation…
+          {step.activeHint ?? 'Waiting for on-chain confirmation…'}
         </span>
       </div>
     )
   }
-  return <ReceiptRow receipt={step.receipt} title={step.title} />
+  return null
 }
 
 function ReceiptRow({
@@ -369,10 +378,12 @@ function WormholescanLink({
 function TrackerFooter({
   sourceSignature,
   destinationSignature,
+  sourceIsSolana,
   visited,
 }: {
   sourceSignature: string
   destinationSignature: string | null
+  sourceIsSolana: boolean
   visited: Set<string>
 }) {
   // Wormholescan's `/#/tx/<sig>` accepts either leg of an NTT operation
@@ -380,6 +391,8 @@ function TrackerFooter({
   // sides because the indexer occasionally fails to backfill the
   // destination edge — when that happens, the source link 404s the
   // delivery view but the destination link finds it directly.
+  const sourceLabel = sourceIsSolana ? 'Solana' : 'FOGO'
+  const destLabel = sourceIsSolana ? 'FOGO' : 'Solana'
   return (
     <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-t border-border/60 pt-3 text-xs text-muted-foreground">
       <span
@@ -389,9 +402,9 @@ function TrackerFooter({
         On Wormholescan
       </span>
       <div className="flex items-center gap-1">
-        <WormholescanLink signature={sourceSignature} visited={visited} label="FOGO" />
+        <WormholescanLink signature={sourceSignature} visited={visited} label={sourceLabel} />
         {destinationSignature !== null && (
-          <WormholescanLink signature={destinationSignature} visited={visited} label="Solana" />
+          <WormholescanLink signature={destinationSignature} visited={visited} label={destLabel} />
         )}
       </div>
     </div>
@@ -441,66 +454,117 @@ function ChainIcon({ chain }: { chain: 'FOGO' | 'Solana' }) {
 }
 
 function buildSteps(detail: TxDetail): Step[] {
-  const { row, journal, fogoDelivery, signature } = detail
-  const kind = row?.kind ?? journal?.kind ?? 'deposit'
+  const { action, journal, fogoDelivery, flow, relayerStatus, signature } = detail
+  const kind = action?.kind ?? journal?.kind ?? 'deposit'
+  // Orphan deposit-delivery actions are anchored on the Solana source
+  // tx (the user-side FOGO burn is paymaster-wrapped). For them,
+  // `signature` is Solscan-shaped and `destinationSig` is the FOGO
+  // delivery.
+  const sourceIsSolana = action?.anchorChain === 'Solana'
 
-  // Source step is always `done` — the page wouldn't have rendered
-  // without a known signature, and the user's wallet signed it.
-  const sourceTime = (row ? row.blockTime * 1000 : null) ?? journal?.startedAt ?? undefined
-  const sourceStep: Step = {
-    chain: 'FOGO',
-    title: kind === 'deposit' ? 'You sent USDC.s on FOGO' : 'You redeemed ONyc on FOGO',
-    detail: kind === 'deposit'
-      ? 'FOGO accepted your bridge request and locked your USDC.s for transfer.'
-      : 'FOGO accepted your redemption and queued the bridge to send USDC.s back to you.',
-    state: 'done',
-    atMs: sourceTime,
-    receipt: {
-      signature,
-      explorer: 'FogoScan',
-      href: fogoTxUrl(signature),
-    },
-  }
+  const journalStartMs = journal?.startedAt
+  const rowBlockMs = action ? action.startedAt * 1000 : undefined
+  // For orphan actions `action.startedAt` is the Solana arrival, not
+  // the FOGO burn — use journal time for step 1 there and let step 2
+  // carry the Solana time.
+  const sourceTime = sourceIsSolana ? journalStartMs : (rowBlockMs ?? journalStartMs)
+  const sourceSig = sourceIsSolana
+    ? (action?.originSig ?? journal?.signature ?? null)
+    : signature
+  const sourceStep: Step | null = sourceSig === null && sourceIsSolana
+    ? null
+    : {
+        chain: 'FOGO',
+        title: kind === 'deposit' ? 'You sent USDC on FOGO' : 'You redeemed ONyc on FOGO',
+        detail: kind === 'deposit'
+          ? 'FOGO accepted your bridge request and locked your USDC for transfer.'
+          : 'FOGO accepted your redemption and queued the bridge to send USDC back to you.',
+        state: 'done',
+        atMs: sourceTime,
+        receipt: sourceSig !== null
+          ? { signature: sourceSig, explorer: 'FogoScan', href: fogoTxUrl(sourceSig) }
+          : undefined,
+      }
 
-  // Solana-side delivery — Wormholescan's `destinationTxHash`. Honest
-  // labeling: this is "where bridged tokens arrived on Solana", not
-  // "the swap" — the swap (if any) is a downstream relayer tx the
-  // user can navigate to from this signature on Solscan.
-  const solanaSig = row?.destinationSignature ?? null
+  // Solana-side delivery. For normal actions this is `destinationSig`
+  // (the relayer's Solana tx). For Solana-anchored actions,
+  // `action.anchorSig` itself IS the Solana side (the NTT lock anchor).
+  // Don't fall back to the URL `signature` here: deposit rows now link
+  // via the FOGO burn or FOGO receipt, neither of which is the Solana
+  // lock.
+  // Final FOGO-side delivery sig, when we have one to link. Prefer the
+  // action's `finalSig` (Wormholescan); fall back to the journal-free
+  // FOGO delivery oracle (destination-ATA scan).
+  const fogoFromRow = action?.finalSig ?? null
+  const fogoOracleSig = fogoDelivery?.kind === 'delivered' ? fogoDelivery.signature : null
+  const fogoReceiptSig = fogoFromRow ?? fogoOracleSig
+
+  // Delivery truth, independent of Wormholescan. OnRe redeems via a custom
+  // relayer CPI that Wormholescan's standard-NTT tracker doesn't index, so
+  // `targetChain.txHash` (destinationSig/finalSig) lags or never fills. The
+  // live `flow` watcher (destination-ATA balance bump — false positives
+  // impossible) and the `fogoDelivery` ATA scan are authoritative on-chain
+  // signals; trust any of them.
+  const fogoDelivered = fogoReceiptSig !== null
+    || flow?.phase === 'delivered'
+    || action?.status === 'delivered'
+    || action?.manuallyDismissed === true
+
+  // Solana-side delivery sig (when Wormholescan surfaced it). Monotonic
+  // completion: the destination token can't reach FOGO without the Solana
+  // legs executing, so a proven final delivery implies this step is done
+  // even when no Solana receipt was ever indexed.
+  const solanaSig = sourceIsSolana ? (action?.anchorSig ?? null) : (action?.destinationSig ?? null)
+  // `Swapped` means the relayer has converted the asset and is on the final
+  // transfer_lock back to FOGO — the Solana leg is effectively done, so flip
+  // this step to `done` and hand the spotlight to the FOGO delivery step even
+  // before any Solana receipt is indexed.
+  const relayerSwapped = relayerStatus === 'Swapped'
+  const solanaDone = solanaSig !== null || fogoDelivered || relayerSwapped
   const solanaStep: Step = {
     chain: 'Solana',
     title: 'Bridge delivery on Solana',
     detail: kind === 'deposit'
       ? 'Where bridged USDC arrived on Solana — the relayer then swaps it to ONyc and bridges back.'
       : 'Where bridged ONyc arrived on Solana — the relayer then redeems it to USDC and bridges back.',
-    state: solanaSig !== null ? 'done' : 'active',
+    state: solanaDone ? 'done' : 'active',
+    atMs: sourceIsSolana ? rowBlockMs : undefined,
+    // Active here means the relayer is still on Solana (received, converting).
+    // Once it swaps (`relayerSwapped`) this step is `done` and the hint is
+    // never shown — so the copy can safely describe the pre-swap stage.
+    activeHint: kind === 'deposit'
+      ? 'Converting USDC to ONyc on Solana…'
+      : 'Redeeming ONyc to USDC on Solana…',
     receipt: solanaSig !== null
       ? { signature: solanaSig, explorer: 'Solscan', href: solanaTxUrl(solanaSig) }
       : undefined,
   }
 
-  // Final FOGO-side delivery — the authoritative confirmation of
-  // user-visible value movement. Active only once Solana side is done.
-  const fogoReceiptSig = fogoDelivery?.kind === 'delivered' ? fogoDelivery.signature : null
-  const fogoReceiptTime = fogoDelivery?.kind === 'delivered'
+  // Only trust the oracle's time when it describes the same tx as the
+  // displayed sig — otherwise we render a mismatched (sig, time) pair.
+  const fogoReceiptTime = fogoDelivery?.kind === 'delivered' && fogoDelivery.signature === fogoReceiptSig
     ? fogoDelivery.blockTime * 1000
     : undefined
   const fogoStep: Step = {
     chain: 'FOGO',
     title: kind === 'deposit'
       ? 'ONyc delivered to your FOGO wallet'
-      : 'USDC.s delivered to your FOGO wallet',
+      : 'USDC delivered to your FOGO wallet',
     detail: kind === 'deposit'
-      ? 'ONyc arrives in your wallet. Your balance updates automatically — no action needed.'
-      : 'USDC.s arrives in your wallet. Your balance updates automatically — no action needed.',
-    state: fogoReceiptSig !== null
+      ? 'ONyc arrives in your wallet — your balance updates automatically.'
+      : 'USDC arrives in your wallet — your balance updates automatically.',
+    state: fogoDelivered
       ? 'done'
-      : solanaStep.state === 'done' ? 'active' : 'idle',
+      : solanaDone ? 'active' : 'idle',
+    // Shown once the Solana leg is done and we're awaiting the final mint.
+    activeHint: kind === 'deposit'
+      ? 'Bridging ONyc to FOGO…'
+      : 'Bridging USDC to FOGO…',
     atMs: fogoReceiptTime,
     receipt: fogoReceiptSig !== null
       ? { signature: fogoReceiptSig, explorer: 'FogoScan', href: fogoTxUrl(fogoReceiptSig) }
       : undefined,
   }
 
-  return [sourceStep, solanaStep, fogoStep]
+  return [sourceStep, solanaStep, fogoStep].filter((s): s is Step => s !== null)
 }

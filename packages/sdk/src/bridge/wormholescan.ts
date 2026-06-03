@@ -6,6 +6,8 @@
  * Pure `fetch` + base64 — no third-party HTTP deps.
  */
 
+import { Buffer } from 'node:buffer'
+
 const DEFAULT_BASE_URL = 'https://api.wormholescan.io'
 
 export type WormholescanVaa = {

@@ -62,7 +62,10 @@ pub enum RelayerError {
     #[msg("user_inbox_ata's authority does not match the [user_inbox, user_wallet] PDA")]
     UserInboxAuthorityMismatch,
 
-    #[msg("NTT VAA's NttManagerMessage.sender is not the intent_transfer setter PDA — deposit must originate via intent_transfer")]
+    #[msg(
+        "NTT VAA's NttManagerMessage.sender is not the intent_transfer setter PDA — deposit must originate via \
+         intent_transfer"
+    )]
     UnexpectedFogoSender,
 
     #[msg("ntt_inbox_item account is missing, too short, or has the wrong discriminator")]
@@ -74,12 +77,6 @@ pub enum RelayerError {
     #[msg("Proposed pending_authority equals the current authority — self-rotate is rejected")]
     PendingAuthorityIsCurrent,
 
-    #[msg("Post-CPI ONyc consumed does not equal the bounded Approve amount")]
-    OnycConsumedMismatch,
-
-    #[msg("Post-swap USDC delta is below the NAV-derived slippage floor")]
-    RedeemSlippageBelowFloor,
-
     #[msg("No active OnRe pricing vector for the current clock")]
     OnreNoActiveVector,
 
@@ -89,13 +86,16 @@ pub enum RelayerError {
     #[msg("OnRe Offer account data is shorter than the pinned layout")]
     OnreOfferTooShort,
 
-    #[msg("OnRe Offer token_in_mint does not match relayer_config.usdc_mint")]
+    #[msg("OnRe Offer token_in_mint does not match relayer_config.base_mint")]
     OnreOfferTokenInMintMismatch,
 
-    #[msg("OnRe Offer token_out_mint does not match relayer_config.onyc_mint")]
+    #[msg("OnRe Offer token_out_mint does not match relayer_config.asset_mint")]
     OnreOfferTokenOutMintMismatch,
 
-    #[msg("onre_offer account owner is not the OnRe program — handler refuses to read a foreign account as a pricing oracle")]
+    #[msg(
+        "onre_offer account owner is not the OnRe program — handler refuses to read a foreign account as a pricing \
+         oracle"
+    )]
     OnreOfferOwnerMismatch,
 
     #[msg("onre_offer address does not match the deposit Offer PDA derived from (usdc_mint, onyc_mint)")]
@@ -103,4 +103,31 @@ pub enum RelayerError {
 
     #[msg("MAX_SLIPPAGE_BPS is misconfigured (> 10_000) — refusing to compute a zero floor")]
     OnreInvalidSlippageBps,
+
+    #[msg("Configured slippage_bps exceeds MAX_SLIPPAGE_BPS ceiling")]
+    SlippageBpsTooHigh,
+
+    #[msg("Relayer ATA authority/delegate/close_authority was mutated by the swap CPI")]
+    AtaAuthorityTampered,
+
+    #[msg("price_oracle account does not match relayer_config.price_oracle (or it is unset)")]
+    BadPriceOracle,
+
+    #[msg("swap consumed an input amount different from the flow amount")]
+    InputConsumedMismatch,
+
+    #[msg("swap output fell below the NAV-anchored slippage floor")]
+    OutputBelowFloor,
+
+    #[msg("a swap account aliases relayer custody (fee_vault/config/flow or a relayer_authority-owned token account)")]
+    SwapAccountNotAllowed,
+
+    #[msg("swap CPI drained, reassigned, or reallocated the relayer_authority PDA")]
+    RelayerAuthorityTampered,
+
+    #[msg("ntt_program / transceiver owner does not match the direction-selected NTT manager")]
+    BadNttProgram,
+
+    #[msg("recv_mint does not match the direction-selected config mint")]
+    BadReceiveMint,
 }

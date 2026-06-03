@@ -1,13 +1,57 @@
 [[domains]]
-domain = "https://fogo-onre.xyz"
+domain = "https://app.ignitionfi.xyz"
 enable_session_management = true
 enable_preflight_simulation = true
 
-# Bridge tx variations live on Fogo Labs' generic `sessions` paymaster
-# domain (sponsor `47aX6R…`), under the `Intent NTT Bridge` variation.
-# The webapp routes the bridge tx there via per-call paymasterDomain +
-# variation overrides (see FOGO_BRIDGE_PAYMASTER_DOMAIN /
-# FOGO_BRIDGE_VARIATION in `packages/webapp/src/constants.ts`), so this
-# domain only needs the bare session-management entry above. Previous
-# `OnReDeposit` and `OnReDepositWrap` blocks were removed when the fee
-# token flipped from wFOGO to USDC.s and the wrap pre-tx was retired.
+# OnReBridge: sponsors bridge_ntt_tokens on the OnRe intent transfer
+[[domains.tx_variations]]
+version = "v1"
+name = "OnReBridge"
+max_gas_spend = 15000
+
+# Ed25519 sigverify of the user-signed intent message, preceding the bridge ix.
+[[domains.tx_variations.instructions]]
+program = "Ed25519SigVerify111111111111111111111111111"
+required = true
+
+# numSignatures = 1
+[[domains.tx_variations.instructions.data]]
+start_byte = 0
+constraint = { EqualTo = [{ U8 = 1 }] }
+
+# padding = 0
+[[domains.tx_variations.instructions.data]]
+start_byte = 1
+constraint = { EqualTo = [{ U8 = 0 }] }
+
+# signatureInstructionIndex = 0xffff
+[[domains.tx_variations.instructions.data]]
+start_byte = 4
+constraint = { EqualTo = [{ U16 = 0xffff }] }
+
+# publicKeyInstructionIndex = 0xffff
+[[domains.tx_variations.instructions.data]]
+start_byte = 8
+constraint = { EqualTo = [{ U16 = 0xffff }] }
+
+# messageInstructionIndex = 0xffff
+[[domains.tx_variations.instructions.data]]
+start_byte = 14
+constraint = { EqualTo = [{ U16 = 0xffff }] }
+
+[[domains.tx_variations.instructions]]
+program = "inTFf5S7ZtYr8SkwGG85mjDwAyJwjqEPdH2p2nuyrL9"
+required = true
+
+# instruction = 1 (BridgeNttTokens)
+[[domains.tx_variations.instructions.data]]
+start_byte = 0
+constraint = { EqualTo = [{ U8 = 1 }] }
+
+# Pin sponsorship to the Wormhole labsapis executor's signing key
+# (executor.labsapis.com mainnet quoter, recovered from a live FOGO
+# bridge_ntt_tokens quote's EQ01 header). Re-verify if the executor
+# rotates keys.
+[[domains.tx_variations.instructions.data]]
+start_byte = 1
+constraint = { EqualTo = [{ NttSignedQuoter = "0xa54008017941ece968623a0dd8ee907e2b133596" }] }
