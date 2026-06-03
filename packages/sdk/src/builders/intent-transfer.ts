@@ -1,4 +1,5 @@
 import type { PublicKey } from '@solana/web3.js'
+import { Buffer } from 'node:buffer'
 import { ASSOCIATED_TOKEN_PROGRAM_ID, TOKEN_PROGRAM_ID } from '@solana/spl-token'
 import {
   Ed25519Program,

@@ -1,5 +1,9 @@
+import { Buffer } from 'node:buffer'
 import { PublicKey } from '@solana/web3.js'
 import IDL from './idl/fogo_onre_relayer.json' with { type: 'json' }
+
+export const SOLANA_WORMHOLE_CHAIN_ID = 1
+export const FOGO_WORMHOLE_CHAIN_ID = 51
 
 export const RELAYER_PROGRAM_ID = new PublicKey(IDL.address)
 export const ONRE_PROGRAM_ID = new PublicKey('onreuGhHHgVzMWSkj2oQDLDtvvGvoepBPkqyaubFcwe')
@@ -15,11 +19,6 @@ export const NTT_ONYC_PROGRAM_ID = new PublicKey('nttpna5vXW7BN2Aa4AfTbkCncJWTEo
  * manager. This deploy uses NTT v3 *bundled* mode, where the transceiver
  * lives inside the manager and all transceiver-side PDAs key on the
  * manager's program ID.
- *
- * Trap: OnRe `deployment.json`'s `transceivers.wormhole.address`
- * (`9pCpHZW9W55xT…`) is NOT a program ID — it's the manager's `emitter`
- * PDA, a bundled-mode marker. Treating it as a program ID yields phantom
- * `registered_transceiver` PDAs that silently break redeem.
  */
 export const WH_TRANSCEIVER_ONYC_PROGRAM_ID = NTT_ONYC_PROGRAM_ID
 
@@ -28,9 +27,6 @@ export const ONYC_MINT = new PublicKey('5Y8NV33Vv7WbnLfq3zBcKSdYPrk7g2KoiQoe7M2t
 
 /** Canonical USDC on Solana mainnet — the Solana-side counterpart of FOGO USDC.s. */
 export const USDC_MINT = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v')
-
-export const FOGO_WORMHOLE_CHAIN_ID = 51
-export const SOLANA_WORMHOLE_CHAIN_ID = 1
 
 export const CONFIG_SEED = Buffer.from('relayer_config')
 export const RELAYER_SEED = Buffer.from('relayer')

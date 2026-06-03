@@ -196,19 +196,20 @@ describe('relayerClient.send encodes transferLockAccountCount=14', () => {
     expect(ix.keys.length).toBe(11 + 14 + 15)
   })
 
-  it('throws when release is omitted alongside outboxItem (no lock-only path post-merge)', () => {
-    expect(() =>
-      client.send({
+  it('sendBase returns the bare builder (11 named accounts, no auto-appended remaining)', async () => {
+    const ix = await client
+      .sendBase({
         direction: { deposit: {} },
         payer,
         baseMint,
         assetMint,
         nttInboxItem,
         rentDestination: payer,
-        flowAmount: 500_000n,
-        flowRecipient,
-        outboxItem,
-      }),
-    ).toThrow(/release.*required/i)
+      })
+      .instruction()
+
+    // Named accounts only — callers supplying their own remainingAccounts
+    // (negative tests) start from here. `send` appends 14 + 15 on top.
+    expect(ix.keys.length).toBe(11)
   })
 })

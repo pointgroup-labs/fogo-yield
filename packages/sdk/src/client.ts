@@ -32,6 +32,9 @@ function toBigInt(value: BN | bigint): bigint {
   return typeof value === 'bigint' ? value : BigInt(value.toString())
 }
 
+/** Anchor enum shape for the flow direction: exactly one variant key present. */
+export type FlowDirection = { deposit: Record<string, never> } | { withdraw: Record<string, never> }
+
 export class RelayerClient {
   readonly program: Program<FogoOnreRelayer>
   readonly configPda: PublicKey
@@ -129,47 +132,24 @@ export class RelayerClient {
   }
 
   /**
-   * Route-agnostic outbound send (deposit pushes ONyc, withdraw pushes
-   * USDC); each leg CPIs `transfer_lock` + `release_wormhole_outbound`
-   * atomically.
-   *
-   * Negative-test callers (deliberately broken `remainingAccounts`) MUST
-   * omit `flowAmount` / `flowRecipient` / `outboxItem` to get the bare
-   * builder back.
+   * Bare outbound-send builder: named accounts only, no auto-assembled
+   * `remainingAccounts`. For callers that supply their own list (negative
+   * tests). Production callers want `send`, which appends the
+   * `transfer_lock` + `release_wormhole_outbound` accounts.
    */
-  send(params: {
+  sendBase(params: {
     payer: PublicKey
-    direction: { deposit: Record<string, never> } | { withdraw: Record<string, never> }
+    direction: FlowDirection
     baseMint: PublicKey
     assetMint: PublicKey
     nttInboxItem: PublicKey
     rentDestination: PublicKey
-    flowAmount?: BN | bigint
-    flowRecipient?: Uint8Array
-    outboxItem?: PublicKey
-    /**
-     * NTT v3 release-publish accounts. REQUIRED whenever `flowAmount` /
-     * `flowRecipient` / `outboxItem` are all supplied — there is no
-     * "lock-only" code path.
-     */
-    release?: {
-      wormholeProgram: PublicKey
-      wormholeBridge: PublicKey
-      wormholeFeeCollector: PublicKey
-      wormholeSequence: PublicKey
-      outboxItemSigner: PublicKey
-      /** Optional override; defaults to the manager-as-transceiver PDA. */
-      wormholeMessage?: PublicKey
-      emitter?: PublicKey
-    }
   }) {
     const isDeposit = 'deposit' in params.direction
-    const nttProgramId = isDeposit ? NTT_ONYC_PROGRAM_ID : NTT_USDC_PROGRAM_ID
-    const outboundMint = isDeposit ? params.assetMint : params.baseMint
     const { inflightFlow, outflightFlow } = this.flowPdas(params.nttInboxItem)
     const flow = isDeposit ? inflightFlow : outflightFlow
 
-    const builder = this.program.methods
+    return this.program.methods
       .send(NTT_TRANSFER_LOCK_ACCOUNT_COUNT)
       .accountsPartial({
         payer: params.payer,
@@ -184,18 +164,41 @@ export class RelayerClient {
         rentDestination: params.rentDestination,
         tokenProgram: TOKEN_PROGRAM_ID,
       })
+  }
 
-    if (!params.flowAmount || !params.flowRecipient || !params.outboxItem) {
-      return builder
+  /**
+   * Route-agnostic outbound send (deposit pushes ONyc, withdraw pushes
+   * USDC); each leg CPIs `transfer_lock` + `release_wormhole_outbound`
+   * atomically. All flow + release fields are required — there is no
+   * lock-only path.
+   */
+  send(params: {
+    payer: PublicKey
+    direction: FlowDirection
+    baseMint: PublicKey
+    assetMint: PublicKey
+    nttInboxItem: PublicKey
+    rentDestination: PublicKey
+    flowAmount: BN | bigint
+    flowRecipient: Uint8Array
+    outboxItem: PublicKey
+    /** NTT v3 release-publish accounts. */
+    release: {
+      wormholeProgram: PublicKey
+      wormholeBridge: PublicKey
+      wormholeFeeCollector: PublicKey
+      wormholeSequence: PublicKey
+      outboxItemSigner: PublicKey
+      /** Optional override; defaults to the manager-as-transceiver PDA. */
+      wormholeMessage?: PublicKey
+      emitter?: PublicKey
     }
+  }) {
+    const isDeposit = 'deposit' in params.direction
+    const nttProgramId = isDeposit ? NTT_ONYC_PROGRAM_ID : NTT_USDC_PROGRAM_ID
+    const outboundMint = isDeposit ? params.assetMint : params.baseMint
 
-    if (!params.release) {
-      throw new Error(
-        'send: `release` is required whenever flowAmount/flowRecipient/outboxItem '
-        + 'are supplied. The on-chain handler now CPIs into NTT release_wormhole_outbound '
-        + 'in the same ix as transfer_lock — there is no lock-only path.',
-      )
-    }
+    const builder = this.sendBase(params)
 
     const transferLock = this.transferLockAccounts({
       mint: outboundMint,
@@ -266,7 +269,7 @@ export class RelayerClient {
    */
   receive(params: {
     payer: PublicKey
-    direction: { deposit: Record<string, never> } | { withdraw: Record<string, never> }
+    direction: FlowDirection
     userWallet: PublicKey
     recvMint: PublicKey
     nttInboxItem: PublicKey

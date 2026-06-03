@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer'
 import { PublicKey } from '@solana/web3.js'
 import { accountDiscriminator } from '../utils/discriminators'
 

@@ -1,4 +1,5 @@
 import type { AccountMeta } from '@solana/web3.js'
+import { Buffer } from 'node:buffer'
 import {
   ASSOCIATED_TOKEN_PROGRAM_ID,
   getAssociatedTokenAddressSync,
@@ -10,7 +11,7 @@ import {
   SYSVAR_INSTRUCTIONS_PUBKEY,
 } from '@solana/web3.js'
 import { ONRE_PROGRAM_ID } from '../constants'
-import { readonly, writable } from '../utils/accountMeta'
+import { assertAccountCount, readonly, writable } from '../utils/accountMeta'
 
 export function findOnreStatePda(
   programId: PublicKey = ONRE_PROGRAM_ID,
@@ -145,6 +146,9 @@ function resolveContext(ctx: OnreSwapContext | undefined): {
   }
 }
 
+/** Entry count of OnRe's `take_offer_permissionless` account list (incl. trailing program id). */
+export const ONRE_TAKE_OFFER_ACCOUNT_COUNT = 22
+
 /**
  * Build the 22-entry `remainingAccounts` array for OnRe's
  * `take_offer_permissionless`. Layout (proven against OnRe mainnet binary):
@@ -200,7 +204,7 @@ export function buildOnreSwapRemainingAccounts(params: {
   const bossTokenIn = params.ctx?.bossTokenInAccount
     ?? getAssociatedTokenAddressSync(params.tokenInMint, boss, true, tokenInProgram)
 
-  return [
+  return assertAccountCount([
     writable(offerPda),
     readonly(statePda),
     readonly(boss),
@@ -225,5 +229,5 @@ export function buildOnreSwapRemainingAccounts(params: {
     // Final entry: OnRe program ID. Required in account_infos for the CPI on
     // strict validators (Agave). LiteSVM is permissive without it; mainnet is not.
     readonly(programId),
-  ]
+  ], ONRE_TAKE_OFFER_ACCOUNT_COUNT, 'OnRe take_offer_permissionless')
 }

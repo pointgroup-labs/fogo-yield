@@ -25,3 +25,15 @@ export function readonly(pubkey: PublicKey): AccountMeta {
 export function signerWritable(pubkey: PublicKey): AccountMeta {
   return { pubkey, isSigner: true, isWritable: true }
 }
+
+/**
+ * Tripwire for hand-ordered CPI account lists: throw if the assembled
+ * length drifts from the count the on-chain handler splits/unpacks at.
+ * A mis-sized list silently shifts every downstream account by one.
+ */
+export function assertAccountCount(accounts: AccountMeta[], expected: number, label: string): AccountMeta[] {
+  if (accounts.length !== expected) {
+    throw new Error(`${label} account list drift: expected ${expected}, got ${accounts.length}`)
+  }
+  return accounts
+}

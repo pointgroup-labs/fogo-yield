@@ -1,4 +1,5 @@
 import type { AccountMeta } from '@solana/web3.js'
+import { Buffer } from 'node:buffer'
 import { keccak_256 } from '@noble/hashes/sha3.js'
 import { getAssociatedTokenAddressSync, TOKEN_PROGRAM_ID } from '@solana/spl-token'
 import {
@@ -8,7 +9,7 @@ import {
   SYSVAR_RENT_PUBKEY,
 } from '@solana/web3.js'
 import { FOGO_WORMHOLE_CHAIN_ID } from '../constants'
-import { readonly, signerWritable, writable } from '../utils/accountMeta'
+import { assertAccountCount, readonly, signerWritable, writable } from '../utils/accountMeta'
 
 const CONFIG_SEED = Buffer.from('config')
 const NTT_MANAGER_PEER_SEED = Buffer.from('peer')
@@ -220,12 +221,7 @@ export function buildNttTransferLockAccountList(
     readonly(tokenAuthorityPda),
     readonly(params.nttProgramId),
   ]
-  if (accounts.length !== NTT_TRANSFER_LOCK_ACCOUNT_COUNT) {
-    throw new Error(
-      `NTT transfer_lock account list drift: expected ${NTT_TRANSFER_LOCK_ACCOUNT_COUNT}, got ${accounts.length}`,
-    )
-  }
-  return accounts
+  return assertAccountCount(accounts, NTT_TRANSFER_LOCK_ACCOUNT_COUNT, 'NTT transfer_lock')
 }
 
 /** NTT transceiver-emitter PDA `["emitter"]`. OnRe's manager *is* the transceiver. */
@@ -280,6 +276,8 @@ export interface BuildNttReleaseWormholeOutboundAccountListParams {
  * 15-entry account list for NTT v3 `release_wormhole_outbound`. Order
  * verified against mainnet tx `3NR6EEbk…` — reordering breaks the CPI.
  */
+export const NTT_RELEASE_WORMHOLE_OUTBOUND_ACCOUNT_COUNT = 15
+
 export function buildNttReleaseWormholeOutboundAccountList(
   params: BuildNttReleaseWormholeOutboundAccountListParams,
 ): AccountMeta[] {
@@ -294,7 +292,7 @@ export function buildNttReleaseWormholeOutboundAccountList(
       ?? findNttWormholeMessagePda(params.outboxItem, transceiverProgramId)[0]
   const emitter = params.emitter ?? findNttEmitterPda(transceiverProgramId)[0]
 
-  return [
+  return assertAccountCount([
     signerWritable(params.payer), //  0
     readonly(configPda), //  1
     writable(params.outboxItem), //  2
@@ -310,7 +308,7 @@ export function buildNttReleaseWormholeOutboundAccountList(
     readonly(SYSVAR_RENT_PUBKEY), // 12  wormhole.rent
     readonly(params.nttProgramId), // 13  manager (v3)
     readonly(params.outboxItemSigner), // 14  outbox_item_signer (v3)
-  ]
+  ], NTT_RELEASE_WORMHOLE_OUTBOUND_ACCOUNT_COUNT, 'NTT release_wormhole_outbound')
 }
 
 /** Inputs for `buildNttRedeemReleaseAccounts`. Caller resolves the authority/recipient ATA. */
@@ -325,6 +323,15 @@ export interface BuildNttRedeemReleaseAccountsParams {
   /** Release-leg destination ATA: per-user inbox ATA on deposit, relayer custody on withdraw. */
   recipientAta: PublicKey
 }
+
+/**
+ * NTT ix account counts the on-chain `receive` validator pins
+ * (`programs/relayer/src/ntt.rs` `REDEEM_ACCOUNTS_MIN_LEN` /
+ * `RELEASE_ACCOUNTS_MIN_LEN`). The builder appends the NTT program meta to
+ * each slice, so `redeemAccountsLen = NTT_REDEEM_ACCOUNT_COUNT + 1`.
+ */
+export const NTT_REDEEM_ACCOUNT_COUNT = 10
+export const NTT_RELEASE_INBOUND_ACCOUNT_COUNT = 8
 
 /**
  * Concatenated `redeem ‖ NTT ‖ release ‖ NTT` account list for `receive`.
@@ -353,7 +360,7 @@ export function buildNttRedeemReleaseAccounts(
   const [tokenAuthorityPda] = findTokenAuthorityPda(params.programId)
   const custody = findNttCustodyAta(params.mint, params.programId)
 
-  const redeem: AccountMeta[] = [
+  const redeem = assertAccountCount([
     writable(params.authority),
     readonly(configPda),
     readonly(peerPda),
@@ -364,9 +371,9 @@ export function buildNttRedeemReleaseAccounts(
     writable(inboxRateLimitPda),
     writable(outboxRateLimitPda),
     readonly(SystemProgram.programId),
-  ]
+  ], NTT_REDEEM_ACCOUNT_COUNT, 'NTT redeem')
 
-  const release: AccountMeta[] = [
+  const release = assertAccountCount([
     writable(params.authority),
     readonly(configPda),
     writable(params.nttInboxItem),
@@ -375,7 +382,7 @@ export function buildNttRedeemReleaseAccounts(
     writable(params.mint),
     readonly(TOKEN_PROGRAM_ID),
     writable(custody),
-  ]
+  ], NTT_RELEASE_INBOUND_ACCOUNT_COUNT, 'NTT release (inbound)')
 
   const nttProgramMeta = readonly(params.programId)
   return {

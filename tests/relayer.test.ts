@@ -971,7 +971,7 @@ describe('relayer', () => {
       await expectError(
         () =>
           client
-            .send({
+            .sendBase({
               payer: authority.publicKey,
               direction: { deposit: {} },
               baseMint: baseMint.publicKey,
@@ -1009,7 +1009,7 @@ describe('relayer', () => {
       await expectError(
         () =>
           client
-            .send({
+            .sendBase({
               payer: authority.publicKey,
               direction: { deposit: {} },
               baseMint: baseMint.publicKey,
@@ -1049,7 +1049,7 @@ describe('relayer', () => {
       await expectError(
         () =>
           client
-            .send({
+            .sendBase({
               payer: authority.publicKey,
               direction: { deposit: {} },
               baseMint: baseMint.publicKey,
@@ -1428,7 +1428,7 @@ describe('relayer', () => {
       await expectError(
         () =>
           client
-            .send({
+            .sendBase({
               payer: authority.publicKey,
               direction: { withdraw: {} },
               baseMint: baseMint.publicKey,
@@ -1467,7 +1467,7 @@ describe('relayer', () => {
       await expectError(
         () =>
           client
-            .send({
+            .sendBase({
               payer: authority.publicKey,
               direction: { withdraw: {} },
               baseMint: baseMint.publicKey,
@@ -1507,7 +1507,7 @@ describe('relayer', () => {
       await expectError(
         () =>
           client
-            .send({
+            .sendBase({
               payer: authority.publicKey,
               direction: { withdraw: {} },
               baseMint: baseMint.publicKey,
