@@ -14,11 +14,20 @@ permissionless cranking.
 
 ## How it works
 
-```
-              FOGO                               Solana
-              ────                               ──────
-deposit:   USDC.s ──NTT──▶ USDC ──swap──▶ ONyc ──NTT──▶ ONyc
-withdraw:  ONyc  ──NTT──▶ ONyc ──swap──▶ USDC ──NTT──▶ USDC.s
+```mermaid
+flowchart LR
+    subgraph dep [Deposit]
+        direction LR
+        A["USDC.s · FOGO"] -->|NTT| B["USDC · Solana"]
+        B -->|swap| C["ONyc · Solana"]
+        C -->|NTT| D["ONyc · FOGO"]
+    end
+    subgraph wd [Withdraw]
+        direction LR
+        E["ONyc · FOGO"] -->|NTT| F["ONyc · Solana"]
+        F -->|swap| G["USDC · Solana"]
+        G -->|NTT| H["USDC.s · FOGO"]
+    end
 ```
 
 Each leg is the same three-step pipeline on Solana, driven by three
