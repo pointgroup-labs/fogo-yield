@@ -14,7 +14,7 @@ The fork fixes that, and runs under its own program ID and upgrade authority so
 the deployment is self-governed:
 
 - upstream: `Xfry4dW9m42ncAqm8LyEnyS5V6xu5DSJTMRQLiGkARD`
-- fork:     `inTFf5S7ZtYr8SkwGG85mjDwAyJwjqEPdH2p2nuyrL9`
+- fork: `inTFf5S7ZtYr8SkwGG85mjDwAyJwjqEPdH2p2nuyrL9`
 
 ## What changed
 

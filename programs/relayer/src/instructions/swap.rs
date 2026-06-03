@@ -111,8 +111,18 @@ pub fn handler<'info>(ctx: Context<'info, Swap<'info>>, swap_ix_data: Vec<u8>) -
     // afterward is still rejected by that (unchanged) strict assert.
     let token_program_info = ctx.accounts.token_program.to_account_info();
     let relayer_authority_info = ctx.accounts.relayer_authority.to_account_info();
-    revoke_relayer_delegate(&token_program_info, &ctx.accounts.base_ata.to_account_info(), &relayer_authority_info, authority_bump)?;
-    revoke_relayer_delegate(&token_program_info, &ctx.accounts.asset_ata.to_account_info(), &relayer_authority_info, authority_bump)?;
+    revoke_relayer_delegate(
+        &token_program_info,
+        &ctx.accounts.base_ata.to_account_info(),
+        &relayer_authority_info,
+        authority_bump,
+    )?;
+    revoke_relayer_delegate(
+        &token_program_info,
+        &ctx.accounts.asset_ata.to_account_info(),
+        &relayer_authority_info,
+        authority_bump,
+    )?;
 
     if ctx.accounts.swap_delegate.key() != auth_key {
         let in_ata_info =

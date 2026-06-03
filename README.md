@@ -33,11 +33,11 @@ flowchart LR
 Each leg is the same three-step pipeline on Solana, driven by three
 permissionless relayer instructions:
 
-| Step          | Instruction | Deposit                       | Withdraw                      |
-| ------------- | ----------- | ----------------------------- | ----------------------------- |
-| 1. Receive    | `receive`   | claim inbound USDC from NTT   | claim inbound ONyc from NTT   |
-| 2. Swap       | `swap`      | USDC → ONyc on OnRe           | ONyc → USDC on OnRe           |
-| 3. Send       | `send`      | NTT-send ONyc back to FOGO    | NTT-send USDC.s back to FOGO  |
+| Step       | Instruction | Deposit                     | Withdraw                     |
+| ---------- | ----------- | --------------------------- | ---------------------------- |
+| 1. Receive | `receive`   | claim inbound USDC from NTT | claim inbound ONyc from NTT  |
+| 2. Swap    | `swap`      | USDC → ONyc on OnRe         | ONyc → USDC on OnRe          |
+| 3. Send    | `send`      | NTT-send ONyc back to FOGO  | NTT-send USDC.s back to FOGO |
 
 `receive` opens a one-shot `Flow` receipt that records the direction and
 recipient; `swap` and `send` read it, so no caller can redirect funds.
@@ -49,11 +49,11 @@ on-chain price advances as OnRe's reinsurance book earns.
 The relayer is the user's trust boundary. Its program ID is canonical and
 its CPI destinations (NTT managers, OnRe) are pinned in `constants.rs`.
 Outbound recipients are read from the unforgeable NTT
-`ValidatedTransceiverMessage`, so a stolen *operator* key cannot redirect
-funds. The *config authority* can adjust fees (capped at **10% per leg**,
+`ValidatedTransceiverMessage`, so a stolen _operator_ key cannot redirect
+funds. The _config authority_ can adjust fees (capped at **10% per leg**,
 with a ~2-day timelock on increases), rotate the fee vault, set swap
 slippage, and repoint the price oracle (a DoS at worst — swaps fail
-closed). The *upgrade authority* can ship new bytecode and bypass every
+closed). The _upgrade authority_ can ship new bytecode and bypass every
 check, so it must be a multisig or finalized to `None` at deploy. Full
 detail in [`docs/architecture.md`](./docs/architecture.md).
 
@@ -89,12 +89,12 @@ pnpm lint
 ```
 
 Toolchain is pinned: Rust 1.95.0, Anchor 1.0.2, Solana CLI 3.1.8,
-pnpm 10.33.0, Node 24.
+pnpm 11.1.0, Node 24.
 
 ## Documentation
 
-| File                                             | Read for                                                 |
-| ------------------------------------------------ | -------------------------------------------------------- |
+| File                                             | Read for                                                  |
+| ------------------------------------------------ | --------------------------------------------------------- |
 | [`docs/architecture.md`](./docs/architecture.md) | System design, flow lifecycle, state, instructions, trust |
 
 ## Program ID

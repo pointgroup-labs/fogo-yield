@@ -39,16 +39,16 @@ steps, but anyone can — the relayer enforces correctness on-chain.
 
 ## Components
 
-| Component                  | Chain  | Role                                                                 |
-| -------------------------- | ------ | ------------------------------------------------------------------- |
-| `intent_transfer` fork     | FOGO   | First-party fork of FOGO's deposit/redeem entry; routes `bridge_ntt_tokens` into NTT, with a configurable per-mint `fee_recipient`. Workspace-excluded, own toolchain. |
-| Relayer program            | Solana | Anchor program. Holds USDC/ONyc only in PDA-owned ATAs while in-flight. CPIs into NTT + OnRe. Persistent state is small (`RelayerConfig` + per-flow `Flow`). |
-| Wormhole NTT managers      | both   | Native Token Transfers for USDC.s↔USDC and ONyc↔ONyc. Same program IDs on both chains. |
-| OnRe                       | Solana | Tokenized reinsurance. The relayer swaps USDC↔ONyc against an OnRe `Offer`. |
-| `@fogo-onre/sdk`           | —      | Typed `RelayerClient`, PDA derivation, NTT/OnRe account-list builders. |
-| `@fogo-onre/cli`           | —      | Operator CLI: relayer `configure`, PDA inspection, deploy/ops. |
-| Cranker                    | —      | Off-chain executor: polls Wormholescan for signed VAAs and submits the inbound legs. Central to the withdraw flow. |
-| Webapp                     | —      | Next.js front-end wired to the live NTT managers. |
+| Component              | Chain  | Role                                                                                                                                                                   |
+| ---------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `intent_transfer` fork | FOGO   | First-party fork of FOGO's deposit/redeem entry; routes `bridge_ntt_tokens` into NTT, with a configurable per-mint `fee_recipient`. Workspace-excluded, own toolchain. |
+| Relayer program        | Solana | Anchor program. Holds USDC/ONyc only in PDA-owned ATAs while in-flight. CPIs into NTT + OnRe. Persistent state is small (`RelayerConfig` + per-flow `Flow`).           |
+| Wormhole NTT managers  | both   | Native Token Transfers for USDC.s↔USDC and ONyc↔ONyc. Same program IDs on both chains.                                                                                 |
+| OnRe                   | Solana | Tokenized reinsurance. The relayer swaps USDC↔ONyc against an OnRe `Offer`.                                                                                            |
+| `@fogo-onre/sdk`       | —      | Typed `RelayerClient`, PDA derivation, NTT/OnRe account-list builders.                                                                                                 |
+| `@fogo-onre/cli`       | —      | Operator CLI: relayer `configure`, PDA inspection, deploy/ops.                                                                                                         |
+| Cranker                | —      | Off-chain executor: polls Wormholescan for signed VAAs and submits the inbound legs. Central to the withdraw flow.                                                     |
+| Webapp                 | —      | Next.js front-end wired to the live NTT managers.                                                                                                                      |
 
 ## Flow lifecycle
 
@@ -58,23 +58,23 @@ in the `Flow` receipt; `swap` and `send` route off it — there is no
 direction argument to forge.
 
 ```
-  inbound NTT VAA
-        │
-        ▼
-   ┌─────────┐   opens Flow      ┌──────────┐   OnRe take_offer   ┌────────┐
-   │ receive │ ────────────────▶ │   swap   │ ──────────────────▶ │  send  │
-   └─────────┘   status=Received └──────────┘   status=Swapped    └────────┘
-        │                              │                              │
-   claim tokens                  swap base↔asset                NTT transfer_lock
-   into custody                  skim fee to vault              + release outbound,
-                                                                close Flow
+inbound NTT VAA
+      │
+      ▼
+ ┌─────────┐   opens Flow      ┌──────────┐   OnRe take_offer   ┌────────┐
+ │ receive │ ────────────────▶ │   swap   │ ──────────────────▶ │  send  │
+ └─────────┘   status=Received └──────────┘   status=Swapped    └────────┘
+      │                              │                              │
+ claim tokens                  swap base↔asset                NTT transfer_lock
+ into custody                  skim fee to vault              + release outbound,
+                                                              close Flow
 ```
 
-| Phase     | Deposit                                  | Withdraw                                  |
-| --------- | ---------------------------------------- | ----------------------------------------- |
-| `receive` | claim USDC from the USDC NTT manager     | claim ONyc from the ONyc NTT manager      |
-| `swap`    | USDC → ONyc, fee skimmed from ONyc out   | ONyc → USDC, fee skimmed from ONyc in     |
-| `send`    | NTT-lock ONyc → ONyc minted on FOGO      | NTT-lock USDC → USDC.s minted on FOGO     |
+| Phase     | Deposit                                | Withdraw                              |
+| --------- | -------------------------------------- | ------------------------------------- |
+| `receive` | claim USDC from the USDC NTT manager   | claim ONyc from the ONyc NTT manager  |
+| `swap`    | USDC → ONyc, fee skimmed from ONyc out | ONyc → USDC, fee skimmed from ONyc in |
+| `send`    | NTT-lock ONyc → ONyc minted on FOGO    | NTT-lock USDC → USDC.s minted on FOGO |
 
 - **Deposit** flows live under the inbound PDA namespace, **withdraw** under
   the outbound one (`Flow::seed`), so the two directions never collide on a
@@ -89,17 +89,17 @@ direction argument to forge.
 
 ### `RelayerConfig` (singleton PDA)
 
-| Field                              | Purpose                                                              |
-| ---------------------------------- | ------------------------------------------------------------------- |
-| `base_mint` / `asset_mint`         | USDC and ONyc on Solana.                                            |
-| `authority`                        | Governance key. Gates `configure` + `accept_authority` only.        |
-| `fee_vault`                        | ONyc token account that receives skimmed fees.                      |
-| `deposit_fee_bps` / `withdraw_fee_bps` | Per-leg fee, each ≤ `MAX_FEE_BPS` (1000 = 10%).                 |
-| `max_slippage_bps`                 | NAV slippage tolerance for both swap legs, ≤ `MAX_SLIPPAGE_BPS` (200). |
-| `price_oracle`                     | Pinned OnRe `Offer` PDA — the swap value floor. Zero ⇒ fail-closed. |
-| `pending_authority`                | Step-2 target of a two-step authority rotation.                     |
-| `pending_fee`                      | Staged fee *increase*, auto-promoted once its timelock elapses.     |
-| `reserved [u8; 96]`                | Headroom for future fixed-size fields — no realloc, no migration.   |
+| Field                                  | Purpose                                                                |
+| -------------------------------------- | ---------------------------------------------------------------------- |
+| `base_mint` / `asset_mint`             | USDC and ONyc on Solana.                                               |
+| `authority`                            | Governance key. Gates `configure` + `accept_authority` only.           |
+| `fee_vault`                            | ONyc token account that receives skimmed fees.                         |
+| `deposit_fee_bps` / `withdraw_fee_bps` | Per-leg fee, each ≤ `MAX_FEE_BPS` (1000 = 10%).                        |
+| `max_slippage_bps`                     | NAV slippage tolerance for both swap legs, ≤ `MAX_SLIPPAGE_BPS` (200). |
+| `price_oracle`                         | Pinned OnRe `Offer` PDA — the swap value floor. Zero ⇒ fail-closed.    |
+| `pending_authority`                    | Step-2 target of a two-step authority rotation.                        |
+| `pending_fee`                          | Staged fee _increase_, auto-promoted once its timelock elapses.        |
+| `reserved [u8; 96]`                    | Headroom for future fixed-size fields — no realloc, no migration.      |
 
 The layout keeps all fixed-size fields ahead of the two trailing
 `Option`s, so additive fields are carved from `reserved` and old zero
@@ -107,24 +107,24 @@ bytes read as the new field's default.
 
 ### `Flow` (per-transfer PDA)
 
-| Field       | Purpose                                                        |
-| ----------- | -------------------------------------------------------------- |
-| `recipient` | FOGO originator; the outbound recipient on the return leg.     |
+| Field       | Purpose                                                           |
+| ----------- | ----------------------------------------------------------------- |
+| `recipient` | FOGO originator; the outbound recipient on the return leg.        |
 | `direction` | `Deposit` or `Withdraw`. Set at `receive`, read by `swap`/`send`. |
-| `status`    | `Received` → `Swapped`. Guards step ordering.                  |
-| `amount`    | Recorded inbound amount.                                       |
-| `payer`     | Rent payer (refunded when `send` closes the flow).             |
+| `status`    | `Received` → `Swapped`. Guards step ordering.                     |
+| `amount`    | Recorded inbound amount.                                          |
+| `payer`     | Rent payer (refunded when `send` closes the flow).                |
 
 ## Instruction surface
 
-| Instruction         | Access          | Effect                                                                        |
-| ------------------- | --------------- | ----------------------------------------------------------------------------- |
-| `initialize`        | deployer        | Create the config PDA and relayer-authority-owned ATAs.                       |
-| `receive`           | permissionless  | Redeem an inbound NTT VAA, sweep tokens into custody, open the `Flow`.        |
-| `swap`              | permissionless  | Route-agnostic OnRe swap; skim the fee; mark `Swapped`.                       |
-| `send`              | permissionless  | NTT `transfer_lock` + atomic `release_wormhole_outbound`; close the `Flow`.   |
-| `configure`         | authority       | Set fees / slippage / price oracle / pending authority. `None` = unchanged.   |
-| `accept_authority`  | pending auth    | Step 2 of rotation; the new key claims, no co-sign from the old key.          |
+| Instruction        | Access         | Effect                                                                      |
+| ------------------ | -------------- | --------------------------------------------------------------------------- |
+| `initialize`       | deployer       | Create the config PDA and relayer-authority-owned ATAs.                     |
+| `receive`          | permissionless | Redeem an inbound NTT VAA, sweep tokens into custody, open the `Flow`.      |
+| `swap`             | permissionless | Route-agnostic OnRe swap; skim the fee; mark `Swapped`.                     |
+| `send`             | permissionless | NTT `transfer_lock` + atomic `release_wormhole_outbound`; close the `Flow`. |
+| `configure`        | authority      | Set fees / slippage / price oracle / pending authority. `None` = unchanged. |
+| `accept_authority` | pending auth   | Step 2 of rotation; the new key claims, no co-sign from the old key.        |
 
 The flow instructions take account lists in `remaining_accounts` assembled
 by the SDK builders; `send` carries a `transfer_lock_account_count` that
@@ -132,11 +132,11 @@ splits the list between the two NTT CPIs.
 
 ## Trust & security model
 
-| Key                  | Can do                                                                                  | Cannot do                                              |
-| -------------------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------ |
-| Operator / cranker   | Submit `receive` / `swap` / `send` for any flow.                                        | Redirect funds — recipients come from the unforgeable NTT `ValidatedTransceiverMessage`. |
-| Config authority     | Rotate `fee_vault`; raise fees (≤ 10%, ~2-day timelock); lower fees instantly; set `max_slippage_bps`; repoint `price_oracle`. | Move in-flight custody; exceed the caps; redirect a flow. A bad oracle is DoS only — swaps fail closed. |
-| Upgrade authority    | Replace the program bytecode (and thereby bypass every check above).                    | Nothing is enforced against it — it **must** be a multisig or finalized to `None`. |
+| Key                | Can do                                                                                                                         | Cannot do                                                                                               |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------- |
+| Operator / cranker | Submit `receive` / `swap` / `send` for any flow.                                                                               | Redirect funds — recipients come from the unforgeable NTT `ValidatedTransceiverMessage`.                |
+| Config authority   | Rotate `fee_vault`; raise fees (≤ 10%, ~2-day timelock); lower fees instantly; set `max_slippage_bps`; repoint `price_oracle`. | Move in-flight custody; exceed the caps; redirect a flow. A bad oracle is DoS only — swaps fail closed. |
+| Upgrade authority  | Replace the program bytecode (and thereby bypass every check above).                                                           | Nothing is enforced against it — it **must** be a multisig or finalized to `None`.                      |
 
 Fee changes are asymmetric: a **decrease** applies immediately, an
 **increase** stages in `pending_fee` and only promotes after
@@ -152,23 +152,23 @@ independent multisigs can hand over without an atomic co-sign.
 
 ## Program IDs & constants
 
-| Name                 | Value                                          |
-| -------------------- | ---------------------------------------------- |
-| Relayer              | `onrenRKgX54qtWeK3cuaTBE71xx7dWMXn82ubH61vAp`  |
-| OnRe                 | `onreuGhHHgVzMWSkj2oQDLDtvvGvoepBPkqyaubFcwe`  |
-| NTT manager (USDC)   | `nttu74CdAmsErx5daJVCQNoDZujswFrskMzonoZSdGk`  |
-| NTT manager (ONyc)   | `nttpna5vXW7BN2Aa4AfTbkCncJWTEoBsnWvjS87Xgsd`  |
-| USDC mint (Solana)   | `EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v` |
-| ONyc mint (Solana)   | `5Y8NV33Vv7WbnLfq3zBcKSdYPrk7g2KoiQoe7M2tcxp5` |
-| ONyc mint (FOGO)     | `oNyCm1QsAatj3ckaEwZjtAPWvstPn3Zm5MAYPtkjEfa`  |
+| Name               | Value                                          |
+| ------------------ | ---------------------------------------------- |
+| Relayer            | `onrenRKgX54qtWeK3cuaTBE71xx7dWMXn82ubH61vAp`  |
+| OnRe               | `onreuGhHHgVzMWSkj2oQDLDtvvGvoepBPkqyaubFcwe`  |
+| NTT manager (USDC) | `nttu74CdAmsErx5daJVCQNoDZujswFrskMzonoZSdGk`  |
+| NTT manager (ONyc) | `nttpna5vXW7BN2Aa4AfTbkCncJWTEoBsnWvjS87Xgsd`  |
+| USDC mint (Solana) | `EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v` |
+| ONyc mint (Solana) | `5Y8NV33Vv7WbnLfq3zBcKSdYPrk7g2KoiQoe7M2tcxp5` |
+| ONyc mint (FOGO)   | `oNyCm1QsAatj3ckaEwZjtAPWvstPn3Zm5MAYPtkjEfa`  |
 
-| Constant              | Value     | Meaning                                  |
-| --------------------- | --------- | ---------------------------------------- |
-| `MAX_FEE_BPS`         | `1000`    | Per-leg fee ceiling (10%).               |
-| `MAX_SLIPPAGE_BPS`    | `200`     | Swap NAV slippage ceiling (2%).          |
-| `FEE_TIMELOCK_SLOTS`  | `432_000` | Fee-increase delay (~2 days @ 400ms).    |
-| FOGO Wormhole chain   | `51`      | Outbound NTT recipient chain.            |
-| Solana Wormhole chain | `1`       | Inbound NTT source chain.                |
+| Constant              | Value     | Meaning                               |
+| --------------------- | --------- | ------------------------------------- |
+| `MAX_FEE_BPS`         | `1000`    | Per-leg fee ceiling (10%).            |
+| `MAX_SLIPPAGE_BPS`    | `200`     | Swap NAV slippage ceiling (2%).       |
+| `FEE_TIMELOCK_SLOTS`  | `432_000` | Fee-increase delay (~2 days @ 400ms). |
+| FOGO Wormhole chain   | `51`      | Outbound NTT recipient chain.         |
+| Solana Wormhole chain | `1`       | Inbound NTT source chain.             |
 
 Program IDs and seeds are the single source of truth in
 `programs/relayer/src/constants.rs` (mirrored in `packages/sdk/src/constants.ts`).
