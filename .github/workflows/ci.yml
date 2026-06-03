@@ -80,6 +80,22 @@ jobs:
       - name: Lint
         run: pnpm lint
 
+      # `pnpm test`'s pretest runs `anchor build` to produce the relayer .so
+      # the LiteSVM suite loads, so this job needs the Solana + Anchor
+      # toolchain (versions pinned in Anchor.toml). Placed after Lint so a
+      # cheap lint failure fails fast before paying the toolchain cost.
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install Solana
+        run: |
+          sh -c "$(curl -sSfL https://release.anza.xyz/v3.1.8/install)"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+
+      - name: Install Anchor
+        run: |
+          cargo install --git https://github.com/coral-xyz/anchor --tag v1.0.2 anchor-cli --locked
+          anchor --version
+
       - name: Tests
         run: pnpm test
 
