@@ -14,21 +14,17 @@ the instruction surface, and the trust model.
 
 ## Two-chain design
 
-```
-        FOGO                                  Solana
-        ────                                  ──────
-┌──────────────────────┐                ┌──────────────────────────────┐
-│ intent_transfer fork │                │ relayer program              │
-│ - deposit / redeem   │   Wormhole     │ - PDA custody (in-flight)    │
-│   entry point        │ ◀════ NTT ════▶│ - receive / swap / send      │
-│ - routes into NTT    │                │ - CPIs OnRe + NTT, IDs pinned │
-│ - configurable fee   │                │ - RelayerConfig + Flow PDAs   │
-└──────────────────────┘                └──────────────────────────────┘
-                                                       │ CPI
-                                                       ▼
-                                            ┌────────────────────┐
-                                            │ OnRe (USDC ↔ ONyc) │
-                                            └────────────────────┘
+```mermaid
+flowchart LR
+    subgraph FOGO
+        IT["intent_transfer fork<br/>· deposit / redeem entry<br/>· routes into NTT<br/>· configurable per-mint fee"]
+    end
+    subgraph Solana
+        R["relayer program<br/>· PDA custody (in-flight)<br/>· receive / swap / send<br/>· CPIs OnRe + NTT, IDs pinned<br/>· RelayerConfig + Flow PDAs"]
+        O["OnRe<br/>USDC ↔ ONyc"]
+    end
+    IT <==>|"Wormhole NTT"| R
+    R -->|CPI| O
 ```
 
 A user signs exactly one transaction on FOGO (deposit or redeem, via the
@@ -57,17 +53,12 @@ direction (`Deposit` or `Withdraw`) is decided at `receive` and persisted
 in the `Flow` receipt; `swap` and `send` route off it — there is no
 direction argument to forge.
 
-```
-inbound NTT VAA
-      │
-      ▼
- ┌─────────┐   opens Flow      ┌──────────┐   OnRe take_offer   ┌────────┐
- │ receive │ ────────────────▶ │   swap   │ ──────────────────▶ │  send  │
- └─────────┘   status=Received └──────────┘   status=Swapped    └────────┘
-      │                              │                              │
- claim tokens                  swap base↔asset                NTT transfer_lock
- into custody                  skim fee to vault              + release outbound,
-                                                              close Flow
+```mermaid
+flowchart LR
+    VAA(["inbound NTT VAA"]) --> RCV
+    RCV["receive<br/>claim tokens into custody"] -->|"opens Flow · status=Received"| SWP
+    SWP["swap<br/>swap base ↔ asset<br/>skim fee to vault"] -->|"OnRe take_offer · status=Swapped"| SND
+    SND["send<br/>NTT transfer_lock + release outbound<br/>close Flow"]
 ```
 
 | Phase     | Deposit                                | Withdraw                              |
