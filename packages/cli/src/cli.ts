@@ -1,5 +1,6 @@
 import chalk from 'chalk'
 import { program as cli } from 'commander'
+import { intentCommands } from './commands/intent'
 import { relayerCommands } from './commands/relayer'
 import { initContext } from './context'
 
@@ -35,6 +36,7 @@ cli
   })
 
 cli.addCommand(relayerCommands())
+cli.addCommand(intentCommands())
 
 cli.parseAsync()
   .then(() => process.exit(0))

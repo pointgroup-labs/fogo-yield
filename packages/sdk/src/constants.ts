@@ -25,6 +25,9 @@ export const WH_TRANSCEIVER_ONYC_PROGRAM_ID = NTT_ONYC_PROGRAM_ID
 /** OnRe's ONyc SPL mint on Solana mainnet. */
 export const ONYC_MINT = new PublicKey('5Y8NV33Vv7WbnLfq3zBcKSdYPrk7g2KoiQoe7M2tcxp5')
 
+/** NTT-bridged ONyc mint on FOGO — the `FeeConfig` seed for the redeem leg. */
+export const FOGO_ONYC_MINT = new PublicKey('oNyCm1QsAatj3ckaEwZjtAPWvstPn3Zm5MAYPtkjEfa')
+
 /** Canonical USDC on Solana mainnet — the Solana-side counterpart of FOGO USDC.s. */
 export const USDC_MINT = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v')
 
