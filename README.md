@@ -34,7 +34,7 @@ capital only in-flight and CPIs into OnRe to swap. Each leg is the same
 three-step pipeline, driven by three permissionless relayer instructions:
 
 | Step       | Instruction | Deposit                     | Withdraw                     |
-|------------|-------------|-----------------------------|------------------------------|
+| ---------- | ----------- | --------------------------- | ---------------------------- |
 | 1. Receive | `receive`   | claim inbound USDC from NTT | claim inbound ONyc from NTT  |
 | 2. Swap    | `swap`      | USDC → ONyc on OnRe         | ONyc → USDC on OnRe          |
 | 3. Send    | `send`      | NTT-send ONyc back to FOGO  | NTT-send USDC.s back to FOGO |
@@ -64,14 +64,14 @@ relayer ID is the declared ID across clusters — confirm the deploy status
 on-chain before assuming any cluster is live.
 
 | Program                  | Chain  | ID                                            |
-|--------------------------|--------|-----------------------------------------------|
+| ------------------------ | ------ | --------------------------------------------- |
 | Relayer                  | Solana | `onrenRKgX54qtWeK3cuaTBE71xx7dWMXn82ubH61vAp` |
 | `intent_transfer` (fork) | FOGO   | `inTFf5S7ZtYr8SkwGG85mjDwAyJwjqEPdH2p2nuyrL9` |
 
 ## Components
 
 | Path                        | Description                                                                                |
-|-----------------------------|--------------------------------------------------------------------------------------------|
+| --------------------------- | ------------------------------------------------------------------------------------------ |
 | `programs/relayer/`         | Anchor program (Rust) — the Solana relayer.                                                |
 | `programs/intent-transfer/` | First-party fork of FOGO's intent_transfer entry, with reviewed edits; workspace-excluded. |
 | `packages/sdk/`             | TypeScript SDK (`@fogo-onre/sdk`): client + builders.                                      |
