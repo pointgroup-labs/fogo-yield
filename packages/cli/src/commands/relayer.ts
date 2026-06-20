@@ -1,4 +1,4 @@
-import { MAX_FEE_BPS, MAX_SLIPPAGE_BPS, ONYC_DECIMALS, ONYC_MINT, RELAYER_PROGRAM_ID, USDC_DECIMALS, USDC_MINT } from '@fogo-onre/sdk'
+import { INTENT_TRANSFER_PROGRAM_ID, MAX_FEE_BPS, ONRE_INTENT_PROGRAM_ID, ONYC_DECIMALS, RELAYER_PROGRAM_ID, USDC_DECIMALS } from '@fogo-onre/sdk'
 import { AccountLayout, getAssociatedTokenAddressSync, getMint, TOKEN_PROGRAM_ID } from '@solana/spl-token'
 import { PublicKey } from '@solana/web3.js'
 import chalk from 'chalk'
@@ -31,20 +31,23 @@ export function relayerCommands(): Command {
       console.log(chalk.dim(`  baseMint:         ${config.baseMint.toBase58()}`))
       console.log(chalk.dim(`  assetMint:        ${config.assetMint.toBase58()}`))
       console.log(chalk.dim(`  feeVault:         ${config.feeVault.toBase58()}`))
+      console.log(chalk.dim(`  nttBaseProgram:   ${config.nttBaseProgram.toBase58()}`))
+      console.log(chalk.dim(`  nttAssetProgram:  ${config.nttAssetProgram.toBase58()}`))
+      console.log(chalk.dim(`  intentPrograms:   [${config.intentPrograms[0].toBase58()}, ${config.intentPrograms[1].toBase58()}]`))
       console.log(chalk.dim(`  depositFeeBps:    ${config.depositFeeBps}`))
       console.log(chalk.dim(`  withdrawFeeBps:   ${config.withdrawFeeBps}`))
-      console.log(chalk.dim(`  maxSlippageBps:   ${config.maxSlippageBps}  (cap ${MAX_SLIPPAGE_BPS})`))
     })
 
   relayer
     .command('initialize')
     .description('One-time initialize: create RelayerConfig + relayer-owned ATAs')
-    .option('--usdc-mint <pubkey>', `USDC mint on Solana (default: ${USDC_MINT.toBase58()})`)
-    .option('--onyc-mint <pubkey>', `ONyc mint on Solana (default: ${ONYC_MINT.toBase58()})`)
+    .option('--usdc-mint <pubkey>', 'Pair base mint on Solana (default: --base-mint)')
+    .option('--onyc-mint <pubkey>', 'Pair asset mint on Solana (default: --asset-mint)')
     .option('--fee-vault <pubkey>', 'External ONyc token account for protocol fees (default: signer\'s ONyc ATA)')
     .requiredOption('--deposit-fee-bps <bps>', 'Deposit fee in basis points')
     .requiredOption('--withdraw-fee-bps <bps>', 'Withdraw fee in basis points')
     .option('--authority <pubkey>', 'Authority pubkey to write into RelayerConfig (default: signer)')
+    .option('--intent-programs <pubkeys>', 'Comma-separated pair of inbound VAA originators (default: [intent_transfer, onre_fork])')
     .option('--confirm', 'Actually broadcast the transaction (default: dry-run)')
     .action(async (opts: {
       usdcMint?: string
@@ -53,18 +56,20 @@ export function relayerCommands(): Command {
       depositFeeBps: string
       withdrawFeeBps: string
       authority?: string
+      intentPrograms?: string
       confirm?: boolean
     }) => {
       const { connection, keypair, client } = useContext()
 
-      const usdcMint = opts.usdcMint ? new PublicKey(opts.usdcMint) : USDC_MINT
-      const onycMint = opts.onycMint ? new PublicKey(opts.onycMint) : ONYC_MINT
+      const usdcMint = opts.usdcMint ? new PublicKey(opts.usdcMint) : client.baseMint
+      const onycMint = opts.onycMint ? new PublicKey(opts.onycMint) : client.assetMint
       const feeVault = opts.feeVault
         ? new PublicKey(opts.feeVault)
         : getAssociatedTokenAddressSync(onycMint, keypair.publicKey)
       const depositFeeBps = Number(opts.depositFeeBps)
       const withdrawFeeBps = Number(opts.withdrawFeeBps)
       const authority = opts.authority ? new PublicKey(opts.authority) : keypair.publicKey
+      const intentPrograms = parseIntentPrograms(opts.intentPrograms)
 
       // Pre-flight 1: program deployed.
       const programAcct = await connection.getAccountInfo(RELAYER_PROGRAM_ID)
@@ -136,6 +141,7 @@ export function relayerCommands(): Command {
       console.log(chalk.dim(`  feeVault:         ${feeVault.toBase58()}  (owner=${fvOwner.toBase58()})`))
       console.log(chalk.dim(`  depositFeeBps:    ${depositFeeBps}`))
       console.log(chalk.dim(`  withdrawFeeBps:   ${withdrawFeeBps}`))
+      console.log(chalk.dim(`  intentPrograms:   [${intentPrograms[0].toBase58()}, ${intentPrograms[1].toBase58()}]`))
 
       if (!opts.confirm) {
         console.log()
@@ -153,6 +159,7 @@ export function relayerCommands(): Command {
             feeVault,
             depositFeeBps,
             withdrawFeeBps,
+            intentPrograms,
           })
           .rpc(),
       )
@@ -167,7 +174,6 @@ export function relayerCommands(): Command {
     .option('--fee-vault <pubkey>', 'New ONyc fee vault (must hold ONyc, not be relayer ATA)')
     .option('--deposit-fee-bps <bps>', 'New deposit fee bps (subject to timelock for increases)')
     .option('--withdraw-fee-bps <bps>', 'New withdraw fee bps (subject to timelock for increases)')
-    .option('--max-slippage-bps <bps>', `New NAV slippage floor + Jupiter quote slippage, bps [0, ${MAX_SLIPPAGE_BPS}] (no timelock)`)
     .option('--new-authority <pubkey>', 'Set pendingAuthority (claimed via accept-authority)')
     .option('--clear-pending-authority', 'Cancel a pending authority handover')
     .option('--confirm', 'Actually broadcast the transaction (default: dry-run)')
@@ -175,7 +181,6 @@ export function relayerCommands(): Command {
       feeVault?: string
       depositFeeBps?: string
       withdrawFeeBps?: string
-      maxSlippageBps?: string
       newAuthority?: string
       clearPendingAuthority?: boolean
       confirm?: boolean
@@ -192,7 +197,6 @@ export function relayerCommands(): Command {
       const feeVault = opts.feeVault ? new PublicKey(opts.feeVault) : undefined
       const depositFeeBps = opts.depositFeeBps !== undefined ? Number(opts.depositFeeBps) : undefined
       const withdrawFeeBps = opts.withdrawFeeBps !== undefined ? Number(opts.withdrawFeeBps) : undefined
-      const maxSlippageBps = opts.maxSlippageBps !== undefined ? Number(opts.maxSlippageBps) : undefined
       const newAuthority = opts.clearPendingAuthority
         ? null
         : opts.newAuthority
@@ -208,18 +212,13 @@ export function relayerCommands(): Command {
           throw new Error(`${name} = ${bps} out of range [0, ${MAX_FEE_BPS}]`)
         }
       }
-      if (maxSlippageBps !== undefined && (!Number.isInteger(maxSlippageBps) || maxSlippageBps < 0 || maxSlippageBps > MAX_SLIPPAGE_BPS)) {
-        throw new Error(`max-slippage-bps = ${maxSlippageBps} out of range [0, ${MAX_SLIPPAGE_BPS}]`)
-      }
-
       const noChange
         = feeVault === undefined
           && depositFeeBps === undefined
           && withdrawFeeBps === undefined
-          && maxSlippageBps === undefined
           && newAuthority === undefined
       if (noChange) {
-        throw new Error('no fields to update — pass at least one --fee-vault / --*-fee-bps / --max-slippage-bps / --new-authority / --clear-pending-authority')
+        throw new Error('no fields to update — pass at least one --fee-vault / --*-fee-bps / --new-authority / --clear-pending-authority')
       }
 
       console.log(chalk.cyan('Configure plan'))
@@ -232,9 +231,6 @@ export function relayerCommands(): Command {
       }
       if (withdrawFeeBps !== undefined) {
         console.log(chalk.dim(`  withdrawFeeBps:  ${config.withdrawFeeBps} → ${withdrawFeeBps}`))
-      }
-      if (maxSlippageBps !== undefined) {
-        console.log(chalk.dim(`  maxSlippageBps:  ${config.maxSlippageBps} → ${maxSlippageBps}`))
       }
       if (newAuthority === null) {
         console.log(chalk.dim(`  pendingAuthority: <cleared>`))
@@ -254,7 +250,6 @@ export function relayerCommands(): Command {
           feeVault: feeVault ?? undefined,
           depositFeeBps: depositFeeBps ?? null,
           withdrawFeeBps: withdrawFeeBps ?? null,
-          maxSlippageBps: maxSlippageBps ?? null,
           newAuthority: newAuthority ?? null,
         })
         return builder.rpc()
@@ -265,4 +260,16 @@ export function relayerCommands(): Command {
     })
 
   return relayer
+}
+
+/** Parse a comma-separated pair of pubkeys; defaults to the OnRe originators. */
+function parseIntentPrograms(raw?: string): [PublicKey, PublicKey] {
+  if (!raw) {
+    return [INTENT_TRANSFER_PROGRAM_ID, ONRE_INTENT_PROGRAM_ID]
+  }
+  const parts = raw.split(',').map(s => s.trim()).filter(Boolean)
+  if (parts.length !== 2) {
+    throw new Error(`--intent-programs expects exactly 2 comma-separated pubkeys, got ${parts.length}`)
+  }
+  return [new PublicKey(parts[0]), new PublicKey(parts[1])]
 }
