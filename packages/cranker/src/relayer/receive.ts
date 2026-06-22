@@ -50,17 +50,17 @@ export async function receive(
   const isDeposit = input.direction === 'deposit'
 
   try {
-    // Pre-flight: RelayerConfig must exist (catastrophic if not). Fetched
+    // Pre-flight: PairConfig must exist (catastrophic if not). Fetched
     // first so the NTT manager comes from the pair config, not constants.
     const cfgInfo = await withTimeout(
       connection.getAccountInfo(client.configPda),
       ctx.rpcTimeoutMs,
-      'getAccountInfo(RelayerConfig)',
+      'getAccountInfo(PairConfig)',
     ).catch(() => null)
     if (!cfgInfo) {
       return {
         kind: 'error',
-        error: new Error(`RelayerConfig not found at ${client.configPda.toBase58()}`),
+        error: new Error(`PairConfig not found at ${client.configPda.toBase58()}`),
         partialSignatures: [],
       }
     }

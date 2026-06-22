@@ -85,12 +85,12 @@ describe('multi-pair custody isolation', () => {
     feeVaultA = createAta(svm, authority, assetA.publicKey, authority.publicKey)
     feeVaultB = createAta(svm, authority, assetB.publicKey, authority.publicKey)
 
-    await clientA.initialize({ admin: authority.publicKey }).rpc()
+    await clientA.bootstrap({ admin: authority.publicKey }).rpc()
     await clientA
-      .initializePair({ authority: authority.publicKey, feeVault: feeVaultA, depositFeeBps: 0, withdrawFeeBps: 0 })
+      .initialize({ authority: authority.publicKey, feeVault: feeVaultA, depositFeeBps: 0, withdrawFeeBps: 0 })
       .rpc()
     await clientB
-      .initializePair({ authority: authority.publicKey, feeVault: feeVaultB, depositFeeBps: 0, withdrawFeeBps: 0 })
+      .initialize({ authority: authority.publicKey, feeVault: feeVaultB, depositFeeBps: 0, withdrawFeeBps: 0 })
       .rpc()
 
     svm.airdrop(relayerAuthorityPda, BigInt(5e9))

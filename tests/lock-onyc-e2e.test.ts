@@ -77,9 +77,9 @@ describe('send (deposit) e2e (NTT transfer_lock)', () => {
     const feeVault = createAta(svm, authority, assetMint.publicKey, authority.publicKey)
 
     // Initialize relayer
-    await client.initialize().rpc()
+    await client.bootstrap().rpc()
     await client
-      .initializePair({
+      .initialize({
         authority: authority.publicKey,
         baseMint: baseMint.publicKey,
         assetMint: assetMint.publicKey,

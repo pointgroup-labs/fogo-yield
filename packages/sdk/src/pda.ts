@@ -3,6 +3,7 @@ import {
   CONFIG_SEED,
   FLOW_INBOUND_SEED,
   FLOW_OUTBOUND_SEED,
+  GLOBAL_CONFIG_SEED,
   INTENT_TRANSFER_PROGRAM_ID,
   INTENT_TRANSFER_SETTER_SEED,
   PROGRAM_SIGNER_SEED,
@@ -23,9 +24,9 @@ export function findConfigPda(
   )
 }
 
-/** Global config singleton PDA `[CONFIG_SEED]` — the admin gate for pair creation. */
-export function findRelayerConfigPda(programId: PublicKey = RELAYER_PROGRAM_ID) {
-  return PublicKey.findProgramAddressSync([CONFIG_SEED], programId)
+/** Global config singleton PDA `[GLOBAL_CONFIG_SEED]` — the admin gate for pair creation. */
+export function findGlobalConfigPda(programId: PublicKey = RELAYER_PROGRAM_ID) {
+  return PublicKey.findProgramAddressSync([GLOBAL_CONFIG_SEED], programId)
 }
 
 export function findAuthorityPda(programId: PublicKey = RELAYER_PROGRAM_ID) {

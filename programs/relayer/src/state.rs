@@ -5,26 +5,24 @@ use crate::{
     error::RelayerError,
 };
 
-/// Global singleton (PDA `[RelayerConfig::SEED]`) that gates pair creation.
-/// Same seed bytes as `PairConfig` but no mint seeds, so the bare-seed PDA
-/// never collides with a `[SEED, base, asset]` pair PDA.
+/// Global singleton (PDA `[GlobalConfig::SEED]`).
 #[account]
 #[derive(InitSpace)]
-pub struct RelayerConfig {
-    /// Only key allowed to call `initialize_pair`.
+pub struct GlobalConfig {
     pub admin: Pubkey,
     pub bump: u8,
     pub reserved: [u8; 64],
+
+    /// Two-step rotation target: `set_admin` proposes, `accept_admin` promotes.
+    pub pending_admin: Option<Pubkey>,
 }
 
-impl RelayerConfig {
-    pub const SEED: &'static [u8] = b"relayer_config";
+impl GlobalConfig {
+    pub const SEED: &'static [u8] = b"global_config";
 }
 
 /// Config for one token pair (PDA `[PairConfig::SEED, base_mint, asset_mint]`).
 /// `authority` only gates governance; user flows are permissionless.
-/// Mints plus NTT/intent program IDs are init-only safety pins. Keep
-/// fixed-size fields before trailing `Option`s for layout stability.
 #[account]
 #[derive(InitSpace)]
 pub struct PairConfig {

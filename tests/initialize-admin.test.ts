@@ -1,6 +1,6 @@
 /**
- * Admin-gated pair creation: `initialize` writes the singleton RelayerConfig
- * admin, and `initialize_pair` is then only callable by that admin. A pair
+ * Admin-gated pair creation: `bootstrap` writes the singleton GlobalConfig
+ * admin, and `initialize` is then only callable by that admin. A pair
  * init signed by any other key must revert with `UnauthorizedAdmin`.
  */
 
@@ -29,9 +29,9 @@ describe('initialize admin gate', () => {
   })
 
   it('lets the admin create a pair after global init', async () => {
-    await client.initialize().rpc()
+    await client.bootstrap().rpc()
     await client
-      .initializePair({
+      .initialize({
         authority: admin.publicKey,
         baseMint: baseMint.publicKey,
         assetMint: assetMint.publicKey,
@@ -46,7 +46,7 @@ describe('initialize admin gate', () => {
   })
 
   it('rejects a pair init signed by a non-admin', async () => {
-    await client.initialize().rpc()
+    await client.bootstrap().rpc()
 
     const rando = Keypair.generate()
     svm.airdrop(rando.publicKey, BigInt(1e9))
@@ -54,7 +54,7 @@ describe('initialize admin gate', () => {
     await expectError(
       () =>
         client
-          .initializePair({
+          .initialize({
             authority: rando.publicKey,
             baseMint: baseMint.publicKey,
             assetMint: assetMint.publicKey,

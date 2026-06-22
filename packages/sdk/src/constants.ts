@@ -30,6 +30,7 @@ export const FOGO_ONYC_MINT = new PublicKey('oNyCm1QsAatj3ckaEwZjtAPWvstPn3Zm5MA
 /** Canonical USDC on Solana mainnet — the Solana-side counterpart of FOGO USDC.s. */
 export const USDC_MINT = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v')
 
+export const GLOBAL_CONFIG_SEED = Buffer.from('global_config')
 export const CONFIG_SEED = Buffer.from('relayer_config')
 export const RELAYER_SEED = Buffer.from('relayer')
 export const FLOW_INBOUND_SEED = Buffer.from('inflight')

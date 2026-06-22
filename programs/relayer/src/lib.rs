@@ -35,23 +35,22 @@ pub mod security {
 pub mod fogo_ntt_relayer {
     use super::*;
 
-    /// Create the global config that gates pair creation. The signer becomes
-    /// the admin (singleton, created once at deploy).
-    pub fn initialize(ctx: Context<Initialize>) -> Result<()> {
-        initialize::handler(ctx)
+    /// One-time deploy bootstrap: create the global config + set the admin.
+    pub fn bootstrap(ctx: Context<Bootstrap>) -> Result<()> {
+        bootstrap::handler(ctx)
     }
 
     /// Create a pair's config PDA + relayer-owned ATAs. Admin-gated. NTT
     /// program IDs are init-only safety pins.
-    pub fn initialize_pair(
-        ctx: Context<InitializePair>,
+    pub fn initialize(
+        ctx: Context<Initialize>,
         deposit_fee_bps: u16,
         withdraw_fee_bps: u16,
         ntt_base_program: Pubkey,
         ntt_asset_program: Pubkey,
         intent_programs: [Pubkey; 2],
     ) -> Result<()> {
-        initialize_pair::handler(
+        initialize::handler(
             ctx,
             deposit_fee_bps,
             withdraw_fee_bps,
@@ -59,6 +58,16 @@ pub mod fogo_ntt_relayer {
             ntt_asset_program,
             intent_programs,
         )
+    }
+
+    /// Propose a new global admin (step 1 of two-step rotation).
+    pub fn set_admin(ctx: Context<SetAdmin>, new_admin: Pubkey) -> Result<()> {
+        admin::set_admin(ctx, new_admin)
+    }
+
+    /// The pending admin claims the global admin role (step 2).
+    pub fn accept_admin(ctx: Context<AcceptAdmin>) -> Result<()> {
+        admin::accept_admin(ctx)
     }
 
     /// Redeem an inbound NTT VAA and create the `Flow` receipt. Direction

@@ -19,6 +19,55 @@ export type FogoNttRelayer = {
   ],
   "instructions": [
     {
+      "name": "acceptAdmin",
+      "docs": [
+        "The pending admin claims the global admin role (step 2)."
+      ],
+      "discriminator": [
+        112,
+        42,
+        45,
+        90,
+        116,
+        181,
+        13,
+        170
+      ],
+      "accounts": [
+        {
+          "name": "pendingAdmin",
+          "signer": true
+        },
+        {
+          "name": "globalConfig",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "acceptAuthority",
       "docs": [
         "Two-step rotation, step 2. Signer must equal `pending_authority`;",
@@ -76,6 +125,60 @@ export type FogoNttRelayer = {
               }
             ]
           }
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "bootstrap",
+      "docs": [
+        "One-time deploy bootstrap: create the global config + set the admin."
+      ],
+      "discriminator": [
+        101,
+        108,
+        31,
+        241,
+        5,
+        211,
+        182,
+        72
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "globalConfig",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
         }
       ],
       "args": []
@@ -257,8 +360,8 @@ export type FogoNttRelayer = {
     {
       "name": "initialize",
       "docs": [
-        "Create the global config that gates pair creation. The signer becomes",
-        "the admin (singleton, created once at deploy)."
+        "Create a pair's config PDA + relayer-owned ATAs. Admin-gated. NTT",
+        "program IDs are init-only safety pins."
       ],
       "discriminator": [
         175,
@@ -272,83 +375,26 @@ export type FogoNttRelayer = {
       ],
       "accounts": [
         {
-          "name": "admin",
-          "writable": true,
-          "signer": true
-        },
-        {
-          "name": "relayerConfig",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  114,
-                  101,
-                  108,
-                  97,
-                  121,
-                  101,
-                  114,
-                  95,
-                  99,
-                  111,
-                  110,
-                  102,
-                  105,
-                  103
-                ]
-              }
-            ]
-          }
-        },
-        {
-          "name": "systemProgram",
-          "address": "11111111111111111111111111111111"
-        }
-      ],
-      "args": []
-    },
-    {
-      "name": "initializePair",
-      "docs": [
-        "Create a pair's config PDA + relayer-owned ATAs. Admin-gated. NTT",
-        "program IDs are init-only safety pins."
-      ],
-      "discriminator": [
-        177,
-        114,
-        226,
-        34,
-        186,
-        150,
-        5,
-        245
-      ],
-      "accounts": [
-        {
           "name": "authority",
           "writable": true,
           "signer": true
         },
         {
-          "name": "relayerConfig",
+          "name": "globalConfig",
           "docs": [
-            "Admin gate: only `relayer_config.admin` may create pairs."
+            "Admin gate: only `global_config.admin` may create pairs."
           ],
           "pda": {
             "seeds": [
               {
                 "kind": "const",
                 "value": [
-                  114,
-                  101,
+                  103,
                   108,
+                  111,
+                  98,
                   97,
-                  121,
-                  101,
-                  114,
+                  108,
                   95,
                   99,
                   111,
@@ -1254,6 +1300,63 @@ export type FogoNttRelayer = {
       ]
     },
     {
+      "name": "setAdmin",
+      "docs": [
+        "Propose a new global admin (step 1 of two-step rotation)."
+      ],
+      "discriminator": [
+        251,
+        163,
+        0,
+        52,
+        91,
+        194,
+        187,
+        92
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "signer": true,
+          "relations": [
+            "globalConfig"
+          ]
+        },
+        {
+          "name": "globalConfig",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "newAdmin",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
       "name": "swap",
       "docs": [
         "Permissionless, route-agnostic swap. Routes on `flow.direction`:",
@@ -1509,6 +1612,19 @@ export type FogoNttRelayer = {
       ]
     },
     {
+      "name": "globalConfig",
+      "discriminator": [
+        149,
+        8,
+        156,
+        202,
+        160,
+        252,
+        176,
+        217
+      ]
+    },
+    {
       "name": "pairConfig",
       "discriminator": [
         119,
@@ -1519,19 +1635,6 @@ export type FogoNttRelayer = {
         228,
         151,
         77
-      ]
-    },
-    {
-      "name": "relayerConfig",
-      "discriminator": [
-        116,
-        239,
-        42,
-        132,
-        218,
-        154,
-        194,
-        20
       ]
     }
   ],
@@ -1758,7 +1861,7 @@ export type FogoNttRelayer = {
     {
       "code": 6033,
       "name": "badConfig",
-      "msg": "relayer_config PDA does not match the pair-derived address"
+      "msg": "pair_config PDA does not match the pair-derived address"
     },
     {
       "code": 6034,
@@ -1769,6 +1872,21 @@ export type FogoNttRelayer = {
       "code": 6035,
       "name": "unauthorizedAdmin",
       "msg": "only the relayer admin may create pairs"
+    },
+    {
+      "code": 6036,
+      "name": "noPendingAdmin",
+      "msg": "no pending admin to accept"
+    },
+    {
+      "code": 6037,
+      "name": "pendingAdminMismatch",
+      "msg": "signer does not match the pending admin"
+    },
+    {
+      "code": 6038,
+      "name": "pendingAdminIsCurrent",
+      "msg": "proposed admin equals the current admin"
     }
   ],
   "types": [
@@ -1869,12 +1987,47 @@ export type FogoNttRelayer = {
       }
     },
     {
+      "name": "globalConfig",
+      "docs": [
+        "Global singleton (PDA `[GlobalConfig::SEED]`)."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "reserved",
+            "type": {
+              "array": [
+                "u8",
+                64
+              ]
+            }
+          },
+          {
+            "name": "pendingAdmin",
+            "docs": [
+              "Two-step rotation target: `set_admin` proposes, `accept_admin` promotes."
+            ],
+            "type": {
+              "option": "pubkey"
+            }
+          }
+        ]
+      }
+    },
+    {
       "name": "pairConfig",
       "docs": [
         "Config for one token pair (PDA `[PairConfig::SEED, base_mint, asset_mint]`).",
-        "`authority` only gates governance; user flows are permissionless.",
-        "Mints plus NTT/intent program IDs are init-only safety pins. Keep",
-        "fixed-size fields before trailing `Option`s for layout stability."
+        "`authority` only gates governance; user flows are permissionless."
       ],
       "type": {
         "kind": "struct",
@@ -2058,39 +2211,6 @@ export type FogoNttRelayer = {
           {
             "name": "amount",
             "type": "u64"
-          }
-        ]
-      }
-    },
-    {
-      "name": "relayerConfig",
-      "docs": [
-        "Global singleton (PDA `[RelayerConfig::SEED]`) that gates pair creation.",
-        "Same seed bytes as `PairConfig` but no mint seeds, so the bare-seed PDA",
-        "never collides with a `[SEED, base, asset]` pair PDA."
-      ],
-      "type": {
-        "kind": "struct",
-        "fields": [
-          {
-            "name": "admin",
-            "docs": [
-              "Only key allowed to call `initialize_pair`."
-            ],
-            "type": "pubkey"
-          },
-          {
-            "name": "bump",
-            "type": "u8"
-          },
-          {
-            "name": "reserved",
-            "type": {
-              "array": [
-                "u8",
-                64
-              ]
-            }
           }
         ]
       }

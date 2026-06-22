@@ -104,7 +104,7 @@ pub enum RelayerError {
     #[msg("min_swap_out must be > 0 — a zero floor would leave the swap unprotected")]
     ZeroMinSwapOut,
 
-    #[msg("relayer_config PDA does not match the pair-derived address")]
+    #[msg("pair_config PDA does not match the pair-derived address")]
     BadConfig,
 
     #[msg("arithmetic overflow")]
@@ -112,4 +112,13 @@ pub enum RelayerError {
 
     #[msg("only the relayer admin may create pairs")]
     UnauthorizedAdmin,
+
+    #[msg("no pending admin to accept")]
+    NoPendingAdmin,
+
+    #[msg("signer does not match the pending admin")]
+    PendingAdminMismatch,
+
+    #[msg("proposed admin equals the current admin")]
+    PendingAdminIsCurrent,
 }

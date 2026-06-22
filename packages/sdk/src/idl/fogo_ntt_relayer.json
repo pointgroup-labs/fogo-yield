@@ -13,6 +13,55 @@
   ],
   "instructions": [
     {
+      "name": "accept_admin",
+      "docs": [
+        "The pending admin claims the global admin role (step 2)."
+      ],
+      "discriminator": [
+        112,
+        42,
+        45,
+        90,
+        116,
+        181,
+        13,
+        170
+      ],
+      "accounts": [
+        {
+          "name": "pending_admin",
+          "signer": true
+        },
+        {
+          "name": "global_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "accept_authority",
       "docs": [
         "Two-step rotation, step 2. Signer must equal `pending_authority`;",
@@ -70,6 +119,60 @@
               }
             ]
           }
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "bootstrap",
+      "docs": [
+        "One-time deploy bootstrap: create the global config + set the admin."
+      ],
+      "discriminator": [
+        101,
+        108,
+        31,
+        241,
+        5,
+        211,
+        182,
+        72
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "global_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
         }
       ],
       "args": []
@@ -251,8 +354,8 @@
     {
       "name": "initialize",
       "docs": [
-        "Create the global config that gates pair creation. The signer becomes",
-        "the admin (singleton, created once at deploy)."
+        "Create a pair's config PDA + relayer-owned ATAs. Admin-gated. NTT",
+        "program IDs are init-only safety pins."
       ],
       "discriminator": [
         175,
@@ -266,83 +369,26 @@
       ],
       "accounts": [
         {
-          "name": "admin",
-          "writable": true,
-          "signer": true
-        },
-        {
-          "name": "relayer_config",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  114,
-                  101,
-                  108,
-                  97,
-                  121,
-                  101,
-                  114,
-                  95,
-                  99,
-                  111,
-                  110,
-                  102,
-                  105,
-                  103
-                ]
-              }
-            ]
-          }
-        },
-        {
-          "name": "system_program",
-          "address": "11111111111111111111111111111111"
-        }
-      ],
-      "args": []
-    },
-    {
-      "name": "initialize_pair",
-      "docs": [
-        "Create a pair's config PDA + relayer-owned ATAs. Admin-gated. NTT",
-        "program IDs are init-only safety pins."
-      ],
-      "discriminator": [
-        177,
-        114,
-        226,
-        34,
-        186,
-        150,
-        5,
-        245
-      ],
-      "accounts": [
-        {
           "name": "authority",
           "writable": true,
           "signer": true
         },
         {
-          "name": "relayer_config",
+          "name": "global_config",
           "docs": [
-            "Admin gate: only `relayer_config.admin` may create pairs."
+            "Admin gate: only `global_config.admin` may create pairs."
           ],
           "pda": {
             "seeds": [
               {
                 "kind": "const",
                 "value": [
-                  114,
-                  101,
+                  103,
                   108,
+                  111,
+                  98,
                   97,
-                  121,
-                  101,
-                  114,
+                  108,
                   95,
                   99,
                   111,
@@ -1248,6 +1294,63 @@
       ]
     },
     {
+      "name": "set_admin",
+      "docs": [
+        "Propose a new global admin (step 1 of two-step rotation)."
+      ],
+      "discriminator": [
+        251,
+        163,
+        0,
+        52,
+        91,
+        194,
+        187,
+        92
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "signer": true,
+          "relations": [
+            "global_config"
+          ]
+        },
+        {
+          "name": "global_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  108,
+                  111,
+                  98,
+                  97,
+                  108,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "new_admin",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
       "name": "swap",
       "docs": [
         "Permissionless, route-agnostic swap. Routes on `flow.direction`:",
@@ -1503,6 +1606,19 @@
       ]
     },
     {
+      "name": "GlobalConfig",
+      "discriminator": [
+        149,
+        8,
+        156,
+        202,
+        160,
+        252,
+        176,
+        217
+      ]
+    },
+    {
       "name": "PairConfig",
       "discriminator": [
         119,
@@ -1513,19 +1629,6 @@
         228,
         151,
         77
-      ]
-    },
-    {
-      "name": "RelayerConfig",
-      "discriminator": [
-        116,
-        239,
-        42,
-        132,
-        218,
-        154,
-        194,
-        20
       ]
     }
   ],
@@ -1752,7 +1855,7 @@
     {
       "code": 6033,
       "name": "BadConfig",
-      "msg": "relayer_config PDA does not match the pair-derived address"
+      "msg": "pair_config PDA does not match the pair-derived address"
     },
     {
       "code": 6034,
@@ -1763,6 +1866,21 @@
       "code": 6035,
       "name": "UnauthorizedAdmin",
       "msg": "only the relayer admin may create pairs"
+    },
+    {
+      "code": 6036,
+      "name": "NoPendingAdmin",
+      "msg": "no pending admin to accept"
+    },
+    {
+      "code": 6037,
+      "name": "PendingAdminMismatch",
+      "msg": "signer does not match the pending admin"
+    },
+    {
+      "code": 6038,
+      "name": "PendingAdminIsCurrent",
+      "msg": "proposed admin equals the current admin"
     }
   ],
   "types": [
@@ -1863,12 +1981,47 @@
       }
     },
     {
+      "name": "GlobalConfig",
+      "docs": [
+        "Global singleton (PDA `[GlobalConfig::SEED]`)."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "reserved",
+            "type": {
+              "array": [
+                "u8",
+                64
+              ]
+            }
+          },
+          {
+            "name": "pending_admin",
+            "docs": [
+              "Two-step rotation target: `set_admin` proposes, `accept_admin` promotes."
+            ],
+            "type": {
+              "option": "pubkey"
+            }
+          }
+        ]
+      }
+    },
+    {
       "name": "PairConfig",
       "docs": [
         "Config for one token pair (PDA `[PairConfig::SEED, base_mint, asset_mint]`).",
-        "`authority` only gates governance; user flows are permissionless.",
-        "Mints plus NTT/intent program IDs are init-only safety pins. Keep",
-        "fixed-size fields before trailing `Option`s for layout stability."
+        "`authority` only gates governance; user flows are permissionless."
       ],
       "type": {
         "kind": "struct",
@@ -2052,39 +2205,6 @@
           {
             "name": "amount",
             "type": "u64"
-          }
-        ]
-      }
-    },
-    {
-      "name": "RelayerConfig",
-      "docs": [
-        "Global singleton (PDA `[RelayerConfig::SEED]`) that gates pair creation.",
-        "Same seed bytes as `PairConfig` but no mint seeds, so the bare-seed PDA",
-        "never collides with a `[SEED, base, asset]` pair PDA."
-      ],
-      "type": {
-        "kind": "struct",
-        "fields": [
-          {
-            "name": "admin",
-            "docs": [
-              "Only key allowed to call `initialize_pair`."
-            ],
-            "type": "pubkey"
-          },
-          {
-            "name": "bump",
-            "type": "u8"
-          },
-          {
-            "name": "reserved",
-            "type": {
-              "array": [
-                "u8",
-                64
-              ]
-            }
           }
         ]
       }

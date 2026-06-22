@@ -28,9 +28,9 @@ import IDL from './idl/fogo_ntt_relayer.json' with { type: 'json' }
 import {
   findAuthorityPda,
   findConfigPda,
+  findGlobalConfigPda,
   findInflightFlowPda,
   findOutflightFlowPda,
-  findRelayerConfigPda,
   findUserInboxWithMinPda,
 } from './pda'
 
@@ -47,7 +47,7 @@ export class RelayerClient {
   readonly baseMint: PublicKey
   readonly assetMint: PublicKey
   readonly configPda: PublicKey
-  readonly relayerConfigPda: PublicKey
+  readonly globalConfigPda: PublicKey
   readonly authorityPda: PublicKey
 
   /**
@@ -60,24 +60,24 @@ export class RelayerClient {
     this.baseMint = pair.baseMint
     this.assetMint = pair.assetMint
     ;[this.configPda] = findConfigPda(pair.baseMint, pair.assetMint, this.program.programId)
-    ;[this.relayerConfigPda] = findRelayerConfigPda(this.program.programId)
+    ;[this.globalConfigPda] = findGlobalConfigPda(this.program.programId)
     ;[this.authorityPda] = findAuthorityPda(this.program.programId)
   }
 
   /**
    * Create the global config singleton. `admin` (defaults to the provider
-   * wallet) becomes the only key allowed to call `initializePair`. Run once.
+   * wallet) becomes the only key allowed to call `initialize`. Run once.
    */
-  initialize(params: { admin?: PublicKey } = {}) {
+  bootstrap(params: { admin?: PublicKey } = {}) {
     const admin = params.admin ?? this.providerPublicKey()
     if (!admin) {
-      throw new Error('initialize: no admin provided and provider has no wallet')
+      throw new Error('bootstrap: no admin provided and provider has no wallet')
     }
     return this.program.methods
-      .initialize()
+      .bootstrap()
       .accountsPartial({
         admin,
-        relayerConfig: this.relayerConfigPda,
+        globalConfig: this.globalConfigPda,
         systemProgram: SystemProgram.programId,
       })
   }
@@ -87,7 +87,7 @@ export class RelayerClient {
    * `authority` must equal the global config admin. `feeVault` must hold the
    * asset mint and must not alias the relayer asset ATA.
    */
-  initializePair(params: {
+  initialize(params: {
     authority: PublicKey
     baseMint?: PublicKey
     assetMint?: PublicKey
@@ -107,7 +107,7 @@ export class RelayerClient {
     // constructor's `this.configPda`, which would mismatch the on-chain seeds.
     const [configPda] = findConfigPda(baseMint, assetMint, this.program.programId)
     return this.program.methods
-      .initializePair(
+      .initialize(
         params.depositFeeBps,
         params.withdrawFeeBps,
         params.nttBaseProgram ?? NTT_USDC_PROGRAM_ID,
@@ -116,7 +116,7 @@ export class RelayerClient {
       )
       .accountsPartial({
         authority: params.authority,
-        relayerConfig: this.relayerConfigPda,
+        globalConfig: this.globalConfigPda,
         pairConfig: configPda,
         relayerAuthority: this.authorityPda,
         baseMint,
@@ -172,6 +172,40 @@ export class RelayerClient {
       .accountsPartial({
         pendingAuthority: pending,
         pairConfig: this.configPda,
+      })
+  }
+
+  /**
+   * Propose a new global admin (step 1 of two-step rotation). `admin`
+   * (defaults to the provider wallet) must equal the current global admin.
+   */
+  setAdmin(params: { newAdmin: PublicKey, admin?: PublicKey }) {
+    const admin = params.admin ?? this.providerPublicKey()
+    if (!admin) {
+      throw new Error('setAdmin: no admin provided and provider has no wallet')
+    }
+    return this.program.methods
+      .setAdmin(params.newAdmin)
+      .accountsPartial({
+        admin,
+        globalConfig: this.globalConfigPda,
+      })
+  }
+
+  /**
+   * Claim the global admin role (step 2). `pendingAdmin` (defaults to the
+   * provider wallet) must equal the staged `pending_admin`.
+   */
+  acceptAdmin(params: { pendingAdmin?: PublicKey } = {}) {
+    const pendingAdmin = params.pendingAdmin ?? this.providerPublicKey()
+    if (!pendingAdmin) {
+      throw new Error('acceptAdmin: no pendingAdmin provided and provider has no wallet')
+    }
+    return this.program.methods
+      .acceptAdmin()
+      .accountsPartial({
+        pendingAdmin,
+        globalConfig: this.globalConfigPda,
       })
   }
 
