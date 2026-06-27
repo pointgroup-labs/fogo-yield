@@ -8,10 +8,8 @@ the same pipeline in reverse.
 
 The on-chain relayer is asset-agnostic: it is configured per
 `base_mint` / `asset_mint` pair, so any base / yield-asset pair can be onboarded
-with a single `initialize` call. The first live deployment configures that pair
-as USDC / ONyc, where [OnRe](https://github.com/onre-finance/onre-sol)'s
-tokenized reinsurance on Solana is the yield source. This document describes the
-relayer architecture, then calls out the live deployment values where useful.
+with a single `initialize` call. This document describes the relayer
+architecture, then calls out the live deployment values where useful.
 
 ## System Shape
 
@@ -184,7 +182,7 @@ Authority rotation is two-step so the new authority must explicitly accept.
 
 ## Current Deployment
 
-The live product pair is USDC / ONyc.
+The live relayer is currently configured for the USDC / ONyc pair.
 
 | Name                    | Value                                          |
 | ----------------------- | ---------------------------------------------- |
