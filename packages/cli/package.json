@@ -14,7 +14,7 @@
     "start": "node ./dist/cli.js"
   },
   "dependencies": {
-    "@anchor-lang/core": "^1.0.0",
+    "@anchor-lang/core": "^1.1.2",
     "@fogo-yield/cranker": "workspace:*",
     "@fogo-yield/sdk": "workspace:*",
     "@noble/hashes": "^1.8.0",
