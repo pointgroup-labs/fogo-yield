@@ -66,7 +66,7 @@ jobs:
       # Version derives from `packageManager` in package.json (single source
       # of truth) — do not also set `version:` here or action-setup errors.
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
 
       - name: Install Node
         uses: actions/setup-node@v6
@@ -90,7 +90,7 @@ jobs:
       # rather than ever loading a stale .so against new source.
       - name: Cache relayer .so
         id: relayer-so
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: target/deploy/fogo_ntt_relayer.so
           key: relayer-so-${{ hashFiles('programs/relayer/**', 'Cargo.lock', 'Cargo.toml', 'Anchor.toml', 'rust-toolchain.toml') }}
