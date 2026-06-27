@@ -1,14 +1,20 @@
-# Fogo OnRe
+# Fogo Yield
 
 [![FOGO](https://img.shields.io/badge/FOGO-grey?logo=lightning&style=for-the-badge)](https://fogo.io)
 [![npm](https://img.shields.io/npm/v/@ignitionfi/fogo-onre?logo=npm&logoColor=white&style=for-the-badge)](https://www.npmjs.com/package/@ignitionfi/fogo-onre)
 [![CI](https://img.shields.io/github/actions/workflow/status/pointgroup-labs/fogo-onre/ci.yml?logo=githubactions&logoColor=white&style=for-the-badge&label=CI)](https://github.com/pointgroup-labs/fogo-onre/actions/workflows/ci.yml)
 
-A cross-chain yield bridge. Deposit **USDC.s on FOGO** and receive **ONyc**
-— a token that earns yield from
+A **universal cross-chain yield layer** for FOGO. Deposit a base asset and
+receive a **yield-bearing token** bridged from Solana — it keeps earning its
+native yield while you hold it on FOGO, and you can redeem back to the base
+asset at any time. You sign **one** transaction on FOGO; everything after is
+permissionless cranking.
+
+The protocol is **asset-agnostic**: the on-chain relayer and the SDK work for
+any `(base, yield-asset)` pair, onboarded with a single `initialize` call. The
+first live deployment bridges **USDC ↔ ONyc**, where
 [OnRe](https://github.com/onre-finance/onre-sol)'s tokenized reinsurance on
-Solana. Withdraw by sending ONyc back for USDC.s. You sign **one**
-transaction on FOGO; everything after is permissionless cranking.
+Solana is the yield source.
 
 ## How it works
 
@@ -16,34 +22,35 @@ transaction on FOGO; everything after is permissionless cranking.
 flowchart LR
     subgraph dep [Deposit]
         direction LR
-        A["USDC.s · FOGO"] -->|NTT| B["USDC · Solana"]
-        B -->|swap| C["ONyc · Solana"]
-        C -->|NTT| D["ONyc · FOGO"]
+        A["Base · FOGO"] -->|NTT| B["Base · Solana"]
+        B -->|swap| C["Yield asset · Solana"]
+        C -->|NTT| D["Yield asset · FOGO"]
     end
-    subgraph wd [Withdraw]
+    subgraph wd [Redeem]
         direction LR
-        E["ONyc · FOGO"] -->|NTT| F["ONyc · Solana"]
-        F -->|swap| G["USDC · Solana"]
-        G -->|NTT| H["USDC.s · FOGO"]
+        E["Yield asset · FOGO"] -->|NTT| F["Yield asset · Solana"]
+        F -->|swap| G["Base · Solana"]
+        G -->|NTT| H["Base · FOGO"]
     end
 ```
 
-Both legs run over [Wormhole NTT](https://wormhole.com/products/native-token-transfers)
-(USDC.s ↔ USDC and ONyc ↔ ONyc). On Solana, a small **relayer** program holds
-funds only while a flow is open, swaps through the configured venue, then sends
-the output back to FOGO. Each leg is the same three-step pipeline, driven by
-three permissionless relayer instructions:
+Both legs run over [Wormhole NTT](https://wormhole.com/products/native-token-transfers).
+On Solana, a small **relayer** program holds funds only while a flow is open,
+swaps through the configured venue, then sends the output back to FOGO. Each leg
+is the same three-step pipeline, driven by three permissionless relayer
+instructions:
 
-| Step       | Instruction | Deposit                     | Withdraw                     |
-| ---------- | ----------- | --------------------------- | ---------------------------- |
-| 1. Receive | `receive`   | claim inbound USDC from NTT | claim inbound ONyc from NTT  |
-| 2. Swap    | `swap`      | USDC → ONyc                 | ONyc → USDC                  |
-| 3. Send    | `send`      | NTT-send ONyc back to FOGO  | NTT-send USDC.s back to FOGO |
+| Step       | Instruction | Deposit                           | Redeem                             |
+| ---------- | ----------- | --------------------------------- | ---------------------------------- |
+| 1. Receive | `receive`   | claim inbound base from NTT       | claim inbound yield asset from NTT |
+| 2. Swap    | `swap`      | base → yield asset                | yield asset → base                 |
+| 3. Send    | `send`      | NTT-send yield asset back to FOGO | NTT-send base back to FOGO         |
 
 `receive` opens a one-shot `Flow` receipt. `swap` enforces the user's signed
 minimum output, and `send` returns the result to the recorded recipient. Yield
-accrues automatically — ONyc is a claim on a position whose on-chain price
-advances as OnRe's reinsurance book earns.
+accrues automatically — the asset is a claim on a position whose on-chain price
+advances as its underlying strategy earns (for USDC ↔ ONyc, OnRe's reinsurance
+book).
 
 ## Trust model
 
@@ -74,10 +81,10 @@ status on-chain before assuming any cluster is live.
 
 | Path                        | Description                                                                                |
 | --------------------------- | ------------------------------------------------------------------------------------------ |
-| `programs/relayer/`         | Anchor program (Rust) — the Solana relayer.                                                |
+| `programs/relayer/`         | Anchor program (Rust) — the asset-agnostic Solana relayer.                                 |
 | `programs/intent-transfer/` | First-party fork of FOGO's intent_transfer entry, with reviewed edits; workspace-excluded. |
-| `packages/sdk/`             | TypeScript SDK (`@fogo-onre/sdk`): client + builders.                                      |
-| `packages/cli/`             | Operator CLI (`@fogo-onre/cli`): configure + ops.                                          |
+| `packages/sdk/`             | TypeScript SDK (`@fogo-yield/sdk`): client + builders.                                     |
+| `packages/cli/`             | Operator CLI (`@fogo-yield/cli`): configure + ops.                                         |
 | `packages/cranker/`         | Off-chain VAA executor that drives the legs.                                               |
 | `tests/`                    | LiteSVM end-to-end tests.                                                                  |
 
@@ -95,8 +102,17 @@ cargo test -p fogo-ntt-relayer --lib   # Rust unit tests
 pnpm test                              # LiteSVM e2e (pretest rebuilds .so + SDK)
 ```
 
-Toolchain is pinned: Rust 1.95.0, Anchor 1.0.2, Solana CLI 3.1.8,
-pnpm 11.1.0, Node 24.
+Toolchain is pinned: Rust 1.96.0 (edition 2024), Anchor 1.1.2, Solana CLI
+3.1.8, pnpm 11.1.0, Node 24.
+
+## First deployment: USDC ↔ ONyc
+
+The reference deployment configures the pair as USDC (base) and ONyc (yield
+asset). ONyc is OnRe's reinsurance yield token; its on-chain price advances as
+the book earns, so holders accrue yield without any action. Mints, NTT
+managers, and the active swap venue are listed under **Current Deployment** in
+[`docs/architecture.md`](./docs/architecture.md). Additional pairs are onboarded
+by running `initialize` for a new `(base_mint, asset_mint)` — no new code.
 
 ## Development
 

@@ -1,13 +1,17 @@
 # Architecture
 
-Fogo OnRe is a two-chain bridge around a small Solana relayer program. A user
-submits one signed transaction on FOGO. Wormhole NTT carries the token to
-Solana, the relayer swaps it, then NTT carries the result back to FOGO.
+Fogo Yield is a universal cross-chain yield layer: a two-chain bridge around a
+small Solana relayer program. A user submits one signed transaction on FOGO.
+Wormhole NTT carries the base token to Solana, the relayer swaps it into a
+yield-bearing asset, then NTT carries the result back to FOGO. Redeeming runs
+the same pipeline in reverse.
 
-The on-chain relayer is intentionally generic: it is configured per
-`base_mint` / `asset_mint` pair, and the live product currently configures that
-pair as USDC / ONyc. This document describes the relayer architecture, then
-calls out the live deployment values where useful.
+The on-chain relayer is asset-agnostic: it is configured per
+`base_mint` / `asset_mint` pair, so any base / yield-asset pair can be onboarded
+with a single `initialize` call. The first live deployment configures that pair
+as USDC / ONyc, where [OnRe](https://github.com/onre-finance/onre-sol)'s
+tokenized reinsurance on Solana is the yield source. This document describes the
+relayer architecture, then calls out the live deployment values where useful.
 
 ## System Shape
 
