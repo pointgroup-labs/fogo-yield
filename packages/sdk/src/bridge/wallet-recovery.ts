@@ -14,10 +14,12 @@ async function fetchParsedTx(fogoConnection: Connection, fogoTx: string): Promis
   if (!fogoTx) {
     return null
   }
+  // `null` = genuinely-absent tx; an RPC/network error propagates so the
+  // cranker retries instead of treating a flaky RPC as "no such tx".
   const tx = await fogoConnection.getTransaction(fogoTx, {
     commitment: 'confirmed',
     maxSupportedTransactionVersion: 0,
-  }).catch(() => null)
+  })
   if (!tx) {
     return null
   }
@@ -52,7 +54,9 @@ async function allWalletsFromParsedTx(
     if (!sourceAta) {
       continue
     }
-    const ataInfo = await fogoConnection.getAccountInfo(sourceAta).catch(() => null)
+    // `null` = closed/absent ATA; an RPC error propagates rather than dropping
+    // a real wallet on a transient failure.
+    const ataInfo = await fogoConnection.getAccountInfo(sourceAta)
     if (!ataInfo || ataInfo.data.length < 64) {
       continue
     }

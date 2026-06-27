@@ -83,12 +83,13 @@ export class WormholescanClient {
     }
     const out: WormholescanVaa[] = []
     for (const item of json.data) {
-      if (!item.vaa) {
+      // Skip malformed entries rather than collapsing a missing sequence to 0n.
+      if (!item.vaa || item.sequence === undefined || item.sequence === null) {
         continue
       }
       out.push({
         vaa: decodeBase64(item.vaa),
-        sequence: BigInt(item.sequence ?? 0),
+        sequence: BigInt(item.sequence),
         txHash: item.txHash ?? null,
       })
     }
