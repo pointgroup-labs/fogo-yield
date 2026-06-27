@@ -1,4 +1,4 @@
-import type { NttManagerMode } from '@fogo-onre/sdk'
+import type { NttManagerMode } from '@fogo-yield/sdk'
 import type { Connection, Keypair } from '@solana/web3.js'
 import type { BridgeRedeemTarget } from './types'
 import {
@@ -11,7 +11,7 @@ import {
   FOGO_WORMHOLE_CHAIN_ID,
   NTT_USDC_PROGRAM_ID,
   SOLANA_WORMHOLE_CHAIN_ID,
-} from '@fogo-onre/sdk'
+} from '@fogo-yield/sdk'
 import { PublicKey } from '@solana/web3.js'
 import { withTimeout } from '../utils/rpc'
 

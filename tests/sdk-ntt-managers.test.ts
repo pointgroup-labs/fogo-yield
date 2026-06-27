@@ -9,7 +9,7 @@
  * base manager; withdraw → asset manager).
  */
 
-import { RelayerClient } from '@fogo-onre/sdk'
+import { RelayerClient } from '@fogo-yield/sdk'
 import { Keypair } from '@solana/web3.js'
 import { describe, expect, it } from 'vitest'
 import { createProvider, createSvm } from './utils/svm'

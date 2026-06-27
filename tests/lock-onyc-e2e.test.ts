@@ -17,7 +17,7 @@ import {
   NTT_ONYC_PROGRAM_ID,
   nttTransferArgsHash,
   RelayerClient,
-} from '@fogo-onre/sdk'
+} from '@fogo-yield/sdk'
 import { getAssociatedTokenAddressSync, TOKEN_PROGRAM_ID } from '@solana/spl-token'
 import { Keypair, PublicKey } from '@solana/web3.js'
 import {

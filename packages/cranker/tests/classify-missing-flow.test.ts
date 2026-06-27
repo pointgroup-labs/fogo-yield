@@ -1,6 +1,6 @@
 import type { AccountInfo, PublicKey } from '@solana/web3.js'
 import type { AdvanceContext } from '../src/relayer/types'
-import { NTT_INBOX_ITEM_DISCRIMINATOR, ONYC_MINT } from '@fogo-onre/sdk'
+import { NTT_INBOX_ITEM_DISCRIMINATOR, ONYC_MINT } from '@fogo-yield/sdk'
 import { getAssociatedTokenAddressSync } from '@solana/spl-token'
 import { Keypair } from '@solana/web3.js'
 import { describe, expect, it } from 'vitest'

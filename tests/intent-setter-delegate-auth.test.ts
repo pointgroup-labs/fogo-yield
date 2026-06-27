@@ -20,7 +20,7 @@
 
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { findIntentTransferSetterPda, ONRE_INTENT_PROGRAM_ID } from '@fogo-onre/sdk'
+import { findIntentTransferSetterPda, ONRE_INTENT_PROGRAM_ID } from '@fogo-yield/sdk'
 import { createApproveCheckedInstruction, TOKEN_PROGRAM_ID } from '@solana/spl-token'
 import {
   Keypair,

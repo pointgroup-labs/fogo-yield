@@ -1,7 +1,7 @@
 import type { PublicKey } from '@solana/web3.js'
 import type { Metrics } from '../metrics'
 import type { Logger } from '../utils/log'
-import { findIntentTransferSetterPda, INTENT_TRANSFER_PROGRAM_ID } from '@fogo-onre/sdk'
+import { findIntentTransferSetterPda, INTENT_TRANSFER_PROGRAM_ID } from '@fogo-yield/sdk'
 
 // Derived once: the setter PDA of the *dormant* program (Fogo). After the
 // hard cutover OnRe is the active program, so a legitimate flow's NTT

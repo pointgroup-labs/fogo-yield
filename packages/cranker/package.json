@@ -1,5 +1,5 @@
 {
-  "name": "@fogo-onre/cranker",
+  "name": "@fogo-yield/cranker",
   "type": "module",
   "version": "0.1.0",
   "private": true,
@@ -19,7 +19,7 @@
   },
   "dependencies": {
     "@anchor-lang/core": "^1.0.2",
-    "@fogo-onre/sdk": "workspace:*",
+    "@fogo-yield/sdk": "workspace:*",
     "@noble/hashes": "^1.8.0",
     "@solana/spl-token": "^0.4.13",
     "@solana/web3.js": "^1.98.4",

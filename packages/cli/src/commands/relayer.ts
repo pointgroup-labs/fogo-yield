@@ -1,4 +1,4 @@
-import { INTENT_TRANSFER_PROGRAM_ID, MAX_FEE_BPS, ONRE_INTENT_PROGRAM_ID, ONYC_DECIMALS, RELAYER_PROGRAM_ID, USDC_DECIMALS } from '@fogo-onre/sdk'
+import { INTENT_TRANSFER_PROGRAM_ID, MAX_FEE_BPS, ONRE_INTENT_PROGRAM_ID, ONYC_DECIMALS, RELAYER_PROGRAM_ID, USDC_DECIMALS } from '@fogo-yield/sdk'
 import { AccountLayout, getAssociatedTokenAddressSync, getMint, TOKEN_PROGRAM_ID } from '@solana/spl-token'
 import { PublicKey } from '@solana/web3.js'
 import chalk from 'chalk'

@@ -14,7 +14,7 @@ import {
   buildFogoNttReleaseInboundMintIx,
   buildFogoNttReleaseInboundUnlockIx,
   NTT_ONYC_PROGRAM_ID,
-} from '@fogo-onre/sdk'
+} from '@fogo-yield/sdk'
 import { sha256 } from '@noble/hashes/sha2.js'
 import { Keypair, PublicKey } from '@solana/web3.js'
 import { describe, expect, it } from 'vitest'

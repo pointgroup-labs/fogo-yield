@@ -10,12 +10,12 @@
  * silently route to the dormant Fogo program by forgetting to pass it.
  */
 
-import type { BuildBridgeNttIxParams, NttBridgeSubAccounts } from '@fogo-onre/sdk'
+import type { BuildBridgeNttIxParams, NttBridgeSubAccounts } from '@fogo-yield/sdk'
 import {
   buildBridgeNttTokensIx,
   INTENT_TRANSFER_PROGRAM_ID,
   ONRE_INTENT_PROGRAM_ID,
-} from '@fogo-onre/sdk'
+} from '@fogo-yield/sdk'
 import { PublicKey } from '@solana/web3.js'
 import { describe, expect, it } from 'vitest'
 

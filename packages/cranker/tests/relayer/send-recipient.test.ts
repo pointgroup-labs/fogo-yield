@@ -1,4 +1,4 @@
-import { FOGO_WORMHOLE_CHAIN_ID, nttTransferArgsHash } from '@fogo-onre/sdk'
+import { FOGO_WORMHOLE_CHAIN_ID, nttTransferArgsHash } from '@fogo-yield/sdk'
 import { PublicKey } from '@solana/web3.js'
 import { describe, expect, it } from 'vitest'
 

@@ -1,4 +1,4 @@
-import type { NttManagerMode } from '@fogo-onre/sdk'
+import type { NttManagerMode } from '@fogo-yield/sdk'
 import type { Connection, Keypair, PublicKey, TransactionInstruction } from '@solana/web3.js'
 import type { Metrics } from '../metrics'
 import type { Logger } from '../utils/log'

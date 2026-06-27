@@ -25,7 +25,7 @@ import {
   findConfigPda,
   findOutflightFlowPda,
   RELAYER_PROGRAM_ID,
-} from '@fogo-onre/sdk'
+} from '@fogo-yield/sdk'
 import { getAssociatedTokenAddressSync } from '@solana/spl-token'
 import { Connection, PublicKey } from '@solana/web3.js'
 

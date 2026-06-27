@@ -18,7 +18,7 @@ import {
   redemptionExpectedOut,
   synthOfferBuffer,
   USDC_DECIMALS,
-} from '@fogo-onre/sdk'
+} from '@fogo-yield/sdk'
 import { describe, expect, it } from 'vitest'
 
 // A flat (apr=0) vector active for any `now >= start`. base_price 1e9 with

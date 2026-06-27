@@ -6,7 +6,7 @@
  * throws `minLe.writeBigUInt64LE is not a function`. Wrong endianness would be
  * worse: a silently mismatched recipient PDA the relayer can never match.
  */
-import { findUserInboxWithMinPda, RELAYER_PROGRAM_ID, USER_INBOX_SEED } from '@fogo-onre/sdk'
+import { findUserInboxWithMinPda, RELAYER_PROGRAM_ID, USER_INBOX_SEED } from '@fogo-yield/sdk'
 import { PublicKey } from '@solana/web3.js'
 import { describe, expect, it } from 'vitest'
 

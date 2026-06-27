@@ -20,7 +20,7 @@ export default defineConfig({
   // (named-export + dynamic-require landmines) or whose ESM index does
   // extensionless imports Node's strict resolver rejects (NTT SDK's
   // `import "./side-effects"`). esbuild resolves both at build time.
-  noExternal: ['@fogo-onre/sdk', '@anchor-lang/core', '@wormhole-foundation/sdk-solana-ntt'],
+  noExternal: ['@fogo-yield/sdk', '@anchor-lang/core', '@wormhole-foundation/sdk-solana-ntt'],
   esbuildOptions(options) {
     options.mainFields = ['main', 'module']
   },

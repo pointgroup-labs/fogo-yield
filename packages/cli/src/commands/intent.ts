@@ -3,7 +3,7 @@ import {
   findFeeConfigPda,
   FOGO_ONYC_MINT,
   ONRE_INTENT_PROGRAM_ID,
-} from '@fogo-onre/sdk'
+} from '@fogo-yield/sdk'
 import { getMint } from '@solana/spl-token'
 import { PublicKey, Transaction } from '@solana/web3.js'
 import chalk from 'chalk'

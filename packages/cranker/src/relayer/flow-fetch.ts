@@ -1,4 +1,4 @@
-import type { RelayerClient } from '@fogo-onre/sdk'
+import type { RelayerClient } from '@fogo-yield/sdk'
 import type { PublicKey } from '@solana/web3.js'
 
 type Flow = Awaited<ReturnType<RelayerClient['fetchInflightFlow']>>

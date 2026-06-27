@@ -1,10 +1,10 @@
 /* eslint-disable style/max-statements-per-line -- binary buffer assembly: `buf.set(...); off += N` reads more naturally on one line than split */
-import type { NttManagerMode } from '@fogo-onre/sdk'
+import type { NttManagerMode } from '@fogo-yield/sdk'
 import {
   decodeNttConfig,
   decodeNttInboxItem,
 
-} from '@fogo-onre/sdk'
+} from '@fogo-yield/sdk'
 /**
  * Decoder fixture tests for the SDK's NTT Config / InboxItem decoders.
  * Hand-encode known values, run through the decoder, assert round-trip.

@@ -18,7 +18,7 @@ importers:
       '@anchor-lang/core':
         specifier: ^1.0.2
         version: 1.0.2(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@6.0.6)
-      '@fogo-onre/sdk':
+      '@fogo-yield/sdk':
         specifier: workspace:*
         version: link:packages/sdk
       '@solana/web3.js':
@@ -70,10 +70,10 @@ importers:
       '@anchor-lang/core':
         specifier: ^1.0.0
         version: 1.0.2(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10)
-      '@fogo-onre/cranker':
+      '@fogo-yield/cranker':
         specifier: workspace:*
         version: link:../cranker
-      '@fogo-onre/sdk':
+      '@fogo-yield/sdk':
         specifier: workspace:*
         version: link:../sdk
       '@noble/hashes':
@@ -119,7 +119,7 @@ importers:
       '@anchor-lang/core':
         specifier: ^1.0.2
         version: 1.0.2(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10)
-      '@fogo-onre/sdk':
+      '@fogo-yield/sdk':
         specifier: workspace:*
         version: link:../sdk
       '@noble/hashes':

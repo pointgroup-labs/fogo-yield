@@ -25,7 +25,7 @@ import {
   ONRE_PROGRAM_ID,
   parseActiveOfferVector,
   resolveNttVaa,
-} from '@fogo-onre/sdk'
+} from '@fogo-yield/sdk'
 import { getAssociatedTokenAddressSync } from '@solana/spl-token'
 import { ComputeBudgetProgram, PublicKey, TransactionMessage, VersionedTransaction } from '@solana/web3.js'
 import { makePriorityFeeIx } from '../utils/priority-fee'

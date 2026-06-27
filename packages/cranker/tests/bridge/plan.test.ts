@@ -6,7 +6,7 @@
  * hand-rolled VAA + InboxItem bytes.
  */
 import type { BridgeContext, BridgeRedeemTarget } from '../../src/bridge/types'
-import { NTT_ONYC_PROGRAM_ID } from '@fogo-onre/sdk'
+import { NTT_ONYC_PROGRAM_ID } from '@fogo-yield/sdk'
 import { sha256 } from '@noble/hashes/sha2.js'
 import { Connection, Keypair, PublicKey } from '@solana/web3.js'
 import { describe, expect, it, vi } from 'vitest'

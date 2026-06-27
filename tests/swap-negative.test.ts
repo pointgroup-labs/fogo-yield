@@ -15,7 +15,7 @@ import {
   findAuthorityPda,
   findOutflightFlowPda,
   RelayerClient,
-} from '@fogo-onre/sdk'
+} from '@fogo-yield/sdk'
 import {
   getAssociatedTokenAddressSync,
   TOKEN_2022_PROGRAM_ID,

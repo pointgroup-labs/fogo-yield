@@ -16,7 +16,7 @@ import {
   NTT_ONYC_PROGRAM_ID,
   REFUND_TIMEOUT_SLOTS,
   RelayerClient,
-} from '@fogo-onre/sdk'
+} from '@fogo-yield/sdk'
 import { getAssociatedTokenAddressSync, TOKEN_PROGRAM_ID } from '@solana/spl-token'
 import { Keypair, PublicKey } from '@solana/web3.js'
 import { Clock, LiteSVM } from 'litesvm'

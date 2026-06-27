@@ -1,5 +1,5 @@
 {
-  "name": "@fogo-onre/cli",
+  "name": "@fogo-yield/cli",
   "type": "module",
   "version": "0.0.1",
   "bin": {
@@ -15,8 +15,8 @@
   },
   "dependencies": {
     "@anchor-lang/core": "^1.0.0",
-    "@fogo-onre/cranker": "workspace:*",
-    "@fogo-onre/sdk": "workspace:*",
+    "@fogo-yield/cranker": "workspace:*",
+    "@fogo-yield/sdk": "workspace:*",
     "@noble/hashes": "^1.8.0",
     "@solana/spl-token": "^0.4.13",
     "@solana/web3.js": "^1.98.4",

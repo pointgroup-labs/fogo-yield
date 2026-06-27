@@ -1,7 +1,7 @@
 import type { WatermarkStore } from '../state/watermarks'
 import type { ClassRollupAgg } from '../utils/log'
 import type { BridgeContext, BridgeRedeemResult, BridgeRedeemTarget } from './types'
-import { WormholescanClient } from '@fogo-onre/sdk'
+import { WormholescanClient } from '@fogo-yield/sdk'
 import { recordSeen } from '../state/watermarks'
 import { runBounded } from '../utils/concurrency'
 import { errorFields, recordErrorClass, rollupErrorClasses } from '../utils/log'

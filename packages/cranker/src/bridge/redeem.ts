@@ -1,11 +1,11 @@
-import type { NttInboxItem, ResolvedNttVaa } from '@fogo-onre/sdk'
+import type { NttInboxItem, ResolvedNttVaa } from '@fogo-yield/sdk'
 import type { BridgeContext, BridgePlan, BridgeRedeemResult, BridgeRedeemTarget } from './types'
 import {
   buildFogoNttReleaseInboundMintIx,
   buildFogoNttReleaseInboundUnlockIx,
   decodeNttInboxItem,
   resolveNttVaa,
-} from '@fogo-onre/sdk'
+} from '@fogo-yield/sdk'
 import {
   createAssociatedTokenAccountIdempotentInstruction,
   getAssociatedTokenAddressSync,

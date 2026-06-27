@@ -12,7 +12,7 @@
  * Covers BOTH directions in one table: deposit pushes the asset mint via
  * the ONyc manager, withdraw pushes the base mint via the USDC manager.
  *
- * PDA seeds mirror @fogo-onre/sdk builders/ntt.ts exactly (derived
+ * PDA seeds mirror @fogo-yield/sdk builders/ntt.ts exactly (derived
  * manually here to avoid the SDK's ESM dir-import under bare `node`).
  *
  * Usage (preview):

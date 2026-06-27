@@ -14,7 +14,7 @@ import {
   NTT_TRANSFER_LOCK_ACCOUNT_COUNT,
   NTT_USDC_PROGRAM_ID,
   nttTransferArgsHash,
-} from '@fogo-onre/sdk'
+} from '@fogo-yield/sdk'
 import { Keypair } from '@solana/web3.js'
 import { describe, expect, it } from 'vitest'
 

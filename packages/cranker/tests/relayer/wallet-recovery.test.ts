@@ -3,7 +3,7 @@ import {
   deriveUserWalletFromFogoTx,
   INTENT_TRANSFER_PROGRAM_ID,
   ONRE_INTENT_PROGRAM_ID,
-} from '@fogo-onre/sdk'
+} from '@fogo-yield/sdk'
 import { PublicKey } from '@solana/web3.js'
 import { describe, expect, it } from 'vitest'
 

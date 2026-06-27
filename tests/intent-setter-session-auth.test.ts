@@ -22,7 +22,7 @@
 
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { ONRE_INTENT_PROGRAM_ID } from '@fogo-onre/sdk'
+import { ONRE_INTENT_PROGRAM_ID } from '@fogo-yield/sdk'
 import { TOKEN_PROGRAM_ID } from '@solana/spl-token'
 import {
   Keypair,

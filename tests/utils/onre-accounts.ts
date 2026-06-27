@@ -1,6 +1,6 @@
 /**
  * Backward-compat re-exports — the canonical OnRe helpers now live in
- * `@fogo-onre/sdk` (`packages/sdk/src/onre.ts`). This file is kept so
+ * `@fogo-yield/sdk` (`packages/sdk/src/onre.ts`). This file is kept so
  * existing test imports from `tests/utils/onre-accounts` keep working
  * without churn, and so future tests can pick whichever import path they
  * prefer. Add new helpers in the SDK, not here.
@@ -20,4 +20,4 @@ export {
   ONRE_PERM_AUTHORITY_FIXTURE,
   ONRE_STATE_FIXTURE,
   ONRE_VAULT_AUTHORITY_FIXTURE,
-} from '@fogo-onre/sdk'
+} from '@fogo-yield/sdk'

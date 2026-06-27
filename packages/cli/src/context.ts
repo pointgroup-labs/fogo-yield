@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { AnchorProvider, Wallet } from '@anchor-lang/core'
-import { ONYC_MINT, RelayerClient, USDC_MINT } from '@fogo-onre/sdk'
+import { ONYC_MINT, RelayerClient, USDC_MINT } from '@fogo-yield/sdk'
 import {
   Cluster,
   clusterApiUrl,

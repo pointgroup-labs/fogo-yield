@@ -1,4 +1,4 @@
-import { WormholescanClient } from '@fogo-onre/sdk'
+import { WormholescanClient } from '@fogo-yield/sdk'
 import { withTimeout } from './rpc'
 
 export const WORMHOLE_CORE_MAINNET = 'worm2ZoG2kUd4vFXhvjh93UUH596ayRfgQ2MgjNMTth'

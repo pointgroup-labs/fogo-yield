@@ -1,6 +1,6 @@
 import type { AdvanceContext } from '../src/relayer/types'
 import type { WormholescanVaa } from '../src/wormholescan'
-import { NTT_ONYC_PROGRAM_ID, NTT_USDC_PROGRAM_ID, ONYC_MINT, USDC_MINT } from '@fogo-onre/sdk'
+import { NTT_ONYC_PROGRAM_ID, NTT_USDC_PROGRAM_ID, ONYC_MINT, USDC_MINT } from '@fogo-yield/sdk'
 import { describe, expect, it, vi } from 'vitest'
 import { makeEnumerator } from '../src/relayer/enumerate'
 import { silentLogger } from '../src/utils/log'

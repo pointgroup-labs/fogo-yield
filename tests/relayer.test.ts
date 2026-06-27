@@ -13,7 +13,7 @@ import {
   NTT_USDC_PROGRAM_ID,
   ONRE_PROGRAM_ID,
   RelayerClient,
-} from '@fogo-onre/sdk'
+} from '@fogo-yield/sdk'
 import { getAssociatedTokenAddressSync } from '@solana/spl-token'
 import { Keypair, PublicKey, Transaction, TransactionInstruction } from '@solana/web3.js'
 import {

@@ -1,4 +1,4 @@
-import { findIntentTransferSetterPda, INTENT_TRANSFER_PROGRAM_ID, ONRE_INTENT_PROGRAM_ID } from '@fogo-onre/sdk'
+import { findIntentTransferSetterPda, INTENT_TRANSFER_PROGRAM_ID, ONRE_INTENT_PROGRAM_ID } from '@fogo-yield/sdk'
 import { Keypair } from '@solana/web3.js'
 import { describe, expect, it } from 'vitest'
 import { createMetrics } from '../src/metrics'

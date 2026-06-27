@@ -1,6 +1,6 @@
 import type { AdvanceContext } from '../../src/relayer/types'
 import type { Logger } from '../../src/utils/log'
-import { REFUND_TIMEOUT_SLOTS } from '@fogo-onre/sdk'
+import { REFUND_TIMEOUT_SLOTS } from '@fogo-yield/sdk'
 import { PublicKey } from '@solana/web3.js'
 import { describe, expect, it, vi } from 'vitest'
 import { refundDue } from '../../src/relayer/refund'

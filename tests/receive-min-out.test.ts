@@ -19,7 +19,7 @@ import {
   FOGO_WORMHOLE_CHAIN_ID,
   NTT_USDC_PROGRAM_ID,
   RelayerClient,
-} from '@fogo-onre/sdk'
+} from '@fogo-yield/sdk'
 import { keccak_256 } from '@noble/hashes/sha3.js'
 import { getAssociatedTokenAddressSync, TOKEN_PROGRAM_ID } from '@solana/spl-token'
 import { Keypair, PublicKey } from '@solana/web3.js'

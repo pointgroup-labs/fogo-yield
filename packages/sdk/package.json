@@ -1,5 +1,5 @@
 {
-  "name": "@fogo-onre/sdk",
+  "name": "@fogo-yield/sdk",
   "type": "module",
   "version": "1.0.0",
   "description": "Fogo-OnRe SDK — TypeScript client",

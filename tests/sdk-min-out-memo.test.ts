@@ -18,7 +18,7 @@ import {
   MEMO_PROGRAM_ID,
   MIN_SWAP_OUT_MEMO_PREFIX,
   parseMinSwapOutMemo,
-} from '@fogo-onre/sdk'
+} from '@fogo-yield/sdk'
 import { describe, expect, it } from 'vitest'
 
 const U64_MAX = (1n << 64n) - 1n

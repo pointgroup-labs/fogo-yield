@@ -99,7 +99,7 @@ reset: clean ## clean: clean + drop node_modules (re-run 'make install' after)
 CRANKER_ENV ?= deploy/cranker/cranker.env
 
 cranker-build: ## cranker: Bundle the cranker daemon (tsup → dist/bin.js)
-	pnpm --filter @fogo-onre/cranker build
+	pnpm --filter @fogo-yield/cranker build
 
 # Source the env file with `set -a` so every var becomes an export, then
 # exec node so signals (SIGTERM/SIGINT) reach the daemon directly. Without

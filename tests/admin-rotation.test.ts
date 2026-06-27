@@ -4,7 +4,7 @@
  * be signed by the staged key.
  */
 
-import { RelayerClient } from '@fogo-onre/sdk'
+import { RelayerClient } from '@fogo-yield/sdk'
 import { Keypair } from '@solana/web3.js'
 import { LiteSVM } from 'litesvm'
 import { beforeEach, describe, expect, it } from 'vitest'

@@ -6,7 +6,7 @@
  * on-chain seed mismatch (mints from params, PDA from constructor).
  */
 
-import { findConfigPda, RelayerClient } from '@fogo-onre/sdk'
+import { findConfigPda, RelayerClient } from '@fogo-yield/sdk'
 import { Keypair } from '@solana/web3.js'
 import { describe, expect, it } from 'vitest'
 import { createProvider, createSvm } from './utils/svm'

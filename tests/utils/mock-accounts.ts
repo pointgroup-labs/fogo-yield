@@ -6,7 +6,7 @@
  */
 
 import type { LiteSVM } from 'litesvm'
-import { RELAYER_PROGRAM_ID } from '@fogo-onre/sdk'
+import { RELAYER_PROGRAM_ID } from '@fogo-yield/sdk'
 import { PublicKey } from '@solana/web3.js'
 
 // Anchor discriminator from the IDL
