@@ -11,7 +11,7 @@ export default antfu(
       markdown: 'dprint',
     },
     yaml: true,
-    react: true,
+    react: false,
     ignores: [
       '**/dist/**',
       '**/coverage/**',
