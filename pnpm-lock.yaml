@@ -92,11 +92,11 @@ importers:
         specifier: ^4.0.17
         version: 4.0.17(@wormhole-foundation/sdk-base@4.18.0)(@wormhole-foundation/sdk-definitions@4.18.0)
       '@wormhole-foundation/sdk-solana-core':
-        specifier: ^4.18.0
-        version: 4.18.0(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10)
+        specifier: ^6.1.0
+        version: 6.1.0(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10)
       '@wormhole-foundation/sdk-solana-ntt':
         specifier: ^4.0.17
-        version: 4.0.17(@wormhole-foundation/sdk-base@4.18.0)(@wormhole-foundation/sdk-definitions@4.18.0)(@wormhole-foundation/sdk-solana-core@4.18.0(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10))(@wormhole-foundation/sdk-solana@4.18.0(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10))(bufferutil@4.1.0)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@6.0.3)(utf-8-validate@5.0.10)
+        version: 4.0.17(@wormhole-foundation/sdk-base@4.18.0)(@wormhole-foundation/sdk-definitions@4.18.0)(@wormhole-foundation/sdk-solana-core@6.1.0(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10))(@wormhole-foundation/sdk-solana@6.1.0(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10))(bufferutil@4.1.0)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@6.0.3)(utf-8-validate@5.0.10)
       chalk:
         specifier: ^5.6.2
         version: 5.6.2
@@ -133,10 +133,10 @@ importers:
         version: 4.18.0
       '@wormhole-foundation/sdk-definitions-ntt':
         specifier: ^4.0.17
-        version: 4.0.17(@wormhole-foundation/sdk-base@4.18.0)(@wormhole-foundation/sdk-definitions@4.18.0)
+        version: 4.0.17(@wormhole-foundation/sdk-base@6.1.0)(@wormhole-foundation/sdk-definitions@4.18.0)
       '@wormhole-foundation/sdk-solana-ntt':
         specifier: ^4.0.17
-        version: 4.0.17(@wormhole-foundation/sdk-base@4.18.0)(@wormhole-foundation/sdk-definitions@4.18.0)(@wormhole-foundation/sdk-solana-core@4.18.0(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10))(@wormhole-foundation/sdk-solana@4.18.0(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10))(bufferutil@4.1.0)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@6.0.3)(utf-8-validate@5.0.10)
+        version: 4.0.17(@wormhole-foundation/sdk-base@6.1.0)(@wormhole-foundation/sdk-definitions@4.18.0)(@wormhole-foundation/sdk-solana-core@6.1.0(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10))(@wormhole-foundation/sdk-solana@6.1.0(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10))(bufferutil@4.1.0)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@6.0.3)(utf-8-validate@5.0.10)
       prom-client:
         specifier: ^15.1.3
         version: 15.1.3
@@ -1785,9 +1785,12 @@ packages:
   '@wormhole-foundation/sdk-base@4.18.0':
     resolution: {integrity: sha512-KTFsuba2IggaS4e8asHUsvhWTTlPYWRS7Ww8zBtQXZ17FDHb+9ByBZNz4pakQeWjoZoHK10QgHmTSLjlSp+GVA==}
 
-  '@wormhole-foundation/sdk-connect@4.18.0':
-    resolution: {integrity: sha512-0n+wslxvipy71tNTQAJ94dZPOrqz9BvcHZLSnmzDkshGcPQhK3B2to2jdh5HHvDPbIqrbhQfYh0hWpu9TxgMwQ==}
-    engines: {node: '>=16'}
+  '@wormhole-foundation/sdk-base@6.1.0':
+    resolution: {integrity: sha512-4CWdJjT5irczgSpaok9SuOXLoBeHj769COYOpdsVpUJTapWTI8ZRNpTjtZ/OM/CfczLjnucx/brlWn3h0qyAiA==}
+
+  '@wormhole-foundation/sdk-connect@6.1.0':
+    resolution: {integrity: sha512-twr+OjH7m8bBNcfZzhHVoMUGnc5jZt1Ro189z3o59YOShlZIrhwsasuS5tmwa3eZz0DUN4v9+TZdEHxnNPz+Rw==}
+    engines: {node: '>=20.19'}
 
   '@wormhole-foundation/sdk-definitions-ntt@4.0.17':
     resolution: {integrity: sha512-fQH4Pt2KOYR9L/vUfj47ifwKxDKPtJWt8GxlmQmY317GeM6nUxSqvBedPaEmHbQFrDsWruEa9MTQINIMFbE/8w==}
@@ -1798,9 +1801,12 @@ packages:
   '@wormhole-foundation/sdk-definitions@4.18.0':
     resolution: {integrity: sha512-Zyzk1SVoGjUwWqXSt2W5NJkaB1nkNALb5qsaJUxVxFJ090t2VmTv2TXTgTKCgmgeAB+QK30TV4RzSfMeoFr4aA==}
 
-  '@wormhole-foundation/sdk-solana-core@4.18.0':
-    resolution: {integrity: sha512-I9hwUhDQxTbOtdYOWjM52qjoVvV6RHWSHyKR/48gO6z8OAs+5hzYJ5paU2Mc0cBdeuWol6KsPiW51MiyYBcXjg==}
-    engines: {node: '>=16'}
+  '@wormhole-foundation/sdk-definitions@6.1.0':
+    resolution: {integrity: sha512-xIyKkQZGjWPvHZbFG9XlVAhsjzpsA9g7+Pifd+l308dtWEM8xW4fCIOPyIWETYDNTUx4FIfYGhWTnEwJmupTww==}
+
+  '@wormhole-foundation/sdk-solana-core@6.1.0':
+    resolution: {integrity: sha512-fQRh5ur4bph6AQHy1xxMRfVirgWhSuzlXMbDZ40GDvUv8+hUikLRph2OSDyHT4fQtGbSmwYWBQ55zQsRZ/D48g==}
+    engines: {node: '>=20.19'}
 
   '@wormhole-foundation/sdk-solana-ntt@4.0.17':
     resolution: {integrity: sha512-nVIJ4GBz8WJotOSq+SWgikyMiD1Xf51TIh/hlDzN9aXFlnMW++cp+y/VOZH1RHnRLfEgSU5IX/0g5hASgIivfw==}
@@ -1811,9 +1817,9 @@ packages:
       '@wormhole-foundation/sdk-solana': ^4.12.2
       '@wormhole-foundation/sdk-solana-core': ^4.12.2
 
-  '@wormhole-foundation/sdk-solana@4.18.0':
-    resolution: {integrity: sha512-p5OuTg0vFTfpqgLz/5JZ45A2dM8dK4c/mqXXyxbakeF4F78y6NAcuof+NtpLmrmSX8QAna1VuIzQ+rieIDqwHg==}
-    engines: {node: '>=16'}
+  '@wormhole-foundation/sdk-solana@6.1.0':
+    resolution: {integrity: sha512-k952Iqcy3swbPKJ+jMulS7hJVY2xQbFbCZzQkLpq+sxxjCtZO71uES5ZR3+zdu2Huf4kAy2vuNo5vcizGw6yaQ==}
+    engines: {node: '>=20.19'}
 
   acorn-jsx@5.3.2:
     resolution: {integrity: sha512-rq9s+JNhf0IChjtDXxllJ7g41oZk5SlXtp0LHwyA5cejwn7vKmKp4pPri6YEePv2PU65sAsegbXtIinmDFDXgQ==}
@@ -1824,6 +1830,10 @@ packages:
     resolution: {integrity: sha512-UVJyE9MttOsBQIDKw1skb9nAwQuR5wuGD3+82K6JgJlm/Y+KI92oNsMNGZCYdDsVtRHSak0pcV5Dno5+4jh9sw==}
     engines: {node: '>=0.4.0'}
     hasBin: true
+
+  agent-base@6.0.2:
+    resolution: {integrity: sha512-RZNwNclF7+MS/8bDg70amg32dyeZGZxiDuQmZxKLAlQjr3jGyLx+4Kkk58UO7D2QdgFIQCovuSuZESne6RG6XQ==}
+    engines: {node: '>= 6.0.0'}
 
   agentkeepalive@4.6.0:
     resolution: {integrity: sha512-kja8j7PjmncONqaTsB8fQ+wE2mSU2DJ9D4XKoJ5PFWIdRMa6SLSN1ff4mOr4jCbfRSsxR4keIiySJU0N9T5hIQ==}
@@ -1857,8 +1867,8 @@ packages:
   asynckit@0.4.0:
     resolution: {integrity: sha512-Oei9OH4tRh0YqU3GxhX79dM/mwVgvbZJaSNaRk+bshkj0S5cfHcgYakreBjrHwatXKbz+IoIdYLxrKim2MjW0Q==}
 
-  axios@1.16.0:
-    resolution: {integrity: sha512-6hp5CwvTPlN2A31g5dxnwAX0orzM7pmCRDLnZSX772mv8WDqICwFjowHuPs04Mc8deIld1+ejhtaMn5vp6b+1w==}
+  axios@1.18.1:
+    resolution: {integrity: sha512-3nTvFlvpn9Zu/RkHUqtc7/+al4UpRW5az71ap5zccp6e8RAYEzhMTecX8Dz1wWDYrPpUoB1HAQEGEAEvUr7S9g==}
 
   balanced-match@4.0.4:
     resolution: {integrity: sha512-BLrgEcRTwX2o6gGxGOCNyMvGSp35YofuYzw9h1IMTRmKqttAZZVU67bdb9Pr2vUHA8+j3i2tJfjO6C6+4myGTA==}
@@ -1904,6 +1914,9 @@ packages:
 
   bn.js@5.2.3:
     resolution: {integrity: sha512-EAcmnPkxpntVL+DS7bO1zhcZNvCkxqtkd0ZY53h06GNQ3DEkkGZ/gKgmDv6DdZQGj9BgfSPKtJJ7Dp1GPP8f7w==}
+
+  bn.js@5.2.4:
+    resolution: {integrity: sha512-QL7sb18rJ1PbdsKsqPA0guxL563vIMwRHgzNrW/uzQuRGN1Cjqd/wonUBAVqHox9KwzHA6vCbM0lXx3k4iQMow==}
 
   boolbase@1.0.0:
     resolution: {integrity: sha512-JZOSA7Mo9sNGB8+UjSgzdLtokWAky1zbztM3WRLCbZ70/3cTANmQmOdR7y2g+J0e2WXywy1yS468tY+IruqEww==}
@@ -2152,8 +2165,8 @@ packages:
   es-module-lexer@2.0.0:
     resolution: {integrity: sha512-5POEcUuZybH7IdmGsD8wlf0AI55wMecM9rVBTI/qEAy2c1kTOm3DjFYjrBdI2K3BaJjJYfYFeRtM0t9ssnRuxw==}
 
-  es-object-atoms@1.1.1:
-    resolution: {integrity: sha512-FGgH2h8zKNim9ljj7dankFPcICIK9Cp5bm+c2gQSYePhpaG5+esrLODihIorn+Pe6FGJzWhXQotPv73jTaldXA==}
+  es-object-atoms@1.1.2:
+    resolution: {integrity: sha512-HWcBoN6NileqtSydK2FqHbS/LoDd2pqrnQHLyJzBj4kOp/ky2MWMN694xOfkK8/SnUsW2DH7EfyVlydKCsm1Zw==}
     engines: {node: '>= 0.4'}
 
   es-set-tostringtag@2.1.0:
@@ -2490,8 +2503,8 @@ packages:
       debug:
         optional: true
 
-  form-data@4.0.5:
-    resolution: {integrity: sha512-8RipRLol37bNs2bhoV67fiTEvdTrbMUYcFTiy3+wuuOnUog2QBHCZWXDRijWQfAkhBj2Uf5UnVaiWwA5vdd82w==}
+  form-data@4.0.6:
+    resolution: {integrity: sha512-vKatAh4SlVfgbv+YtmhiRjhEMJsYpsG1Y2rMQtR+SVSbytsSD1YGzDIcrAJmdFec88u/+VoGmxnl+80gL1tRCQ==}
     engines: {node: '>= 6'}
 
   format@0.2.2:
@@ -2554,12 +2567,16 @@ packages:
     resolution: {integrity: sha512-NqADB8VjPFLM2V0VvHUewwwsw0ZWBaIdgo+ieHtK3hasLz4qeCRjYcqfB6AQrBggRKppKF8L52/VqdVsO47Dlw==}
     engines: {node: '>= 0.4'}
 
-  hasown@2.0.3:
-    resolution: {integrity: sha512-ej4AhfhfL2Q2zpMmLo7U1Uv9+PyhIZpgQLGT1F9miIGmiCJIoCgSmczFdrc97mWT4kVY72KA+WnnhJ5pghSvSg==}
+  hasown@2.0.4:
+    resolution: {integrity: sha512-T2UbfbBEF32wiepXIsMlTW9+dDYC6wMh/t/vYA4tuOMKqWz/n3vr1NFSxQiyP+zk2mXsoMA/i/7qV6LKut1t1A==}
     engines: {node: '>= 0.4'}
 
   html-entities@2.6.0:
     resolution: {integrity: sha512-kig+rMn/QOVRvr7c86gQ8lWXq+Hkv6CbAH1hLu+RG338StTpE8Z0b44SDVaqVu7HGKf27frdmUYEs9hTUX/cLQ==}
+
+  https-proxy-agent@5.0.1:
+    resolution: {integrity: sha512-dFcAjpTQFgoLMzC2VwU+C/CbS7uRL0lWmxDITmqm7C+7F0Odmj6s9l6alZc6AELXhrnggM2CeWSXHGOdX2YtwA==}
+    engines: {node: '>= 6'}
 
   humanize-ms@1.2.1:
     resolution: {integrity: sha512-Fl70vYtsAFb/C06PTS9dZBo7ihau+Tu/DNCk/OyHhea07S+aeMWpFFkUaXRa8fI+ScZbEI8dfSxwY7gxZ9SAVQ==}
@@ -3075,6 +3092,9 @@ packages:
 
   pako@2.1.0:
     resolution: {integrity: sha512-w+eufiZ1WuJYgPXbV/PO3NCMEc3xqylkKHzp8bxp1uW4qaSNQUkwmLLEc3kKsfz8lpV1F8Ht3U1Cm+9Srog2ug==}
+
+  pako@2.2.0:
+    resolution: {integrity: sha512-zJq6RP/5q+TO2OpFV3FHzlPnFjmkb7Nc99a5SNjJE+uu/PkpChs+NIZSSzbBoD+6kjiISXjfYdwj1ZRQ81dz/w==}
 
   parse-gitignore@2.0.0:
     resolution: {integrity: sha512-RmVuCHWsfu0QPNW+mraxh/xjQVw/lhUCUru8Zni3Ctq3AoMhpDTq0OVdKS6iesd6Kqb7viCV3isAL43dciOSog==}
@@ -3816,14 +3836,14 @@ snapshots:
       '@coral-xyz/borsh': 0.29.0(@solana/web3.js@1.98.4(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10))
       '@noble/hashes': 1.8.0
       '@solana/web3.js': 1.98.4(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10)
-      bn.js: 5.2.3
+      bn.js: 5.2.4
       bs58: 4.0.1
       buffer-layout: 1.2.2
       camelcase: 6.3.0
       cross-fetch: 3.2.0
       crypto-hash: 1.3.0
       eventemitter3: 4.0.7
-      pako: 2.1.0
+      pako: 2.2.0
       snake-case: 3.0.4
       superstruct: 0.15.5
       toml: 3.0.0
@@ -3857,7 +3877,7 @@ snapshots:
   '@coral-xyz/borsh@0.29.0(@solana/web3.js@1.98.4(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10))':
     dependencies:
       '@solana/web3.js': 1.98.4(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10)
-      bn.js: 5.2.3
+      bn.js: 5.2.4
       buffer-layout: 1.2.2
 
   '@coral-xyz/borsh@0.31.1(@solana/web3.js@1.98.4(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@6.0.6))':
@@ -5430,17 +5450,28 @@ snapshots:
       '@scure/base': 1.2.6
       binary-layout: 1.3.2
 
-  '@wormhole-foundation/sdk-connect@4.18.0':
+  '@wormhole-foundation/sdk-base@6.1.0':
     dependencies:
-      '@wormhole-foundation/sdk-base': 4.18.0
-      '@wormhole-foundation/sdk-definitions': 4.18.0
-      axios: 1.16.0
+      '@scure/base': 1.2.6
+      binary-layout: 1.3.2
+
+  '@wormhole-foundation/sdk-connect@6.1.0':
+    dependencies:
+      '@wormhole-foundation/sdk-base': 6.1.0
+      '@wormhole-foundation/sdk-definitions': 6.1.0
+      axios: 1.18.1
     transitivePeerDependencies:
       - debug
+      - supports-color
 
   '@wormhole-foundation/sdk-definitions-ntt@4.0.17(@wormhole-foundation/sdk-base@4.18.0)(@wormhole-foundation/sdk-definitions@4.18.0)':
     dependencies:
       '@wormhole-foundation/sdk-base': 4.18.0
+      '@wormhole-foundation/sdk-definitions': 4.18.0
+
+  '@wormhole-foundation/sdk-definitions-ntt@4.0.17(@wormhole-foundation/sdk-base@6.1.0)(@wormhole-foundation/sdk-definitions@4.18.0)':
+    dependencies:
+      '@wormhole-foundation/sdk-base': 6.1.0
       '@wormhole-foundation/sdk-definitions': 4.18.0
 
   '@wormhole-foundation/sdk-definitions@4.18.0':
@@ -5449,21 +5480,28 @@ snapshots:
       '@noble/hashes': 1.8.0
       '@wormhole-foundation/sdk-base': 4.18.0
 
-  '@wormhole-foundation/sdk-solana-core@4.18.0(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10)':
+  '@wormhole-foundation/sdk-definitions@6.1.0':
+    dependencies:
+      '@noble/curves': 1.9.7
+      '@noble/hashes': 1.8.0
+      '@wormhole-foundation/sdk-base': 6.1.0
+
+  '@wormhole-foundation/sdk-solana-core@6.1.0(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10)':
     dependencies:
       '@coral-xyz/anchor': 0.29.0(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10)
       '@coral-xyz/borsh': 0.29.0(@solana/web3.js@1.98.4(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10))
       '@solana/web3.js': 1.98.4(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10)
-      '@wormhole-foundation/sdk-connect': 4.18.0
-      '@wormhole-foundation/sdk-solana': 4.18.0(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10)
+      '@wormhole-foundation/sdk-connect': 6.1.0
+      '@wormhole-foundation/sdk-solana': 6.1.0(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10)
     transitivePeerDependencies:
       - bufferutil
       - debug
       - encoding
+      - supports-color
       - typescript
       - utf-8-validate
 
-  '@wormhole-foundation/sdk-solana-ntt@4.0.17(@wormhole-foundation/sdk-base@4.18.0)(@wormhole-foundation/sdk-definitions@4.18.0)(@wormhole-foundation/sdk-solana-core@4.18.0(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10))(@wormhole-foundation/sdk-solana@4.18.0(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10))(bufferutil@4.1.0)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@6.0.3)(utf-8-validate@5.0.10)':
+  '@wormhole-foundation/sdk-solana-ntt@4.0.17(@wormhole-foundation/sdk-base@4.18.0)(@wormhole-foundation/sdk-definitions@4.18.0)(@wormhole-foundation/sdk-solana-core@6.1.0(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10))(@wormhole-foundation/sdk-solana@6.1.0(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10))(bufferutil@4.1.0)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@6.0.3)(utf-8-validate@5.0.10)':
     dependencies:
       '@coral-xyz/anchor': 0.29.0(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10)
       '@coral-xyz/borsh': 0.29.0(@solana/web3.js@1.98.4(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10))
@@ -5472,8 +5510,8 @@ snapshots:
       '@wormhole-foundation/sdk-base': 4.18.0
       '@wormhole-foundation/sdk-definitions': 4.18.0
       '@wormhole-foundation/sdk-definitions-ntt': 4.0.17(@wormhole-foundation/sdk-base@4.18.0)(@wormhole-foundation/sdk-definitions@4.18.0)
-      '@wormhole-foundation/sdk-solana': 4.18.0(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10)
-      '@wormhole-foundation/sdk-solana-core': 4.18.0(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10)
+      '@wormhole-foundation/sdk-solana': 6.1.0(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10)
+      '@wormhole-foundation/sdk-solana-core': 6.1.0(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10)
       bn.js: 5.2.1
     transitivePeerDependencies:
       - bufferutil
@@ -5482,18 +5520,38 @@ snapshots:
       - typescript
       - utf-8-validate
 
-  '@wormhole-foundation/sdk-solana@4.18.0(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10)':
+  '@wormhole-foundation/sdk-solana-ntt@4.0.17(@wormhole-foundation/sdk-base@6.1.0)(@wormhole-foundation/sdk-definitions@4.18.0)(@wormhole-foundation/sdk-solana-core@6.1.0(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10))(@wormhole-foundation/sdk-solana@6.1.0(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10))(bufferutil@4.1.0)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@6.0.3)(utf-8-validate@5.0.10)':
+    dependencies:
+      '@coral-xyz/anchor': 0.29.0(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10)
+      '@coral-xyz/borsh': 0.29.0(@solana/web3.js@1.98.4(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10))
+      '@solana/spl-token': 0.4.0(@solana/web3.js@1.98.4(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10))(bufferutil@4.1.0)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@6.0.3)(utf-8-validate@5.0.10)
+      '@solana/web3.js': 1.98.4(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10)
+      '@wormhole-foundation/sdk-base': 6.1.0
+      '@wormhole-foundation/sdk-definitions': 4.18.0
+      '@wormhole-foundation/sdk-definitions-ntt': 4.0.17(@wormhole-foundation/sdk-base@6.1.0)(@wormhole-foundation/sdk-definitions@4.18.0)
+      '@wormhole-foundation/sdk-solana': 6.1.0(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10)
+      '@wormhole-foundation/sdk-solana-core': 6.1.0(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10)
+      bn.js: 5.2.1
+    transitivePeerDependencies:
+      - bufferutil
+      - encoding
+      - fastestsmallesttextencoderdecoder
+      - typescript
+      - utf-8-validate
+
+  '@wormhole-foundation/sdk-solana@6.1.0(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10)':
     dependencies:
       '@coral-xyz/anchor': 0.29.0(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10)
       '@coral-xyz/borsh': 0.29.0(@solana/web3.js@1.98.4(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10))
       '@solana/spl-token': 0.3.9(@solana/web3.js@1.98.4(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10))(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10)
       '@solana/web3.js': 1.98.4(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10)
-      '@wormhole-foundation/sdk-connect': 4.18.0
+      '@wormhole-foundation/sdk-connect': 6.1.0
       rpc-websockets: 7.11.2
     transitivePeerDependencies:
       - bufferutil
       - debug
       - encoding
+      - supports-color
       - typescript
       - utf-8-validate
 
@@ -5502,6 +5560,12 @@ snapshots:
       acorn: 8.16.0
 
   acorn@8.16.0: {}
+
+  agent-base@6.0.2:
+    dependencies:
+      debug: 4.4.3
+    transitivePeerDependencies:
+      - supports-color
 
   agentkeepalive@4.6.0:
     dependencies:
@@ -5543,13 +5607,15 @@ snapshots:
 
   asynckit@0.4.0: {}
 
-  axios@1.16.0:
+  axios@1.18.1:
     dependencies:
       follow-redirects: 1.16.0
-      form-data: 4.0.5
+      form-data: 4.0.6
+      https-proxy-agent: 5.0.1
       proxy-from-env: 2.1.0
     transitivePeerDependencies:
       - debug
+      - supports-color
 
   balanced-match@4.0.4: {}
 
@@ -5582,6 +5648,8 @@ snapshots:
   bn.js@5.2.1: {}
 
   bn.js@5.2.3: {}
+
+  bn.js@5.2.4: {}
 
   boolbase@1.0.0: {}
 
@@ -5779,7 +5847,7 @@ snapshots:
 
   es-module-lexer@2.0.0: {}
 
-  es-object-atoms@1.1.1:
+  es-object-atoms@1.1.2:
     dependencies:
       es-errors: 1.3.0
 
@@ -5788,7 +5856,7 @@ snapshots:
       es-errors: 1.3.0
       get-intrinsic: 1.3.0
       has-tostringtag: 1.0.2
-      hasown: 2.0.3
+      hasown: 2.0.4
 
   es6-promise@4.2.8: {}
 
@@ -6194,12 +6262,12 @@ snapshots:
 
   follow-redirects@1.16.0: {}
 
-  form-data@4.0.5:
+  form-data@4.0.6:
     dependencies:
       asynckit: 0.4.0
       combined-stream: 1.0.8
       es-set-tostringtag: 2.1.0
-      hasown: 2.0.3
+      hasown: 2.0.4
       mime-types: 2.1.35
 
   format@0.2.2: {}
@@ -6214,18 +6282,18 @@ snapshots:
       call-bind-apply-helpers: 1.0.2
       es-define-property: 1.0.1
       es-errors: 1.3.0
-      es-object-atoms: 1.1.1
+      es-object-atoms: 1.1.2
       function-bind: 1.1.2
       get-proto: 1.0.1
       gopd: 1.2.0
       has-symbols: 1.1.0
-      hasown: 2.0.3
+      hasown: 2.0.4
       math-intrinsics: 1.1.0
 
   get-proto@1.0.1:
     dependencies:
       dunder-proto: 1.0.1
-      es-object-atoms: 1.1.1
+      es-object-atoms: 1.1.2
 
   get-tsconfig@4.13.7:
     dependencies:
@@ -6255,11 +6323,18 @@ snapshots:
     dependencies:
       has-symbols: 1.1.0
 
-  hasown@2.0.3:
+  hasown@2.0.4:
     dependencies:
       function-bind: 1.1.2
 
   html-entities@2.6.0: {}
+
+  https-proxy-agent@5.0.1:
+    dependencies:
+      agent-base: 6.0.2
+      debug: 4.4.3
+    transitivePeerDependencies:
+      - supports-color
 
   humanize-ms@1.2.1:
     dependencies:
@@ -6954,6 +7029,8 @@ snapshots:
 
   pako@2.1.0: {}
 
+  pako@2.2.0: {}
+
   parse-gitignore@2.0.0: {}
 
   parse-imports-exports@0.2.4:
@@ -7109,7 +7186,7 @@ snapshots:
     dependencies:
       eventemitter3: 4.0.7
       uuid: 8.3.2
-      ws: 8.20.0(bufferutil@4.1.0)(utf-8-validate@5.0.10)
+      ws: 8.21.0(bufferutil@4.1.0)(utf-8-validate@5.0.10)
     optionalDependencies:
       bufferutil: 4.1.0
       utf-8-validate: 5.0.10
@@ -7463,15 +7540,15 @@ snapshots:
       bufferutil: 4.1.0
       utf-8-validate: 6.0.6
 
-  ws@8.20.0(bufferutil@4.1.0)(utf-8-validate@5.0.10):
-    optionalDependencies:
-      bufferutil: 4.1.0
-      utf-8-validate: 5.0.10
-
   ws@8.20.0(bufferutil@4.1.0)(utf-8-validate@6.0.6):
     optionalDependencies:
       bufferutil: 4.1.0
       utf-8-validate: 6.0.6
+
+  ws@8.21.0(bufferutil@4.1.0)(utf-8-validate@5.0.10):
+    optionalDependencies:
+      bufferutil: 4.1.0
+      utf-8-validate: 5.0.10
 
   ws@8.21.0(bufferutil@4.1.0)(utf-8-validate@6.0.6):
     optionalDependencies:
