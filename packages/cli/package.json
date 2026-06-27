@@ -20,7 +20,7 @@
     "@noble/hashes": "^2.2.0",
     "@solana/spl-token": "^0.4.13",
     "@solana/web3.js": "^1.98.4",
-    "@wormhole-foundation/sdk-base": "^4.18.0",
+    "@wormhole-foundation/sdk-base": "^6.1.1",
     "@wormhole-foundation/sdk-definitions": "^4.18.0",
     "@wormhole-foundation/sdk-definitions-ntt": "^4.0.17",
     "@wormhole-foundation/sdk-solana-core": "^6.1.0",
