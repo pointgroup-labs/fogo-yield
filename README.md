@@ -1,7 +1,7 @@
 # Fogo Yield
 
 [![FOGO](https://img.shields.io/badge/FOGO-grey?logo=lightning&style=for-the-badge)](https://fogo.io)
-[![npm](https://img.shields.io/npm/v/@ignitionfi/fogo-onre?logo=npm&logoColor=white&style=for-the-badge)](https://www.npmjs.com/package/@ignitionfi/fogo-onre)
+[![npm](https://img.shields.io/npm/v/@ignitionfi/fogo-yield?logo=npm&logoColor=white&style=for-the-badge)](https://www.npmjs.com/package/@ignitionfi/fogo-yield))
 [![CI](https://img.shields.io/github/actions/workflow/status/pointgroup-labs/fogo-onre/ci.yml?logo=githubactions&logoColor=white&style=for-the-badge&label=CI)](https://github.com/pointgroup-labs/fogo-onre/actions/workflows/ci.yml)
 
 A **universal cross-chain yield layer** for FOGO. Deposit a base asset and
@@ -41,7 +41,7 @@ is the same three-step pipeline, driven by three permissionless relayer
 instructions:
 
 | Step       | Instruction | Deposit                           | Redeem                             |
-| ---------- | ----------- | --------------------------------- | ---------------------------------- |
+|------------|-------------|-----------------------------------|------------------------------------|
 | 1. Receive | `receive`   | claim inbound base from NTT       | claim inbound yield asset from NTT |
 | 2. Swap    | `swap`      | base → yield asset                | yield asset → base                 |
 | 3. Send    | `send`      | NTT-send yield asset back to FOGO | NTT-send base back to FOGO         |
@@ -73,14 +73,14 @@ are listed in [`docs/architecture.md`](./docs/architecture.md). Confirm deploy
 status on-chain before assuming any cluster is live.
 
 | Program                  | Chain  | ID                                            |
-| ------------------------ | ------ | --------------------------------------------- |
+|--------------------------|--------|-----------------------------------------------|
 | Relayer                  | Solana | `onrenRKgX54qtWeK3cuaTBE71xx7dWMXn82ubH61vAp` |
 | `intent_transfer` (fork) | FOGO   | `inTFf5S7ZtYr8SkwGG85mjDwAyJwjqEPdH2p2nuyrL9` |
 
 ## Components
 
 | Path                        | Description                                                                                |
-| --------------------------- | ------------------------------------------------------------------------------------------ |
+|-----------------------------|--------------------------------------------------------------------------------------------|
 | `programs/relayer/`         | Anchor program (Rust) — the asset-agnostic Solana relayer.                                 |
 | `programs/intent-transfer/` | First-party fork of FOGO's intent_transfer entry, with reviewed edits; workspace-excluded. |
 | `packages/sdk/`             | TypeScript SDK (`@fogo-yield/sdk`): client + builders.                                     |
