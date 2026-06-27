@@ -1,15 +1,15 @@
 /**
- * Client-side swap-floor (`min_out`) computation — the value the user signs
- * and the relayer enforces in `swap` (`out_received >= flow.min_swap_out`).
- *
- * The floor MUST match the on-chain basis exactly or an honest swap reverts:
+ * Client-side swap-floor (`min_out`) computation — the value the user signs;
+ * the relayer's ONLY on-chain check is the flat floor in `swap`
+ * (`out_received >= flow.min_swap_out`). The NAV math below is just to pick a
+ * sensible floor, not an on-chain enforcement mirror:
  *   - it is computed against the NTT POST-TRIM input (spec §10/G2), so the
  *     caller passes `postTrimInAmount` (use `applyNttTrim`), not the raw UI
  *     amount;
- *   - deposit floors the GROSS OnRe output (the deposit fee is skimmed AFTER
- *     the check on-chain), so the deposit fee is NOT subtracted here;
- *   - withdraw floors USDC out for the NET ONyc input (the withdraw fee is
- *     taken from the input BEFORE the swap), so the fee is subtracted first.
+ *   - deposit floors the GROSS OnRe output (the relayer skims the deposit fee
+ *     after the swap), so the deposit fee is NOT subtracted here;
+ *   - withdraw floors USDC out for the NET ONyc input (the relayer takes the
+ *     withdraw fee from the input before the swap), so the fee is subtracted.
  *
  * The slippage haircut covers venue execution (OnRe `take_offer` fee /
  * Jupiter) + market drift; too tight just reverts on-chain (fail-safe).
@@ -62,9 +62,9 @@ export interface ComputeMinSwapOutParams {
 
 /**
  * Compute the user-signed swap floor in output-token atomic units (ONyc for
- * deposit, USDC for withdraw). Reuses the OnRe NAV mirrors so the preview
- * matches the on-chain floor. Throws on a bad slippage / non-positive input,
- * or a zero computed floor (on-chain `receive` rejects min_swap_out == 0).
+ * deposit, USDC for withdraw). Uses the OnRe NAV mirrors to derive a sensible
+ * floor. Throws on a bad slippage / non-positive input, or a zero computed
+ * floor (on-chain `receive` rejects min_swap_out == 0).
  */
 export function computeMinSwapOut(params: ComputeMinSwapOutParams): bigint {
   const { direction, postTrimInAmount, offerData, nowUnix, baseDecimals, onycDecimals, slippageBps } = params

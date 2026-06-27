@@ -1,13 +1,14 @@
 /**
- * TS mirror of OnRe NAV math + Offer-account byte layout. Consumers use it
- * to preview the OnRe execution price feeding `computeMinSwapOut` (the
- * user-signed swap floor); it is no longer an on-chain enforcement mirror.
+ * TS mirror of OnRe's issuer NAV math + Offer-account byte layout. Consumers
+ * use it to compute the OnRe execution price feeding `computeMinSwapOut` (the
+ * user-signed swap floor). The relayer enforces only the flat `min_swap_out`
+ * floor on-chain — this is NOT an on-chain enforcement mirror.
  *
  * `bigint` (not Number): intermediate products exceed 2^53 and would lose
  * precision in IEEE-754. Throws (not Result): callers wrap in try/catch.
  */
 
-// Pinned constants — mirror `programs/relayer/src/constants.rs:135-147`.
+// Pinned constants — mirror OnRe's issuer `Offer` account layout.
 export const ONRE_OFFER_ACCOUNT_SIZE = 608
 export const ONRE_OFFER_VECTORS_OFFSET = 72
 export const ONRE_OFFER_VECTOR_SIZE = 40
@@ -34,8 +35,8 @@ function asU64(x: bigint, label: string): bigint {
 }
 
 /**
- * Mirror of `redemption_expected_out`. Returns gross USDC for a
- * `tokenInAmount` of ONyc at `price` (1e9 fixed-point). Mirrors OnRe's
+ * Mirror of OnRe's `redemption_expected_out`. Returns gross USDC for a
+ * `tokenInAmount` of ONyc at `price` (1e9 fixed-point). This is OnRe's
  * pre-fee output; the relayer takes its withdraw fee elsewhere.
  */
 export function redemptionExpectedOut(
@@ -52,9 +53,9 @@ export function redemptionExpectedOut(
 }
 
 /**
- * Mirror of `deposit_expected_out` (USDC in → ONyc out), the algebraic
- * inverse of `redemptionExpectedOut`. Lets the cranker/webapp preview the
- * deposit-leg NAV floor that `swap` enforces on-chain.
+ * Mirror of OnRe's `deposit_expected_out` (USDC in → ONyc out), the
+ * algebraic inverse of `redemptionExpectedOut`. Lets the cranker/webapp
+ * preview the deposit-leg OnRe execution price for the swap floor.
  */
 export function depositExpectedOut(
   usdcInAmount: bigint,
@@ -73,7 +74,7 @@ export function depositExpectedOut(
 }
 
 /**
- * Mirror of `parse_active_offer_vector`. Picks the vector with the
+ * Mirror of OnRe's `parse_active_offer_vector`. Picks the vector with the
  * largest `start_time` satisfying `start_time != 0 && start_time <= now`.
  * Iterates exactly `ONRE_OFFER_MAX_VECTORS` slots.
  */
@@ -106,9 +107,9 @@ export function parseActiveOfferVector(data: Uint8Array, now: bigint): OnreOffer
 }
 
 /**
- * Mirror of `calculate_step_price`. Snaps to the END of the current
- * discrete step — must match `swap`'s on-chain snap
- * exactly, or cranker preview and on-chain handler diverge.
+ * Mirror of OnRe's `calculate_step_price`. Snaps to the END of the current
+ * discrete step — must match OnRe's issuer snap exactly, or the computed
+ * floor diverges from the price the venue executes at.
  */
 export function calculateStepPrice(v: OnreOfferVector, now: bigint): bigint {
   if (v.base_time > now) {
