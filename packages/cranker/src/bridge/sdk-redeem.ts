@@ -242,12 +242,14 @@ export async function executeSdkBundledRedeem(
       if (isVersionedTransaction(inner)) {
         inner.sign([target.destSigner, ...extraSigners])
         const raw = inner.serialize()
+        // Fetch the validity window BEFORE send: a blockhash fetched after
+        // the send is the wrong window (later than the tx's own blockhash).
+        const latest = await target.destConnection.getLatestBlockhash('confirmed')
         sig = await withTimeout(
           target.destConnection.sendRawTransaction(raw, { skipPreflight: false }),
           ctx.txConfirmTimeoutMs,
           `dest.sendRawTransaction(sdk-redeem:${description})`,
         )
-        const latest = await target.destConnection.getLatestBlockhash('confirmed')
         await withTimeout(
           target.destConnection.confirmTransaction(
             { signature: sig, blockhash: latest.blockhash, lastValidBlockHeight: latest.lastValidBlockHeight },

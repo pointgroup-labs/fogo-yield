@@ -352,12 +352,14 @@ export async function prepareTransceiverMessage(
         // under pnpm — see `isVersionedTransaction` for the rationale.
         if (isVersionedTransaction(inner)) {
           inner.sign([payer, ...extraSigners])
+          // Fetch the validity window BEFORE send: a blockhash fetched after
+          // the send is the wrong window (later than the tx's own blockhash).
+          const bh = await connection.getLatestBlockhash('confirmed')
           sig = await withTimeout(
             connection.sendRawTransaction(inner.serialize(), { skipPreflight: false }),
             txConfirmTimeoutMs,
             'sendRawTransaction(core.postVaa step)',
           )
-          const bh = await connection.getLatestBlockhash('confirmed')
           await withTimeout(
             connection.confirmTransaction(
               { signature: sig, blockhash: bh.blockhash, lastValidBlockHeight: bh.lastValidBlockHeight },
