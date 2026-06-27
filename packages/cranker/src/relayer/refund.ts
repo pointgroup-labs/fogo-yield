@@ -19,18 +19,13 @@ import {
   REFUND_TIMEOUT_SLOTS,
   resolveNttVaa,
 } from '@fogo-yield/sdk'
-import { Keypair, PublicKey, SystemProgram, TransactionMessage, VersionedTransaction } from '@solana/web3.js'
+import { Keypair, PublicKey, TransactionMessage, VersionedTransaction } from '@solana/web3.js'
 import { makePriorityFeeIx } from '../utils/priority-fee'
 import { DEFAULT_NTT_VERSION, fetchVaaBytes, WORMHOLE_CORE_MAINNET } from '../utils/wormhole'
 import { fetchFlowFor } from './flow-fetch'
 import { isLostRace } from './race-classifier'
 import { deriveReleaseAccounts } from './send'
-
-// NTT charges OutboxItem rent (~1,858,320 lamports) from `relayer_authority`
-// via invoke_signed; target debit + rent-exempt + headroom = 3M.
-const RELAYER_AUTH_TOPUP = 3_000_000n
-// session_authority is signer-only; 2M leaves it well above rent-exempt.
-const SESSION_AUTH_TOPUP = 2_000_000n
+import { buildTopUpIxs } from './top-up'
 
 /** Pure timeout gate: a `Received` flow is refundable once this many slots pass. */
 export function refundDue(receivedSlot: bigint, currentSlot: bigint): boolean {
@@ -126,23 +121,12 @@ export async function refund(
     })
     const [relayerAuthorityPda] = findAuthorityPda(client.program.programId)
     const [sessionAuthorityPda] = findSessionAuthorityPda(relayerAuthorityPda, argsHash, originalManager)
-    const [relayerAuthInfo, sessionAuthInfo] = await Promise.all([
-      connection.getAccountInfo(relayerAuthorityPda).catch(() => null),
-      connection.getAccountInfo(sessionAuthorityPda).catch(() => null),
-    ])
-    const computeTopUp = (existing: number | undefined, target: bigint): bigint => {
-      const e = BigInt(existing ?? 0)
-      return e >= target ? 0n : target - e
-    }
-    const fundIxs: ReturnType<typeof SystemProgram.transfer>[] = []
-    const relayerTopUp = computeTopUp(relayerAuthInfo?.lamports, RELAYER_AUTH_TOPUP)
-    const sessionTopUp = computeTopUp(sessionAuthInfo?.lamports, SESSION_AUTH_TOPUP)
-    if (relayerTopUp > 0n) {
-      fundIxs.push(SystemProgram.transfer({ fromPubkey: keypair.publicKey, toPubkey: relayerAuthorityPda, lamports: Number(relayerTopUp) }))
-    }
-    if (sessionTopUp > 0n) {
-      fundIxs.push(SystemProgram.transfer({ fromPubkey: keypair.publicKey, toPubkey: sessionAuthorityPda, lamports: Number(sessionTopUp) }))
-    }
+    const fundIxs = await buildTopUpIxs({
+      connection,
+      payer: keypair.publicKey,
+      relayerAuthorityPda,
+      sessionAuthorityPda,
+    })
 
     const release = await deriveReleaseAccounts(
       connection,
