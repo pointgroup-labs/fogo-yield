@@ -49,7 +49,7 @@ groups:
           severity: page
         annotations:
           summary: 'Cranker keypair FOGO balance low ({{ $value }} FOGO)'
-          description: "The cranker keypair pays bridge-redeem fees on FOGO. Once it hits zero, all Solana → FOGO ONyc redeems start failing silently while the flow counter keeps looking healthy. Top up the same keypair on FOGO."
+          description: 'The cranker keypair pays bridge-redeem fees on FOGO. Once it hits zero, all Solana → FOGO ONyc redeems start failing silently while the flow counter keeps looking healthy. Top up the same keypair on FOGO.'
 
       # Same ratio correction as CrankerScanErrorRate. Txs are bursty and only
       # sent when there are flows to advance, so the denominator collapses to
@@ -100,7 +100,7 @@ groups:
           severity: warn
         annotations:
           summary: 'Cranker FOGO balance poll stale ({{ $value | humanizeDuration }})'
-          description: 'The FOGO balance poller has not succeeded in >10m. Solana → FOGO ONyc redeems may be silently failing on fee exhaustion. Check FOGO RPC reachability from the host.'
+          description: The FOGO balance poller has not succeeded in >10m. Solana → FOGO ONyc redeems may be silently failing on fee exhaustion. Check FOGO RPC reachability from the host.
 
       # CrankerSolBalancePollStale mirrors the FOGO one: if the SOL balance
       # gauge is NaN, LowSol can't fire. Catches "Solana RPC so degraded the
@@ -124,7 +124,7 @@ groups:
           severity: warn
         annotations:
           summary: Cranker Solana WebSocket subscription dead
-          description: 'The live VAA subscription has been down for 5m. New flows will only be picked up by the Wormholescan poll loop — expect higher end-to-end latency until it reconnects.'
+          description: The live VAA subscription has been down for 5m. New flows will only be picked up by the Wormholescan poll loop — expect higher end-to-end latency until it reconnects.
 
       # Absence-of-success: flows are arriving (unswept observations climbing)
       # but nothing is advancing. This is the silent-wedge signal — upstream
@@ -152,4 +152,4 @@ groups:
           severity: warn
         annotations:
           summary: 'Cranker RPC error flood ({{ $value | printf "%.1f" }}/s)'
-          description: 'RPC failures above 1/sec for 5m. Provider degradation or rate-limit exhaustion. Check the endpoint tag on cranker_rpc_errors_total for which call is failing.'
+          description: RPC failures above 1/sec for 5m. Provider degradation or rate-limit exhaustion. Check the endpoint tag on cranker_rpc_errors_total for which call is failing.
