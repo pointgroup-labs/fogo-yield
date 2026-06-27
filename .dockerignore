@@ -13,7 +13,6 @@ test-ledger
 .env.local
 docs
 deploy/cranker/secrets
-packages/webapp
 packages/cli/dist
 packages/sdk/dist
 packages/cranker/dist

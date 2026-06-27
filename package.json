@@ -6,7 +6,6 @@
     "cli": "pnpm -F @fogo-onre/cli start",
     "cli:build": "pnpm -F @fogo-onre/cli build",
     "sdk": "pnpm -F @fogo-onre/sdk",
-    "webapp": "pnpm -F @fogo-onre/webapp",
     "build": "anchor build --ignore-keys && pnpm sdk build",
     "lint": "eslint --cache .",
     "lint:fix": "pnpm lint --fix",

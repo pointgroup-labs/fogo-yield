@@ -36,14 +36,13 @@ crank the flow.
 ## Components
 
 | Component              | Role                                                                                                                        |
-| ---------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+|------------------------|-----------------------------------------------------------------------------------------------------------------------------|
 | `intent_transfer` fork | FOGO entrypoint. Verifies the user's Ed25519 intent and sends the token through NTT to a signed recipient address.          |
 | `fogo_ntt_relayer`     | Solana Anchor program. Holds funds only in relayer-PDA ATAs while a flow is open.                                           |
 | Wormhole NTT managers  | One manager per token side. Program IDs are pinned in `PairConfig` at initialization.                                       |
 | Swap venue             | Caller-supplied CPI target. The relayer does not price the route; it only enforces the user's floor and custody invariants. |
 | SDK / CLI              | Derive PDAs, build NTT and swap account lists, initialize/configure pairs.                                                  |
 | Cranker                | Off-chain service that polls Wormholescan and advances pending flows.                                                       |
-| Webapp                 | Product UI for the current USDC/ONyc deployment.                                                                            |
 
 ## One Flow
 
@@ -60,7 +59,7 @@ flowchart LR
 ```
 
 | Phase     | Deposit                                           | Withdraw                                           |
-| --------- | ------------------------------------------------- | -------------------------------------------------- |
+|-----------|---------------------------------------------------|----------------------------------------------------|
 | `receive` | Bring in the base token.                          | Bring in the asset token.                          |
 | `swap`    | Base → asset; fee is taken from asset output.     | Asset → base; fee is taken from asset input.       |
 | `send`    | Send asset back to FOGO.                          | Send base back to FOGO.                            |
@@ -104,7 +103,7 @@ PDA:
 Important fields:
 
 | Field                                   | Meaning                                                                                               |
-| --------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+|-----------------------------------------|-------------------------------------------------------------------------------------------------------|
 | `base_mint`, `asset_mint`               | Pair identity. Init-only.                                                                             |
 | `ntt_base_program`, `ntt_asset_program` | NTT managers for each token side. Init-only.                                                          |
 | `intent_programs`                       | Two allowed source programs. `receive` derives each setter PDA and matches the VAA sender. Init-only. |
@@ -131,7 +130,7 @@ PDA:
 Important fields:
 
 | Field           | Meaning                                                     |
-| --------------- | ----------------------------------------------------------- |
+|-----------------|-------------------------------------------------------------|
 | `recipient`     | FOGO wallet that receives the final NTT transfer or refund. |
 | `direction`     | `Deposit` or `Withdraw`; set once by `receive`.             |
 | `status`        | `Received` or `Swapped`; enforces step order.               |
@@ -146,7 +145,7 @@ state-machine guard; terminal paths close it.
 ## Instructions
 
 | Instruction        | Access            | Purpose                                                                             |
-| ------------------ | ----------------- | ----------------------------------------------------------------------------------- |
+|--------------------|-------------------|-------------------------------------------------------------------------------------|
 | `initialize`       | signer            | Create a `PairConfig`, relayer-owned ATAs, and init-only pins.                      |
 | `receive`          | permissionless    | Redeem/release inbound NTT, bind `min_swap_out`, sweep into custody, open `Flow`.   |
 | `swap`             | permissionless    | CPI into a route, enforce exact input consumption and output floor, mark `Swapped`. |
@@ -164,7 +163,7 @@ instructions are pair-scoped by the same base/asset config PDA seeds.
 ## Security Model
 
 | Actor              | Can do                                                               | Cannot do                                                                                               |
-| ------------------ | -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+|--------------------|----------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------|
 | Cranker / operator | Submit permissionless flow instructions; choose swap route data.     | Redirect funds, lower the signed floor, settle below the floor, or leave standing token authority.      |
 | Config authority   | Change fees within caps, rotate fee vault, stage authority rotation. | Change mints, NTT managers, or intent programs after init; touch in-flight custody; bypass user floors. |
 | Upgrade authority  | Replace program code.                                                | Nothing on-chain constrains it; it is the root of trust until removed.                                  |
@@ -184,7 +183,7 @@ Authority rotation is two-step so the new authority must explicitly accept.
 The live product pair is USDC / ONyc.
 
 | Name                    | Value                                          |
-| ----------------------- | ---------------------------------------------- |
+|-------------------------|------------------------------------------------|
 | Relayer program         | `onrenRKgX54qtWeK3cuaTBE71xx7dWMXn82ubH61vAp`  |
 | Base mint, Solana USDC  | `EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v` |
 | Asset mint, Solana ONyc | `5Y8NV33Vv7WbnLfq3zBcKSdYPrk7g2KoiQoe7M2tcxp5` |
@@ -196,7 +195,7 @@ The live product pair is USDC / ONyc.
 ## Constants
 
 | Constant               | Value     | Meaning                                                 |
-| ---------------------- | --------- | ------------------------------------------------------- |
+|------------------------|-----------|---------------------------------------------------------|
 | `MAX_FEE_BPS`          | `1000`    | Maximum per-leg fee: 10%.                               |
 | `FEE_TIMELOCK_SLOTS`   | `432_000` | Fee increase delay, about 2 days at 400ms slots.        |
 | `REFUND_TIMEOUT_SLOTS` | `54_000`  | Refund eligibility delay, about 6 hours at 400ms slots. |

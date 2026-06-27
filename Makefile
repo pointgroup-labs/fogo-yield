@@ -88,17 +88,11 @@ audit: ## quality: cargo audit + pnpm audit (advisory; non-blocking)
 	-cargo audit
 	-pnpm audit
 
-clean: ## clean: Remove build artefacts (target/, dist/, .next/)
-	rm -rf target packages/sdk/dist packages/webapp/.next packages/webapp/.turbo
+clean: ## clean: Remove build artefacts (target/, dist/)
+	rm -rf target packages/sdk/dist
 
 reset: clean ## clean: clean + drop node_modules (re-run 'make install' after)
 	rm -rf node_modules packages/*/node_modules
-
-webapp-dev: ## dev: Next.js webapp in dev mode
-	pnpm webapp dev
-
-webapp-build: ## dev: Production build of the webapp
-	pnpm webapp build
 
 # Path to the env file the cranker reads. Override on CLI:
 #   make cranker CRANKER_ENV=/path/to/your.env
