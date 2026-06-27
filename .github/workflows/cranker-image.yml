@@ -40,7 +40,7 @@ jobs:
       # matrix with `runs-on: ubuntu-24.04-arm` per arch and merge
       # manifests via docker/manifest-action — faster but more
       # workflow surface to maintain.
-      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-qemu-action@v4
         with:
           platforms: arm64
 
