@@ -1,4 +1,4 @@
-import type { OnycPriceSnapshot } from '@fogo-yield/sdk'
+import type { OnycPriceSnapshot } from '@ignitionfi/fogo-yield-sdk'
 import {
   applyFeeBps,
   computeOnycPrice,
@@ -8,7 +8,7 @@ import {
   quoteDeposit,
   quoteWithdraw,
   SECONDS_PER_YEAR,
-} from '@fogo-yield/sdk'
+} from '@ignitionfi/fogo-yield-sdk'
 import { describe, expect, it } from 'vitest'
 
 // USDC = 6 decimals, ONyc = 9 decimals.

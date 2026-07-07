@@ -18,7 +18,7 @@ import {
   nttTransferArgsHash,
   REFUND_TIMEOUT_SLOTS,
   resolveNttVaa,
-} from '@fogo-yield/sdk'
+} from '@ignitionfi/fogo-yield-sdk'
 import { Keypair, PublicKey, TransactionMessage, VersionedTransaction } from '@solana/web3.js'
 import { makePriorityFeeIx } from '../utils/priority-fee'
 import { DEFAULT_NTT_VERSION, fetchVaaBytes, WORMHOLE_CORE_MAINNET } from '../utils/wormhole'

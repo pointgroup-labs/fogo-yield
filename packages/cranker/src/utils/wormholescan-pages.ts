@@ -1,4 +1,4 @@
-import type { WormholescanClient, WormholescanVaa } from '@fogo-yield/sdk'
+import type { WormholescanClient, WormholescanVaa } from '@ignitionfi/fogo-yield-sdk'
 import type { WatermarkStore } from '../state/watermarks'
 import { isPageBelowFloor, pagingFloor } from '../state/watermarks'
 

@@ -19,7 +19,7 @@ import {
   findAuthorityPda,
   findOutflightFlowPda,
   RelayerClient,
-} from '@fogo-yield/sdk'
+} from '@ignitionfi/fogo-yield-sdk'
 import { getAssociatedTokenAddressSync, TOKEN_PROGRAM_ID } from '@solana/spl-token'
 import { ComputeBudgetProgram, Keypair, PublicKey } from '@solana/web3.js'
 import { Clock, LiteSVM } from 'litesvm'

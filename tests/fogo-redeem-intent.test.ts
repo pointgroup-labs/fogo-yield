@@ -8,7 +8,7 @@
  * ONyc into custody and bind the originating wallet (Task 11 shape).
  */
 
-import type { BuildBridgeNttIxParams, NttBridgeSubAccounts } from '@fogo-yield/sdk'
+import type { BuildBridgeNttIxParams, NttBridgeSubAccounts } from '@ignitionfi/fogo-yield-sdk'
 import {
   buildFogoRedeemIntentIx,
   findUserInboxWithMinPda,
@@ -16,7 +16,7 @@ import {
   MEMO_PROGRAM_ID,
   ONRE_INTENT_PROGRAM_ID,
   parseMinSwapOutMemo,
-} from '@fogo-yield/sdk'
+} from '@ignitionfi/fogo-yield-sdk'
 import { Ed25519Program, Keypair, PublicKey } from '@solana/web3.js'
 import { describe, expect, it } from 'vitest'
 

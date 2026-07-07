@@ -17,7 +17,7 @@ import {
   ONRE_INTENT_PROGRAM_ID,
   recoverUserWalletAndMinOut,
   recoverWalletAndMinOutCandidates,
-} from '@fogo-yield/sdk'
+} from '@ignitionfi/fogo-yield-sdk'
 import { PublicKey } from '@solana/web3.js'
 import { describe, expect, it } from 'vitest'
 

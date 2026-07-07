@@ -1,4 +1,4 @@
-import type { WormholescanVaa } from '@fogo-yield/sdk'
+import type { WormholescanVaa } from '@ignitionfi/fogo-yield-sdk'
 import type { WatermarkStore } from '../src/state/watermarks'
 import { describe, expect, it } from 'vitest'
 import { watermarkKey } from '../src/state/watermarks'

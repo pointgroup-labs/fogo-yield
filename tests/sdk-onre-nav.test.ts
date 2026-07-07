@@ -17,7 +17,7 @@ import {
   parseActiveOfferVector,
   redemptionExpectedOut,
   synthOfferBuffer,
-} from '@fogo-yield/sdk'
+} from '@ignitionfi/fogo-yield-sdk'
 import { describe, expect, it } from 'vitest'
 
 describe('redemptionExpectedOut', () => {

@@ -2,7 +2,7 @@
  * LiteSVM-only OnRe fixture helpers.
  *
  * The SDK ships canonical PDA helpers + fixture pubkeys in
- * `@fogo-yield/sdk` (`packages/sdk/src/onre.ts`). This file holds
+ * `@ignitionfi/fogo-yield-sdk` (`packages/sdk/src/onre.ts`). This file holds
  * test-only mutators that patch the cloned mainnet fixture bytes — they
  * have no place in production SDK code because they reach into LiteSVM's
  * raw-account API and depend on local fixture file paths.
@@ -15,7 +15,7 @@ import {
   OFFER_TOKEN_OUT_MINT_OFFSET,
   ONRE_OFFER_FIXTURE,
   ONRE_PROGRAM_ID,
-} from '@fogo-yield/sdk'
+} from '@ignitionfi/fogo-yield-sdk'
 import { PublicKey } from '@solana/web3.js'
 import { readFixtureBytes } from './fixture-loader'
 

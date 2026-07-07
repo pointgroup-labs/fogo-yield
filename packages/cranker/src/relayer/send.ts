@@ -9,7 +9,7 @@ import {
   FOGO_WORMHOLE_CHAIN_ID,
   nttTransferArgsHash,
   resolveNttVaa,
-} from '@fogo-yield/sdk'
+} from '@ignitionfi/fogo-yield-sdk'
 import { Keypair, PublicKey, TransactionMessage, VersionedTransaction } from '@solana/web3.js'
 import { SolanaNtt } from '@wormhole-foundation/sdk-solana-ntt'
 import { makePriorityFeeIx } from '../utils/priority-fee'

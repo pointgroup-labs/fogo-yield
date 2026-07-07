@@ -1,4 +1,4 @@
-# @fogo-onre/cli
+# @fogo-yield/cli
 
 Admin CLI for the Fogo OnRe relayer program on Solana.
 

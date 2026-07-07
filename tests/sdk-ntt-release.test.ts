@@ -23,7 +23,7 @@ import {
   findRegisteredTransceiverPda,
   NTT_ONYC_PROGRAM_ID,
   RelayerClient,
-} from '@fogo-yield/sdk'
+} from '@ignitionfi/fogo-yield-sdk'
 import { Connection,
   Keypair,
   SystemProgram,

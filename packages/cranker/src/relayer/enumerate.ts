@@ -1,4 +1,4 @@
-import type { ResolvedNttVaa, WormholescanVaa } from '@fogo-yield/sdk'
+import type { ResolvedNttVaa, WormholescanVaa } from '@ignitionfi/fogo-yield-sdk'
 import type { PublicKey } from '@solana/web3.js'
 import type { WatermarkStore } from '../state/watermarks'
 import type { FlowStatus, ScannedFlow } from './scan'
@@ -8,7 +8,7 @@ import {
   describeStatus,
   resolveNttVaa,
   WormholescanClient,
-} from '@fogo-yield/sdk'
+} from '@ignitionfi/fogo-yield-sdk'
 import { getAssociatedTokenAddressSync } from '@solana/spl-token'
 import { recordSeen } from '../state/watermarks'
 import { BoundedMap } from '../utils/bounded-map'

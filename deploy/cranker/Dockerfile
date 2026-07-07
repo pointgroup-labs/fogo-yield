@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-# Multi-stage build for the @fogo-onre/cranker daemon.
+# Multi-stage build for the @fogo-yield/cranker daemon.
 # Stage 1: install only cranker's dep closure + build SDK + cranker.
 # Stage 2: minimal runtime image with the production-only deploy subtree.
 
@@ -22,7 +22,7 @@ COPY packages/sdk/package.json packages/sdk/
 COPY packages/cranker/package.json packages/cranker/
 
 # Filter install to cranker's dep closure (`...` includes transitive
-# workspace deps, i.e. @fogo-onre/sdk). Skips webapp and cli entirely
+# workspace deps, i.e. @ignitionfi/fogo-yield-sdk). Skips webapp and cli entirely
 # — webapp alone drags in Next.js, React, full Wormhole SDK, and the
 # WalletConnect graph (hundreds of MB) that cranker never imports.
 # `--ignore-scripts` skips postinstalls during install; we already run
@@ -30,8 +30,8 @@ COPY packages/cranker/package.json packages/cranker/
 # needs to be built (SDK + cranker).
 RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
     pnpm install --frozen-lockfile --ignore-scripts \
-      --filter @fogo-onre/cranker... \
-      --filter @fogo-onre/sdk...
+      --filter @fogo-yield/cranker... \
+      --filter @ignitionfi/fogo-yield-sdk...
 
 # Layer 2: source. Only the two packages we actually compile, plus the
 # Anchor IDL/types the SDK reads at build. Avoids busting cache on
@@ -40,15 +40,15 @@ COPY packages/sdk packages/sdk
 COPY packages/cranker packages/cranker
 
 # Build SDK first (cranker depends on its dist), then cranker.
-RUN pnpm --filter @fogo-onre/sdk build \
- && pnpm --filter @fogo-onre/cranker build
+RUN pnpm --filter @ignitionfi/fogo-yield-sdk build \
+ && pnpm --filter @fogo-yield/cranker build
 
 # Produce a self-contained, prod-only deployable subtree at /out.
 # `--legacy` keeps the pre-v10 deploy semantics (workspace packages
 # are copied verbatim, no inject-workspace-packages requirement). The
 # v10 default needs every workspace dep marked injected in the root
 # manifest, which is more invasive than this single deploy site needs.
-RUN pnpm deploy --legacy --filter @fogo-onre/cranker --prod /out
+RUN pnpm deploy --legacy --filter @fogo-yield/cranker --prod /out
 
 # ----------------------------------------------------------------------------
 

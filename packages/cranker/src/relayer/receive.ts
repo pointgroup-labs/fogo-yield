@@ -7,7 +7,7 @@ import {
   FOGO_WORMHOLE_CHAIN_ID,
   recoverWalletAndMinOutCandidates,
   resolveNttVaa,
-} from '@fogo-yield/sdk'
+} from '@ignitionfi/fogo-yield-sdk'
 import { createAssociatedTokenAccountIdempotentInstruction, getAssociatedTokenAddressSync } from '@solana/spl-token'
 import { PublicKey, SystemProgram } from '@solana/web3.js'
 import { makePriorityFeeIx } from '../utils/priority-fee'
