@@ -1,4 +1,5 @@
 import type { NttInboxItem, ResolvedNttVaa } from '@ignitionfi/fogo-yield-sdk'
+import type { AccountInfo } from '@solana/web3.js'
 import type { BridgeContext, BridgePlan, BridgeRedeemResult, BridgeRedeemTarget } from './types'
 import {
   buildFogoNttReleaseInboundMintIx,
@@ -41,6 +42,7 @@ export async function planBridgeRedeem(
   ctx: BridgeContext,
   target: BridgeRedeemTarget,
   vaaBytes: Uint8Array,
+  prefetched?: { inboxInfo: AccountInfo<Buffer> | null },
 ): Promise<{ plan: BridgePlan, resolved?: ResolvedNttVaa }> {
   // Filter 0: dest-side governance not yet wired. Submitting would
   // 100% fail with `AccountDiscriminatorNotFound (0xbb9)` and burn SOL,
@@ -98,20 +100,24 @@ export async function planBridgeRedeem(
     }
   }
 
-  // Branch on dest-side inbox-item state.
-  const inboxInfo = await withTimeout(
-    target.destConnection.getAccountInfo(resolved.nttInboxItem),
-    ctx.rpcTimeoutMs,
-    'dest.getAccountInfo(InboxItem)',
-  ).catch((err) => {
-    ctx.log.warn('inbox-item RPC failed', {
-      target: target.name,
-      inboxItem: resolved.nttInboxItem.toBase58(),
-      ...errorFields(err),
-    })
-    ctx.metrics.rpcErrors.inc({ endpoint: 'dest', kind: 'getAccountInfo' })
-    return null
-  })
+  // Branch on dest-side inbox-item state. The scanner batches these reads
+  // (one getMultipleAccounts per page) and passes the result in; fall back
+  // to a per-VAA read when unbatched (CLI, tests, or a batch-fetch failure).
+  const inboxInfo = prefetched !== undefined
+    ? prefetched.inboxInfo
+    : await withTimeout(
+        target.destConnection.getAccountInfo(resolved.nttInboxItem),
+        ctx.rpcTimeoutMs,
+        'dest.getAccountInfo(InboxItem)',
+      ).catch((err) => {
+        ctx.log.warn('inbox-item RPC failed', {
+          target: target.name,
+          inboxItem: resolved.nttInboxItem.toBase58(),
+          ...errorFields(err),
+        })
+        ctx.metrics.rpcErrors.inc({ endpoint: 'dest', kind: 'getAccountInfo' })
+        return null
+      })
 
   let inboxState: NttInboxItem | null = null
   if (inboxInfo) {

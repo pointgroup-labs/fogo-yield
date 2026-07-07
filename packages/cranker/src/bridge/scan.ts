@@ -1,10 +1,12 @@
+import type { AccountInfo, PublicKey } from '@solana/web3.js'
 import type { WatermarkStore } from '../state/watermarks'
 import type { ClassRollupAgg } from '../utils/log'
 import type { BridgeContext, BridgeRedeemResult, BridgeRedeemTarget } from './types'
-import { WormholescanClient } from '@ignitionfi/fogo-yield-sdk'
+import { getMultipleAccountsChunked, resolveNttVaa, WormholescanClient } from '@ignitionfi/fogo-yield-sdk'
 import { recordSeen } from '../state/watermarks'
 import { runBounded } from '../utils/concurrency'
 import { errorFields, recordErrorClass, rollupErrorClasses } from '../utils/log'
+import { withTimeout } from '../utils/rpc'
 import { harvestVaaPages } from '../utils/wormholescan-pages'
 import { executeBridgePlan, planBridgeRedeem } from './redeem'
 
@@ -87,10 +89,51 @@ export async function scanAndRedeemBridge(
 
   ctx.log.debug('bridge vaas enumerated', { target: target.name, count: vaas.length })
 
+  // Batch the dest-side inbox-item reads: resolve each VAA's inbox PDA and
+  // fetch the whole page in one getMultipleAccounts instead of one
+  // getAccountInfo per VAA (the bridge scan's main RPC amplifier). Any
+  // failure leaves `prefetched` undefined so each VAA falls back to its
+  // own read inside planBridgeRedeem.
+  const inboxKeys = vaas.map((it) => {
+    try {
+      return resolveNttVaa({
+        vaaBytes: it.vaa,
+        nttProgramId: target.destNttManagerProgramId,
+        transceiverProgramId: target.destWhTransceiverProgramId,
+      }).nttInboxItem
+    } catch {
+      return null
+    }
+  })
+  const infoByKey = new Map<string, AccountInfo<Buffer> | null>()
+  let batchOk = false
+  const toFetch = inboxKeys.filter((k): k is PublicKey => k !== null)
+  if (toFetch.length > 0) {
+    try {
+      const infos = await withTimeout(
+        getMultipleAccountsChunked(target.destConnection, toFetch),
+        ctx.rpcTimeoutMs,
+        'dest.getMultipleAccounts(InboxItems)',
+      )
+      toFetch.forEach((k, i) => infoByKey.set(k.toBase58(), infos[i] ?? null))
+      batchOk = true
+    } catch (err) {
+      ctx.log.warn('bridge batch inbox fetch failed — falling back to per-VAA reads', {
+        target: target.name,
+        ...errorFields(err),
+      })
+    }
+  }
+  const work = vaas.map((it, i) => {
+    const key = inboxKeys[i]
+    const prefetched = batchOk && key ? { inboxInfo: infoByKey.get(key.toBase58()) ?? null } : undefined
+    return { ...it, prefetched }
+  })
+
   let progress = false
-  await runBounded(vaas, opts.maxConcurrentRedeems, ctx.abortSignal, async (item) => {
+  await runBounded(work, opts.maxConcurrentRedeems, ctx.abortSignal, async (item) => {
     const seqLabel = item.sequence.toString()
-    const result = await planAndSubmit(ctx, target, item.vaa).catch((err): BridgeRedeemResult => ({
+    const result = await planAndSubmit(ctx, target, item.vaa, item.prefetched).catch((err): BridgeRedeemResult => ({
       kind: 'error',
       error: err instanceof Error ? err : new Error(String(err)),
     }))
@@ -133,8 +176,9 @@ async function planAndSubmit(
   ctx: BridgeContext,
   target: BridgeRedeemTarget,
   vaaBytes: Uint8Array,
+  prefetched?: { inboxInfo: AccountInfo<Buffer> | null },
 ): Promise<BridgeRedeemResult> {
-  const { plan } = await planBridgeRedeem(ctx, target, vaaBytes)
+  const { plan } = await planBridgeRedeem(ctx, target, vaaBytes, prefetched)
   return executeBridgePlan(ctx, target, plan, vaaBytes)
 }
 

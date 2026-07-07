@@ -68,6 +68,8 @@ export const configSchema = z.object({
   BALANCE_POLL_INTERVAL_MS: z.coerce.number().int().min(5000).default(60_000).describe('How often to poll the cranker SOL/FOGO balance (powers the LowSol / LowFogo / BalancePollStale alerts).'),
 
   RPC_TIMEOUT_MS: z.coerce.number().int().min(1000).default(15_000).describe('Per-RPC-call timeout. Caps any single getProgramAccounts / getMultipleAccounts so a stuck RPC cannot pin a worker forever.'),
+  SOLANA_RPC_MAX_RPS: z.coerce.number().min(1).default(25).describe('Client-side request/sec ceiling for the Solana RPC connection. A token bucket paces outgoing calls under the provider cap so a scan burst cannot trip 429. Set to your plan per-second limit (paid Helius/QuickNode/Triton are 50+); default 25 is conservative.'),
+  FOGO_RPC_MAX_RPS: z.coerce.number().min(1).default(25).describe('Client-side request/sec ceiling for the FOGO RPC connection (same token-bucket pacing as SOLANA_RPC_MAX_RPS).'),
   ENUMERATE_TIMEOUT_MS: z.coerce.number().int().min(5000).default(90_000).describe('Budget for one enumerateFlows call. Separate from RPC_TIMEOUT_MS because a fresh checkpoint-less process backfills the full page window (50–100 round-trips) and 15s is not enough.'),
   TX_CONFIRM_TIMEOUT_MS: z.coerce.number().int().min(30_000).default(90_000).describe('Per-transaction confirmation budget. The 30s floor is sized for the core.postVaa multi-tx sequence (several verify_signatures + one post_vaa); anything lower aborts mid-sequence and silently bricks withdraw flows under congestion.'),
   WORMHOLESCAN_TIMEOUT_MS: z.coerce.number().int().min(1000).default(10_000).describe('Per-Wormholescan-call timeout.'),
@@ -106,6 +108,8 @@ export type CrankerConfig = {
   shutdownDeadlineMs: number
   balancePollIntervalMs: number
   rpcTimeoutMs: number
+  solanaRpcMaxRps: number
+  fogoRpcMaxRps: number
   enumerateTimeoutMs: number
   txConfirmTimeoutMs: number
   wormholescanTimeoutMs: number
@@ -144,6 +148,8 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     shutdownDeadlineMs: parsed.SHUTDOWN_DEADLINE_MS,
     balancePollIntervalMs: parsed.BALANCE_POLL_INTERVAL_MS,
     rpcTimeoutMs: parsed.RPC_TIMEOUT_MS,
+    solanaRpcMaxRps: parsed.SOLANA_RPC_MAX_RPS,
+    fogoRpcMaxRps: parsed.FOGO_RPC_MAX_RPS,
     enumerateTimeoutMs: parsed.ENUMERATE_TIMEOUT_MS,
     txConfirmTimeoutMs: parsed.TX_CONFIRM_TIMEOUT_MS,
     wormholescanTimeoutMs: parsed.WORMHOLESCAN_TIMEOUT_MS,

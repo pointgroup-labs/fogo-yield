@@ -7,7 +7,7 @@ import type { WatermarkStore } from './state'
 import type { Logger } from './utils/log'
 import { readFileSync } from 'node:fs'
 import { AnchorProvider, Wallet } from '@anchor-lang/core'
-import { ONYC_MINT, RelayerClient, USDC_MINT } from '@ignitionfi/fogo-yield-sdk'
+import { createRateLimitedConnection, ONYC_MINT, RelayerClient, USDC_MINT } from '@ignitionfi/fogo-yield-sdk'
 import { Connection, Keypair, LAMPORTS_PER_SOL, PublicKey } from '@solana/web3.js'
 import { buildSolanaOnycToFogoTarget, buildSolanaUsdcToFogoTarget, scanAndRedeemBridge } from './bridge'
 import { loadConfig } from './config'
@@ -299,11 +299,18 @@ async function main(): Promise<void> {
 
   const keypair = loadKeypair(cfg.keypairPath)
 
-  const connection = new Connection(cfg.solanaRpcUrl, {
+  const connection = createRateLimitedConnection(cfg.solanaRpcUrl, {
     commitment: 'confirmed',
     wsEndpoint: cfg.solanaWsUrl,
+    maxRps: cfg.solanaRpcMaxRps,
+    // Anchor's `.rpc()`/`sendAndConfirm` confirm via the legacy WS strategy,
+    // hardcoded to 30s; honor the configured budget so no leg is left at 30s.
+    confirmTransactionInitialTimeout: cfg.txConfirmTimeoutMs,
   })
-  const fogoConnection = new Connection(cfg.fogoRpcUrl, { commitment: 'confirmed' })
+  const fogoConnection = createRateLimitedConnection(cfg.fogoRpcUrl, {
+    commitment: 'confirmed',
+    maxRps: cfg.fogoRpcMaxRps,
+  })
 
   const wallet = new Wallet(keypair)
   const provider = new AnchorProvider(connection, wallet, {
