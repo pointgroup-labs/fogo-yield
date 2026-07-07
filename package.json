@@ -27,8 +27,8 @@
     "bs58": "^6.0.0",
     "eslint": "^10.6.0",
     "eslint-plugin-format": "^2.0.1",
-    "litesvm": "^1.2.0",
+    "litesvm": "^1.2.1",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.9"
+    "vitest": "^4.1.10"
   }
 }
