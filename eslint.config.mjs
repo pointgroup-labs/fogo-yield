@@ -45,6 +45,10 @@ export default antfu(
       'node/no-path-concat': 'off',
 
       'no-console': 'off',
+
+      // Keep the catalog scoped to just the shared bundler (tsdown); don't
+      // auto-hoist every dependency into it on `--fix`.
+      'pnpm/json-enforce-catalog': 'off',
     },
   },
 )

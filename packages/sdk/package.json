@@ -1,22 +1,41 @@
 {
-  "name": "@fogo-yield/sdk",
+  "name": "@ignitionfi/fogo-yield-sdk",
   "type": "module",
   "version": "1.0.0",
-  "description": "Fogo-OnRe SDK — TypeScript client",
+  "description": "Fogo Yield SDK",
+  "contributors": [
+    "Ignition Team (https://ignitionfi.xyz/)"
+  ],
+  "homepage": "https://ignitionfi.xyz",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/pointgroup-labs/fogo-yield.git"
+  },
+  "keywords": [],
+  "publishConfig": {
+    "access": "public"
+  },
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "import": {
+        "types": "./dist/index.d.mts",
+        "default": "./dist/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
     }
   },
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "main": "dist/index.cjs",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.mts",
   "files": [
     "dist",
     "src"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "tsdown",
     "clean": "rm -rf dist"
   },
   "dependencies": {
@@ -27,6 +46,7 @@
   },
   "devDependencies": {
     "@types/node": "^25.6.0",
+    "tsdown": "catalog:",
     "typescript": "^6.0.3"
   }
 }

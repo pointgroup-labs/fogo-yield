@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import chalk from 'chalk'
 import { program as cli } from 'commander'
 import { intentCommands } from './commands/intent'

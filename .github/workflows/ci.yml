@@ -71,7 +71,7 @@ jobs:
       - name: Install Node
         uses: actions/setup-node@v6
         with:
-          node-version: 24
+          node-version-file: .node-version
           cache: pnpm
 
       - name: Install deps
@@ -124,8 +124,8 @@ jobs:
       # Call vitest directly, NOT `pnpm test`: its `pretest` hook reruns
       # `anchor build`, which would defeat the cache above. Local `pnpm
       # test` keeps its rebuild-then-test behavior unchanged.
-      # Typecheck the cli + cranker: both build via tsup (esbuild, no type
-      # check) and vitest transpiles, so tsc here is the only gate that
+      # Typecheck the cli + cranker: both build via tsdown (Rolldown/oxc, no
+      # type check) and vitest transpiles, so tsc here is the only gate that
       # catches type breaks — e.g. a dependency bump changing an SDK type.
       - name: Typecheck cli + cranker
         run: |

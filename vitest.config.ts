@@ -8,7 +8,7 @@ export default defineConfig({
         // @wormhole-foundation/sdk-solana-ntt's `index.js` does
         // `import "./side-effects"` (extensionless), which Node's strict
         // ESM resolver rejects. Inline it so vite resolves at bundle-time.
-        // Production tsup build does the same via `noExternal`.
+        // Production tsdown build does the same via `deps.alwaysBundle`.
         inline: ['@wormhole-foundation/sdk-solana-ntt'],
       },
     },

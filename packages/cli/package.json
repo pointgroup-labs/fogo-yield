@@ -9,14 +9,14 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsup",
-    "dev": "tsup --watch",
+    "build": "tsdown",
+    "dev": "tsdown --watch",
     "start": "node ./dist/cli.js"
   },
   "dependencies": {
     "@anchor-lang/core": "^1.1.2",
     "@fogo-yield/cranker": "workspace:*",
-    "@fogo-yield/sdk": "workspace:*",
+    "@ignitionfi/fogo-yield-sdk": "workspace:*",
     "@noble/hashes": "^2.2.0",
     "@solana/spl-token": "^0.4.13",
     "@solana/web3.js": "^1.98.4",
@@ -30,6 +30,6 @@
   },
   "devDependencies": {
     "@types/node": "^25.6.0",
-    "tsup": "^8.5.1"
+    "tsdown": "catalog:"
   }
 }
