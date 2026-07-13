@@ -21,7 +21,7 @@
     "@anchor-lang/core": "^1.1.2",
     "@ignitionfi/fogo-yield-sdk": "workspace:*",
     "@noble/hashes": "^2.2.0",
-    "@solana/spl-token": "^0.4.13",
+    "@solana/spl-token": "^0.4.15",
     "@solana/web3.js": "^1.98.4",
     "@wormhole-foundation/sdk-definitions": "^6.1.1",
     "@wormhole-foundation/sdk-definitions-ntt": "^7.2.0",
@@ -33,6 +33,6 @@
     "@types/node": "^25.6.0",
     "tsdown": "catalog:",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.5"
+    "vitest": "^4.1.10"
   }
 }

@@ -44,4 +44,4 @@ overrides:
 catalog:
   # Single version source for tsdown — the one bundler shared by
   # sdk/cli/cranker. Referenced as `"tsdown": "catalog:"`.
-  tsdown: ^0.22.3
+  tsdown: ^0.22.7
