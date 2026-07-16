@@ -22,7 +22,7 @@ Chain-wide Pyth, same program ids on Solana and FOGO — reference once, reuse f
 every token:
 
 | Component               | Address                                        |
-|-------------------------|------------------------------------------------|
+| ----------------------- | ---------------------------------------------- |
 | Hermes (off-chain REST) | `https://hermes.pyth.network`                  |
 | Pyth Receiver           | `rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5LtFJ`  |
 | Pyth push-oracle        | `pythWSnswVUd12oZpeFP8e9CVaEqJg25g1Vtc2biRsT`  |
@@ -45,7 +45,7 @@ const [priceAccount] = PublicKey.findProgramAddressSync(
 by a NAV feed that accrues over time (no fixed $1 peg).
 
 | Field         | Value                                                                           |
-|---------------|---------------------------------------------------------------------------------|
+| ------------- | ------------------------------------------------------------------------------- |
 | FOGO mint     | `oNyCm1QsAatj3ckaEwZjtAPWvstPn3Zm5MAYPtkjEfa` · 9 dp                            |
 | Pyth feed id  | `babbfcc7f46b6e7df73adcccece8b6782408ed27c4e77f35ba39a449440170ab` · NAV, daily |
 | Price account | `8uto8utKdfs2ajrmBtcFL5s9mXbc7UPg8HSdLwCn1Mg7` (derived)                        |
@@ -62,7 +62,7 @@ the live price:
 
 ```ts
 const res = await fetch(`https://hermes.pyth.network/v2/updates/price/latest?ids[]=${FEED_ID}&parsed=true`)
-const {price, expo, conf} = (await res.json()).parsed[0].price
+const { price, expo, conf } = (await res.json()).parsed[0].price
 const priceUsd = Number(price) * 10 ** expo
 const lowerUsd = Number(BigInt(price) - BigInt(conf)) * 10 ** expo // conservative bound for collateral
 ```
