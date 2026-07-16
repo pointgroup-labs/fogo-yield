@@ -30,6 +30,23 @@ export const FOGO_ONYC_MINT = new PublicKey('oNyCm1QsAatj3ckaEwZjtAPWvstPn3Zm5MA
 /** Canonical USDC on Solana mainnet — the Solana-side counterpart of FOGO USDC.s. */
 export const USDC_MINT = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v')
 
+// ── Pyth (ONyc NAV oracle) ───────────────────────────────────────────────────
+// OnRe publishes the ONyc NAV as a Pyth "Crypto NAV" feed. The Pyth Solana
+// Receiver + its wormhole guardian-verifier are both deployed on FOGO, so the
+// feed can be posted and read natively there (see the cranker's pyth keeper).
+
+/** Pyth Solana Receiver — verifies + stores price updates. Same id on Solana & FOGO. */
+export const PYTH_RECEIVER_PROGRAM_ID = new PublicKey('rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5LtFJ')
+
+/** Pyth wormhole guardian-verifier the receiver checks signatures against. */
+export const PYTH_WORMHOLE_PROGRAM_ID = new PublicKey('HDwcJBJXjL9FpJ7UBsYBtaDjsBUhuLCUYoz3zr8SWWaQ')
+
+/** Pyth push-oracle program — sponsored price-feed accounts are PDAs of it. */
+export const PYTH_PUSH_ORACLE_PROGRAM_ID = new PublicKey('pythWSnswVUd12oZpeFP8e9CVaEqJg25g1Vtc2biRsT')
+
+/** Pyth "Crypto NAV" feed id (hex) for ONYC/USD — the ONRE reinsurance-pool NAV. */
+export const ONYC_PYTH_FEED_ID = 'babbfcc7f46b6e7df73adcccece8b6782408ed27c4e77f35ba39a449440170ab'
+
 export const GLOBAL_CONFIG_SEED = Buffer.from('global_config')
 export const CONFIG_SEED = Buffer.from('relayer_config')
 export const RELAYER_SEED = Buffer.from('relayer')
