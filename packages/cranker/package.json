@@ -21,6 +21,7 @@
     "@anchor-lang/core": "^1.1.2",
     "@ignitionfi/fogo-yield-sdk": "workspace:*",
     "@noble/hashes": "^2.2.0",
+    "@pythnetwork/pyth-solana-receiver": "^0.16.0",
     "@solana/spl-token": "^0.4.13",
     "@solana/web3.js": "^1.98.4",
     "@wormhole-foundation/sdk-definitions": "^6.1.1",
