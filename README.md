@@ -16,25 +16,28 @@ any `(base, yield-asset)` pair, onboarded with a single `initialize` call.
 ## How it works
 
 ```mermaid
-flowchart LR
-    subgraph dep [Deposit]
+flowchart TB
+    subgraph laneF [FOGO]
         direction LR
-        A(["Base · FOGO"]) -->|NTT| B(["Base · Solana"]) -->|swap| C(["Yield · Solana"]) -->|NTT| D(["Yield · FOGO"])
+        fB(["Base"]) ~~~ fY(["Yield"])
     end
-    subgraph wd [Redeem]
+    subgraph laneS [Solana]
         direction LR
-        E(["Yield · FOGO"]) -->|NTT| F(["Yield · Solana"]) -->|swap| G(["Base · Solana"]) -->|NTT| H(["Base · FOGO"])
+        sB(["Base"]) <-->|swap| sY(["Yield"])
     end
+    fB <-->|NTT| sB
+    fY <-->|NTT| sY
 
-    classDef fogo fill:#f9731620,stroke:#f97316,stroke-width:1.5px
-    classDef sol fill:#a855f720,stroke:#a855f7,stroke-width:1.5px
-    class A,D,E,H fogo
-    class B,C,F,G sol
-    style dep fill:transparent,stroke:transparent
-    style wd fill:transparent,stroke:transparent
+    classDef tok stroke:#8b949e,stroke-width:1px
+    class fB,fY,sB,sY tok
+    style laneF fill:#f9731612,stroke:#f97316,stroke-width:1px
+    style laneS fill:#a855f712,stroke:#a855f7,stroke-width:1px
 ```
 
-Both legs run over [Wormhole NTT](https://wormhole.com/products/native-token-transfers).
+A deposit runs `Base` down to Solana, swaps to `Yield`, and bridges back;
+redeem reverses it. Both directions cross the same two [Wormhole
+NTT](https://wormhole.com/products/native-token-transfers) bridges.
+
 On Solana, a small **relayer** program holds funds only while a flow is open,
 swaps through the configured venue, then sends the output back to FOGO. Each leg
 is the same three-step pipeline, driven by three permissionless relayer
