@@ -12,10 +12,10 @@ name: fogo-cranker
 
 services:
   cranker:
-    # Production: pin to a semver tag (e.g. ghcr.io/pointgroup-labs/fogo-onre-cranker:0.1.x).
+    # Production: pin to a semver tag (e.g. ghcr.io/pointgroup-labs/fogo-yield-cranker:0.1.x).
     # Staging: use :edge to track main. Watchtower follows whatever tag is
     # configured here — it does NOT roll a pinned semver to a different one.
-    image: ghcr.io/pointgroup-labs/fogo-onre-cranker:0.1
+    image: ghcr.io/pointgroup-labs/fogo-yield-cranker:0.1
     container_name: cranker
     restart: unless-stopped
     stop_grace_period: 30s
@@ -23,6 +23,7 @@ services:
       - ./cranker.env
     volumes:
       - ./secrets/cranker-keypair.json:/secrets/cranker-keypair.json:ro
+      - cranker-state:/app/state
     ports:
       - '127.0.0.1:9090:9090'
     labels:
@@ -102,6 +103,7 @@ networks:
     driver: bridge
 
 volumes:
+  cranker-state:
   prom-data:
   alertmanager-data:
   grafana-data:

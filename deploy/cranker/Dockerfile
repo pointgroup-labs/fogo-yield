@@ -70,6 +70,11 @@ COPY --from=builder --chown=cranker:cranker /out /app
 
 RUN chown cranker:cranker /app
 
+# Checkpoint dir on a named volume (docker-compose.yml) so watermarks survive
+# redeploys; pre-owned by the cranker UID so a fresh volume is writable.
+RUN mkdir -p /app/state && chown cranker:cranker /app/state
+ENV CHECKPOINT_PATH=/app/state/cranker-checkpoint.json
+
 USER cranker
 
 ENV NODE_ENV=production
