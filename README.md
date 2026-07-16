@@ -16,26 +16,17 @@ any `(base, yield-asset)` pair, onboarded with a single `initialize` call.
 ## How it works
 
 ```mermaid
-flowchart TB
-    subgraph laneF [FOGO]
-        direction LR
-        fB(["Base"]) ~~~ fY(["Yield"])
-    end
-    subgraph laneS [Solana]
-        direction LR
-        sB(["Base"]) <-->|swap| sY(["Yield"])
-    end
-    fB <-->|NTT| sB
-    fY <-->|NTT| sY
+flowchart LR
+    A(["Base · FOGO"]) -->|NTT| B(["Base · Solana"]) -->|swap| C(["Yield · Solana"]) -->|NTT| D(["Yield · FOGO"])
 
-    classDef tok stroke:#8b949e,stroke-width:1px
-    class fB,fY,sB,sY tok
-    style laneF fill:#f9731612,stroke:#f97316,stroke-width:1px
-    style laneS fill:#a855f712,stroke:#a855f7,stroke-width:1px
+    classDef fogo fill:#f9731620,stroke:#f97316,stroke-width:1.5px
+    classDef sol fill:#a855f720,stroke:#a855f7,stroke-width:1.5px
+    class A,D fogo
+    class B,C sol
 ```
 
-A deposit runs `Base` down to Solana, swaps to `Yield`, and bridges back;
-redeem reverses it. Both directions cross the same two [Wormhole NTT](https://wormhole.com/products/native-token-transfers) bridges.
+That's a **deposit**; **redeem** runs the same pipeline in reverse — each leg
+crosses [Wormhole NTT](https://wormhole.com/products/native-token-transfers) twice.
 
 On Solana, a small **relayer** program holds funds only while a flow is open,
 swaps through the configured venue, then sends the output back to FOGO. Each leg
