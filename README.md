@@ -17,23 +17,27 @@ any `(base, yield-asset)` pair, onboarded with a single `initialize` call.
 
 ```mermaid
 flowchart LR
-    subgraph dep ["Deposit — base → yield"]
+    subgraph dep ["Deposit · base → yield"]
         direction LR
-        A["Base · FOGO"] -->|"NTT · receive"| B["Base · Solana"]
-        B -->|swap| C["Yield · Solana"]
-        C -->|"NTT · send"| D["Yield · FOGO"]
+        A(["Base · FOGO"]) -->|"NTT · receive"| B(["Base · Solana"])
+        B -->|swap| C(["Yield · Solana"])
+        C -->|"NTT · send"| D(["Yield · FOGO"])
     end
-    subgraph wd ["Redeem — yield → base"]
+    subgraph wd ["Redeem · yield → base"]
         direction LR
-        E["Yield · FOGO"] -->|"NTT · receive"| F["Yield · Solana"]
-        F -->|swap| G["Base · Solana"]
-        G -->|"NTT · send"| H["Base · FOGO"]
+        E(["Yield · FOGO"]) -->|"NTT · receive"| F(["Yield · Solana"])
+        F -->|swap| G(["Base · Solana"])
+        G -->|"NTT · send"| H(["Base · FOGO"])
     end
 
+    %% Accent nodes by chain (FOGO ember / Solana violet); leave fills to
+    %% GitHub's adaptive light-dark theme. Kill the default yellow cluster bg.
     classDef fogo stroke:#f97316,stroke-width:2px
-    classDef sol stroke:#8b5cf6,stroke-width:2px
+    classDef sol stroke:#a855f7,stroke-width:2px
     class A,D,E,H fogo
     class B,C,F,G sol
+    style dep fill:transparent,stroke:#8b949e,stroke-width:1px
+    style wd fill:transparent,stroke:#8b949e,stroke-width:1px
 ```
 
 Both legs run over [Wormhole NTT](https://wormhole.com/products/native-token-transfers).
