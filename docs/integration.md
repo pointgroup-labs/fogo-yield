@@ -57,8 +57,8 @@ The feed id and the price account are the same feed, two access paths. A Pyth
 price is `price × 10^expo` (`expo` is negative). Everything below is
 parameterized by `FEED_ID` and the token's `DECIMALS`.
 
-**Off-chain** — one HTTP GET, exactly how the webapp Transparency page renders
-the live price:
+**Off-chain** — one HTTP GET against Hermes, the simplest path to a live price
+and no on-chain dependency:
 
 ```ts
 const res = await fetch(`https://hermes.pyth.network/v2/updates/price/latest?ids[]=${FEED_ID}&parsed=true`)
