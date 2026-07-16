@@ -1,4 +1,4 @@
-import { findNttEmitterPda, FOGO_WORMHOLE_CHAIN_ID, NTT_ONYC_PROGRAM_ID, NTT_USDC_PROGRAM_ID } from '@ignitionfi/fogo-yield-sdk'
+import { findNttEmitterPda, FOGO_WORMHOLE_CHAIN_ID, HERMES_ENDPOINT, NTT_ONYC_PROGRAM_ID, NTT_USDC_PROGRAM_ID, ONYC_PYTH_FEED_ID } from '@ignitionfi/fogo-yield-sdk'
 import { z } from 'zod'
 
 // Defaults derived from the SDK so the cranker stays in lockstep with
@@ -81,6 +81,12 @@ export const configSchema = z.object({
 
   CHECKPOINT_PATH: z.string().default('./cranker-checkpoint.json').describe('On-disk checkpoint file (per-emitter watermarks). Empty string disables persistence (in-memory watermarks still apply per process). On-chain idempotency makes a lost checkpoint a one-time backfill, never a missed dispatch.'),
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info').describe('debug | info | warn | error. JSON-per-line on stderr.'),
+
+  PYTH_KEEPER_ENABLED: z.enum(['true', 'false']).default('false').describe('Keep the ONyc NAV Pyth feed fresh on FOGO by posting Hermes updates to the receiver (rec5…). Default "false" — enable only after a funded dry-run confirms the receiver is initialised on FOGO. Independent of the bridge/flow legs.'),
+  HERMES_URL: z.string().url().default(HERMES_ENDPOINT).describe('Pyth Hermes endpoint the NAV keeper fetches signed price updates from.'),
+  PYTH_ONYC_FEED_ID: z.string().regex(/^[0-9a-f]{64}$/i).default(ONYC_PYTH_FEED_ID).describe('32-byte hex Pyth feed id for the ONyc NAV. Defaults to the SDK constant (ONRE reinsurance pool "Crypto NAV" feed).'),
+  PYTH_KEEPER_MAX_AGE_MS: z.coerce.number().int().min(10_000).default(300_000).describe('Re-post the NAV only when the on-chain FOGO price is missing or older than this. Default 5 min — the NAV moves ~daily, so frequent posts waste fees.'),
+  PYTH_KEEPER_SHARD: z.coerce.number().int().min(0).default(0).describe('Pyth sponsored-feed shard id (0 = the canonical stable feed).'),
 })
 
 export type CrankerConfig = {
@@ -119,6 +125,11 @@ export type CrankerConfig = {
   sendLookupTable: string
   checkpointPath: string
   logLevel: 'debug' | 'info' | 'warn' | 'error'
+  pythKeeperEnabled: boolean
+  hermesUrl: string
+  pythOnycFeedId: string
+  pythKeeperMaxAgeMs: number
+  pythKeeperShard: number
 }
 
 export function loadConfig(env: Record<string, string | undefined> = process.env): CrankerConfig {
@@ -159,5 +170,10 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     sendLookupTable: parsed.SEND_LOOKUP_TABLE,
     checkpointPath: parsed.CHECKPOINT_PATH,
     logLevel: parsed.LOG_LEVEL,
+    pythKeeperEnabled: parsed.PYTH_KEEPER_ENABLED === 'true',
+    hermesUrl: parsed.HERMES_URL,
+    pythOnycFeedId: parsed.PYTH_ONYC_FEED_ID,
+    pythKeeperMaxAgeMs: parsed.PYTH_KEEPER_MAX_AGE_MS,
+    pythKeeperShard: parsed.PYTH_KEEPER_SHARD,
   }
 }

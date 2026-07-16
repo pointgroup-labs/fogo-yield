@@ -14,7 +14,7 @@ export default defineConfig({
   // extensionless imports Node's strict resolver rejects (NTT SDK's
   // `import "./side-effects"`). Rolldown resolves both at build time.
   deps: {
-    alwaysBundle: ['@ignitionfi/fogo-yield-sdk', '@anchor-lang/core', '@wormhole-foundation/sdk-solana-ntt'],
+    alwaysBundle: ['@ignitionfi/fogo-yield-sdk', '@anchor-lang/core', '@wormhole-foundation/sdk-solana-ntt', '@pythnetwork/pyth-solana-receiver'],
   },
   inputOptions: {
     // Prefer each dep's CJS `main` over its broken ESM `module` entry.

@@ -13,6 +13,7 @@ import { buildSolanaOnycToFogoTarget, buildSolanaUsdcToFogoTarget, scanAndRedeem
 import { loadConfig } from './config'
 import { runDaemon } from './daemon'
 import { createMetrics } from './metrics'
+import { startPythNavKeeper } from './pyth/keeper'
 import { makeEnumerator, scanAndAdvance, scanAndRefund } from './relayer'
 import { FlowStateTracker, loadCheckpoint, saveCheckpoint, watermarksFromCheckpoint } from './state'
 import { BoundedMap } from './utils/bounded-map'
@@ -358,6 +359,23 @@ async function main(): Promise<void> {
     signal: shutdown.signal,
   })
   startWsKeepalive({ connection, metrics, log, signal: shutdown.signal })
+
+  // ONyc NAV Pyth keeper — posts the NAV to FOGO's Pyth receiver so it can be
+  // read on-chain there. Independent periodic task, off by default; enable only
+  // after a funded dry-run confirms the receiver is initialised on FOGO.
+  if (cfg.pythKeeperEnabled) {
+    startPythNavKeeper({
+      fogoConnection,
+      keypair,
+      hermesUrl: cfg.hermesUrl,
+      feedId: cfg.pythOnycFeedId,
+      shardId: cfg.pythKeeperShard,
+      maxAgeMs: cfg.pythKeeperMaxAgeMs,
+      priorityFeeMicroLamports: cfg.solanaPriorityFeeMicroLamports,
+      log: (event, fields) => log.info(event, fields ?? {}),
+      signal: shutdown.signal,
+    })
+  }
 
   // Persisted across restarts: per-emitter Wormholescan watermarks. A
   // missing/corrupt file is harmless (full backfill, idempotent). Same
