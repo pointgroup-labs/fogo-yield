@@ -17,18 +17,23 @@ any `(base, yield-asset)` pair, onboarded with a single `initialize` call.
 
 ```mermaid
 flowchart LR
-    subgraph dep [Deposit]
+    subgraph dep ["Deposit — base → yield"]
         direction LR
-        A["Base · FOGO"] -->|NTT| B["Base · Solana"]
-        B -->|swap| C["Yield asset · Solana"]
-        C -->|NTT| D["Yield asset · FOGO"]
+        A["Base · FOGO"] -->|"NTT · receive"| B["Base · Solana"]
+        B -->|swap| C["Yield · Solana"]
+        C -->|"NTT · send"| D["Yield · FOGO"]
     end
-    subgraph wd [Redeem]
+    subgraph wd ["Redeem — yield → base"]
         direction LR
-        E["Yield asset · FOGO"] -->|NTT| F["Yield asset · Solana"]
+        E["Yield · FOGO"] -->|"NTT · receive"| F["Yield · Solana"]
         F -->|swap| G["Base · Solana"]
-        G -->|NTT| H["Base · FOGO"]
+        G -->|"NTT · send"| H["Base · FOGO"]
     end
+
+    classDef fogo stroke:#f97316,stroke-width:2px
+    classDef sol stroke:#8b5cf6,stroke-width:2px
+    class A,D,E,H fogo
+    class B,C,F,G sol
 ```
 
 Both legs run over [Wormhole NTT](https://wormhole.com/products/native-token-transfers).
