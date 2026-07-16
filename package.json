@@ -20,7 +20,7 @@
   "devDependencies": {
     "@antfu/eslint-config": "^9.1.0",
     "@noble/hashes": "^2.2.0",
-    "@solana/kit": "^6.10.0",
+    "@solana/kit": "^7.0.0",
     "@solana/spl-token": "^0.4.14",
     "@types/bn.js": "^5.2.0",
     "anchor-litesvm": "^0.2.1",
