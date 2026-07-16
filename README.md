@@ -26,8 +26,8 @@ flowchart LR
         E(["Yield · FOGO"]) -->|NTT| F(["Yield · Solana"]) -->|swap| G(["Base · Solana"]) -->|NTT| H(["Base · FOGO"])
     end
 
-    classDef fogo stroke:#f97316,stroke-width:1.5px
-    classDef sol stroke:#a855f7,stroke-width:1.5px
+    classDef fogo fill:#f9731620,stroke:#f97316,stroke-width:1.5px
+    classDef sol fill:#a855f720,stroke:#a855f7,stroke-width:1.5px
     class A,D,E,H fogo
     class B,C,F,G sol
     style dep fill:transparent,stroke:transparent
