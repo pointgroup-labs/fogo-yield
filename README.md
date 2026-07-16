@@ -35,8 +35,7 @@ flowchart TB
 ```
 
 A deposit runs `Base` down to Solana, swaps to `Yield`, and bridges back;
-redeem reverses it. Both directions cross the same two [Wormhole
-NTT](https://wormhole.com/products/native-token-transfers) bridges.
+redeem reverses it. Both directions cross the same two [Wormhole NTT](https://wormhole.com/products/native-token-transfers) bridges.
 
 On Solana, a small **relayer** program holds funds only while a flow is open,
 swaps through the configured venue, then sends the output back to FOGO. Each leg
