@@ -48,8 +48,8 @@ by a NAV feed that accrues over time (no fixed $1 peg).
 | ------------- | ------------------------------------------------------------------------------- |
 | FOGO mint     | `oNyCm1QsAatj3ckaEwZjtAPWvstPn3Zm5MAYPtkjEfa` · 9 dp                            |
 | Pyth feed id  | [babbfcc7f46b6e7df73adcccece8b6782408ed27c4e77f35ba39a449440170ab](https://pythfeeds.com/feeds/babbfcc7f46b6e7df73adcccece8b6782408ed27c4e77f35ba39a449440170ab) · NAV, daily |
-| Price account | `8uto8utKdfs2ajrmBtcFL5s9mXbc7UPg8HSdLwCn1Mg7` (derived)                        |
-| Solana mint   | `5Y8NV33Vv7WbnLfq3zBcKSdYPrk7g2KoiQoe7M2tcxp5` (bridge only)                    |
+| Price account | [8uto8utKdfs2ajrmBtcFL5s9mXbc7UPg8HSdLwCn1Mg7](https://fogoscan.com/account/8uto8utKdfs2ajrmBtcFL5s9mXbc7UPg8HSdLwCn1Mg7) (derived)                        |
+| Solana mint   | [5Y8NV33Vv7WbnLfq3zBcKSdYPrk7g2KoiQoe7M2tcxp5](https://solscan.io/account/5Y8NV33Vv7WbnLfq3zBcKSdYPrk7g2KoiQoe7M2tcxp5) (bridge only)                    |
 
 ## Pricing
 
