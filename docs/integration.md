@@ -41,7 +41,7 @@ const [priceAccount] = PublicKey.findProgramAddressSync(
 )
 ```
 
-**ONyc** — yield-bearing, backed by [OnRe](https://onre.io) reinsurance; priced
+**ONyc** — yield-bearing, backed by [OnRe](https://onre.finance/) reinsurance; priced
 by a NAV feed that accrues over time (no fixed $1 peg).
 
 | Field         | Value                                                                           |
