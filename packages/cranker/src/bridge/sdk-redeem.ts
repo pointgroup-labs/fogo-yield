@@ -50,6 +50,9 @@ function getOrCreateSolanaNtt(target: BridgeRedeemTarget): FogoNtt {
         manager: managerStr,
         token: target.destMint.toBase58(),
         transceiver: { wormhole: transceiverStr },
+        // Verify VAA Shim: redeem posts all guardian sigs in one tx. The classic
+        // post_vaa path splits >7-sig VAAs and quorum-exact ones fail consensus.
+        svmShims: {},
       },
     },
     NTT_VERSION,
