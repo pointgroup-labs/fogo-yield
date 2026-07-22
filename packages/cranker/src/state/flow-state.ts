@@ -158,6 +158,29 @@ export class FlowStateTracker {
     return { poisoned, cooldown }
   }
 
+  /**
+   * Operator escape hatch (SIGUSR1): drop every backing-off flow — `cooldown`
+   * and `poisoned` — back to idle so the next scan re-attempts it. `inFlight`
+   * is left untouched (those dispatches are still running). Returns the cleared
+   * keys per bucket for logging. Use after fixing an upstream root cause to
+   * retry quarantined flows without a full process restart.
+   */
+  clearBackoff(): { poisoned: string[], cooldown: string[] } {
+    const poisoned: string[] = []
+    const cooldown: string[] = []
+    for (const [flow, s] of this.states) {
+      if (s.kind === 'poisoned') {
+        poisoned.push(flow)
+      } else if (s.kind === 'cooldown') {
+        cooldown.push(flow)
+      }
+    }
+    for (const flow of [...poisoned, ...cooldown]) {
+      this.states.delete(flow)
+    }
+    return { poisoned, cooldown }
+  }
+
   /** Test/observability hook. */
   size(): number {
     return this.states.size

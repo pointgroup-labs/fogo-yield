@@ -136,4 +136,33 @@ describe('flowStateTracker', () => {
     t.recordSuccess('flow-2')
     expect(t.stuckCounts()).toEqual({ poisoned: 1, cooldown: 0 })
   })
+
+  it('clearBackoff drops poisoned + cooldown to idle but leaves inFlight', () => {
+    const t = new FlowStateTracker({ cooldownBaseMs: 1, cooldownMaxMs: 1, poisonThreshold: 3 })
+    // flow-1 → poisoned.
+    let now = 0
+    for (let i = 0; i < 3; i++) {
+      const d = t.beginIfReady(F, now)
+      if (!d.allowed) {
+        now += 10
+        t.beginIfReady(F, now)
+      }
+      t.recordError(F, 'classA', now)
+      now += 10
+    }
+    // flow-2 → cooldown; flow-3 stays inFlight.
+    t.beginIfReady('flow-2', now)
+    t.recordError('flow-2', 'classB', now)
+    t.beginIfReady('flow-3', now)
+
+    const cleared = t.clearBackoff()
+    expect(cleared.poisoned).toEqual([F])
+    expect(cleared.cooldown).toEqual(['flow-2'])
+
+    // Poisoned + cooldown are now idle (re-dispatchable); inFlight untouched.
+    expect(t.beginIfReady(F, now + 1).allowed).toBe(true)
+    expect(t.inspect('flow-2')).toBeUndefined()
+    expect(t.inspect('flow-3')?.kind).toBe('inFlight')
+    expect(t.stuckCounts()).toEqual({ poisoned: 0, cooldown: 0 })
+  })
 })

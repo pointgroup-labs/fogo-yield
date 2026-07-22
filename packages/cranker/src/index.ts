@@ -42,6 +42,25 @@ export function installShutdownHandlers(controller: AbortController, log?: Logge
 }
 
 /**
+ * Wires SIGUSR1 to clear every backing-off flow gate (cooldown + poisoned)
+ * and wake the daemon for an immediate scan. `on` (not `once`) so an operator
+ * can send it repeatedly. This is the escape hatch for `poisoned` flows, which
+ * never self-retry — send after fixing an upstream root cause instead of a
+ * full restart. `kill -USR1 <pid>` (or `docker kill -s USR1 <container>`).
+ */
+export function installRetryHandler(flowState: FlowStateTracker, wakeup: WakeFlag, log: Logger): void {
+  process.on('SIGUSR1', () => {
+    const { poisoned, cooldown } = flowState.clearBackoff()
+    log.info('SIGUSR1 — cleared flow backoff, waking daemon', {
+      poisoned: poisoned.length,
+      cooldown: cooldown.length,
+      poisonedFlows: poisoned,
+    })
+    wakeup.signal()
+  })
+}
+
+/**
  * Background balance poller for the cranker keypair's gas (one per chain;
  * it pays on both Solana and FOGO). On RPC failure the gauge is set to NaN,
  * not left stale — else an outage masks a draining balance and the alert never
@@ -480,6 +499,9 @@ async function main(): Promise<void> {
     // signals fired before the listener attached, silently breaking the
     // wake-on-progress optimization).
     const wakeup = new WakeFlag()
+
+    // SIGUSR1: operator "retry now" — clear cooldown/poisoned gates + wake.
+    installRetryHandler(flowState, wakeup, log)
 
     // Periodic checkpoint flush. The watermark store mutates inside
     // both legs; flushing every 30s bounds the "data we'd lose on a
