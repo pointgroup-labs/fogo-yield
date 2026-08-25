@@ -60,9 +60,8 @@ function getOrCreateNtt(
         manager: key,
         token: token.toBase58(),
         transceiver: { wormhole: transceiver.toBase58() },
-        // Verify VAA Shim: post all guardian sigs in one tx. The classic
-        // post_vaa path splits >7-sig VAAs and quorum-exact ones fail consensus.
-        svmShims: {},
+        // No `svmShims`: the live managers are pre-shim 3.0.0 builds with only
+        // `receive_wormhole_message`. Enabling it yields 0x65 on every redeem.
       },
     },
     NTT_VERSION,
