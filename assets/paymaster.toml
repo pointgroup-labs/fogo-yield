@@ -10,9 +10,15 @@ name = "OnReBridge"
 max_gas_spend = 15000
 
 # SPL Memo carrying the user-signed swap floor (onre:mso:<n>).
+# Optional since intent v0.3 signs `min_out` directly: the cranker reads the
+# floor off the ed25519 instruction below, so the memo is a 53-byte duplicate
+# the deposit cannot afford. `required = false` accepts the transaction with
+# or without it — the matcher skips an unmatched optional constraint without
+# consuming an instruction — which is what lets old and new clients coexist.
+# Delete this block once no client emits the memo.
 [[domains.tx_variations.instructions]]
 program = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"
-required = true
+required = false
 
 # Ed25519 sigverify of the user-signed intent message, preceding the bridge ix.
 [[domains.tx_variations.instructions]]
