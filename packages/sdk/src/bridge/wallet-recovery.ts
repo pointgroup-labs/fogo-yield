@@ -1,7 +1,8 @@
 import type { Connection } from '@solana/web3.js'
-import { PublicKey } from '@solana/web3.js'
+import { Ed25519Program, PublicKey } from '@solana/web3.js'
 import { MEMO_PROGRAM_ID, parseMinSwapOutMemo } from '../builders/min-out-memo'
 import { INTENT_TRANSFER_PROGRAM_ID, ONRE_INTENT_PROGRAM_ID } from '../constants'
+import { ed25519InlineMessages, parseSignedMinOuts } from './signed-intent'
 
 /** Deposit may route through the OnRe fork or Fogo's program (switch-back). */
 const DEFAULT_INTENT_PROGRAM_IDS: PublicKey[] = [ONRE_INTENT_PROGRAM_ID, INTENT_TRANSFER_PROGRAM_ID]
@@ -68,16 +69,33 @@ async function allWalletsFromParsedTx(
   return wallets
 }
 
-/** All valid `onre:mso:<n>` floors in the tx (deduped, in order). */
+/**
+ * Every floor the tx states, deduped in order: the signed intent's `min_out`
+ * (v0.3) first, then any `onre:mso:<n>` memo.
+ *
+ * Both are read because they overlap only in one direction — a v0.2 intent
+ * signs the inbox PDA and states no floor, so its memo is the sole source.
+ * The memo stays supported until no v0.2 deposit can be in flight.
+ */
 function allMinOutsFromParsedTx(parsed: ParsedTx): bigint[] {
   const floors: bigint[] = []
+  const add = (value: bigint) => {
+    if (!floors.includes(value)) {
+      floors.push(value)
+    }
+  }
   for (const ix of parsed.ixs) {
-    if (!parsed.keys.get(ix.programIdIndex)?.equals(MEMO_PROGRAM_ID)) {
+    const programId = parsed.keys.get(ix.programIdIndex)
+    if (programId?.equals(Ed25519Program.programId)) {
+      ed25519InlineMessages(ix.data).flatMap(parseSignedMinOuts).forEach(add)
       continue
     }
-    const parsedMin = parseMinSwapOutMemo(new TextDecoder().decode(ix.data))
-    if (parsedMin !== null && !floors.includes(parsedMin)) {
-      floors.push(parsedMin)
+    if (!programId?.equals(MEMO_PROGRAM_ID)) {
+      continue
+    }
+    const fromMemo = parseMinSwapOutMemo(new TextDecoder().decode(ix.data))
+    if (fromMemo !== null) {
+      add(fromMemo)
     }
   }
   return floors
@@ -101,22 +119,17 @@ export async function deriveUserWalletFromFogoTx(
 
 export interface RecoveredWalletAndMinOut {
   userWallet: PublicKey
-  /** User-signed swap floor from the bridge tx's `onre:mso:<n>` memo. */
+  /** User-signed swap floor: the intent's `min_out`, or an `onre:mso:<n>` memo. */
   minSwapOut: bigint
 }
 
 /**
- * Recover `(userWallet, minSwapOut)` from the bridge tx; the floor rides as an
- * SPL Memo (`onre:mso:<n>`). Null if either is missing (cranker
- * noops). Untrusted: a wrong floor derives a mismatched recipient PDA, so
- * `receive` reverts on-chain — no skim.
- */
-/**
  * Every `(wallet, minSwapOut)` the bridge tx could encode — all
- * `bridge_ntt_tokens` source-ATA owners × all `onre:mso:<n>` memos. The
- * caller (cranker) picks the candidate whose inbox PDA derives the VAA
- * recipient, so an extra memo or bridge ix can't mask the right one. Empty
- * when no wallet or no floor is present.
+ * `bridge_ntt_tokens` source-ATA owners × all floors it states. The caller
+ * (cranker) picks the candidate whose inbox PDA derives the VAA recipient, so
+ * an extra floor or bridge ix can't mask the right one, and a wrong one
+ * reverts `receive` on-chain rather than skimming. Empty when no wallet or no
+ * floor is present.
  */
 export async function recoverWalletAndMinOutCandidates(
   fogoConnection: Connection,
