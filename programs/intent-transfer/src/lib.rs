@@ -83,13 +83,21 @@ pub mod intent_transfer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fogo_sessions_sdk::intent_transfer::INTENT_TRANSFER_SETTER;
 
+    /// Upstream compares this against `INTENT_TRANSFER_SETTER` from the sessions
+    /// SDK, which holds only for Fogo's own deployment: the PDA keys on `ID`, so
+    /// every fork derives its own. Fogo's token program grants debit authority to
+    /// the setter *family* rather than that one constant, which is what lets this
+    /// fork move session-delegated tokens at all.
+    ///
+    /// Pinned instead of derived: this value ships in the deposit lookup table and
+    /// in the client, so a `declare_id!` change has to fail here rather than
+    /// silently strand deposits against a setter nothing else knows.
     #[test]
     fn test_session_setter_pda_derivation() {
         assert_eq!(
-            INTENT_TRANSFER_SETTER,
-            Pubkey::find_program_address(&[INTENT_TRANSFER_SEED], &ID).0
+            Pubkey::find_program_address(&[INTENT_TRANSFER_SEED], &ID).0,
+            pubkey!("E11HNeVDA7ZMemjezZaqfWTfdyL1PVkDfLY4xj762wKx")
         );
     }
 }
