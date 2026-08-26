@@ -333,3 +333,63 @@ mod tests {
         assert!(result.is_err());
     }
 }
+
+#[cfg(test)]
+mod hardware_wallet_envelope {
+    use super::*;
+    use anchor_lang::solana_program::{ed25519_program, instruction::Instruction, pubkey::Pubkey};
+    use solana_intents::Intent;
+
+    /// The exact ed25519 instruction the client emits for a hardware wallet:
+    /// SRFC-3 V0 envelope, with `public_key_offset` pointing at the signer copy
+    /// inside the message instead of carrying a second one.
+    ///
+    /// This needs `solana-intents` >= 0.1.3: 0.1.2 read the public key, signature
+    /// and message *positionally* and ignored the offsets, so dropping the
+    /// duplicate shifted everything and the last read ran off the end.
+    #[test]
+    fn test_srfc3_envelope_with_reused_key() {
+        let signer = [7u8; 32];
+        let msg = b"Fogo Bridge\n\nversion: 0.3\nfrom_chain_id: fogo-mainnet\nto_chain_id: solana\ntoken: USDC.s\namount: 1.000000\nmin_out: 869694908\nfee_token: USDC.s\nfee_amount: 2.000000\nnonce: 1";
+
+        let mut env = Vec::new();
+        env.extend_from_slice(b"\xffsolana offchain");
+        env.push(0); // header V0
+        env.extend_from_slice(&[0u8; 32]); // application domain
+        env.push(1); // LimitedUtf8
+        env.push(1); // one signer
+        env.extend_from_slice(&signer);
+        env.extend_from_slice(&(msg.len() as u16).to_le_bytes());
+        env.extend_from_slice(msg);
+
+        let key_at_in_env = 16 + 1 + 32 + 1 + 1;
+        let sig_off: u16 = 16;
+        let msg_off: u16 = sig_off + 64;
+
+        let mut data = Vec::new();
+        data.push(1); // num_signatures
+        data.push(0); // padding
+        data.extend_from_slice(&sig_off.to_le_bytes());
+        data.extend_from_slice(&u16::MAX.to_le_bytes());
+        data.extend_from_slice(&(msg_off + key_at_in_env as u16).to_le_bytes());
+        data.extend_from_slice(&u16::MAX.to_le_bytes());
+        data.extend_from_slice(&msg_off.to_le_bytes());
+        data.extend_from_slice(&(env.len() as u16).to_le_bytes());
+        data.extend_from_slice(&u16::MAX.to_le_bytes());
+        data.extend_from_slice(&[9u8; 64]); // signature bytes are not checked here
+        data.extend_from_slice(&env);
+
+        let ix = Instruction {
+            program_id: ed25519_program::ID,
+            accounts: vec![],
+            data,
+        };
+        let intent: Intent<BridgeMessage> = ix
+            .try_into()
+            .expect("SRFC-3 envelope with a reused signer key must deserialize");
+        assert_eq!(intent.signer, Pubkey::new_from_array(signer));
+        match intent.message {
+            BridgeMessage::Ntt(m) => assert_eq!(m.recipient, Recipient::MinOut(869_694_908)),
+        }
+    }
+}
