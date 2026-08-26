@@ -22,6 +22,8 @@ const DORMANT_SETTER = findIntentTransferSetterPda(INTENT_TRANSFER_PROGRAM_ID)[0
 export function flagDormantSetterReplay(args: {
   senderOnSource: PublicKey
   leg: 'deposit' | 'withdraw'
+  /** Source tx — without it the warning names no transfer to investigate. */
+  sourceTx?: string
   metrics: Pick<Metrics, 'intentReplayObserved'>
   log: Logger
 }): boolean {
@@ -31,6 +33,7 @@ export function flagDormantSetterReplay(args: {
   args.metrics.intentReplayObserved.inc({ leg: args.leg })
   args.log.warn('inbound VAA sender is the dormant intent setter — possible cross-program replay', {
     leg: args.leg,
+    sourceTx: args.sourceTx,
     sender: args.senderOnSource.toBase58(),
     dormantSetter: DORMANT_SETTER.toBase58(),
   })

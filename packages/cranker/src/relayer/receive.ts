@@ -88,10 +88,6 @@ export async function receive(
     })
     const resolved = resolveNttVaa({ vaaBytes, nttProgramId: nttProgram })
 
-    // Observational replay monitor: flags a VAA routed through the dormant
-    // intent program. Does not gate — the on-chain allowlist decides.
-    flagDormantSetterReplay({ senderOnSource: resolved.senderOnSource, leg: input.direction, metrics, log: ctx.log })
-
     // OnRe sets `recipient_address` to a per-user inbox PDA (off-curve); an
     // on-curve recipient is a direct user→user bridge, not ours to advance.
     if (PublicKey.isOnCurve(resolved.recipientOnSolana.toBytes())) {
@@ -101,12 +97,25 @@ export async function receive(
       }
     }
 
+    // Observational replay monitor: flags a VAA routed through the dormant
+    // intent program. Does not gate — the on-chain allowlist decides. Must
+    // stay BELOW the on-curve filter: Fogo's own intent_transfer is live, so
+    // above it every stranger's bridge-out trips the alarm and is discarded
+    // one line later, which is how the counter stayed permanently nonzero.
+    flagDormantSetterReplay({
+      senderOnSource: resolved.senderOnSource,
+      leg: input.direction,
+      sourceTx: input.fogoTx,
+      metrics,
+      log: ctx.log,
+    })
+
     // Recover { userWallet, minSwapOut } from the FOGO tx (wallet = source-ATA
-    // owner, floor = `onre:mso:<n>` memo) and check the
-    // min-bearing inbox PDA derives the VAA recipient. The memo is UNTRUSTED:
-    // a wrong/missing value derives the wrong recipient, so the check below —
-    // and the on-chain `receive` re-derivation — reject it (no skim). Cached
-    // per scan.
+    // owner, floor = the intent's signed `min_out`, or an `onre:mso:<n>` memo
+    // for pre-v0.3 deposits) and check the min-bearing inbox PDA derives the
+    // VAA recipient. Both floor sources are UNTRUSTED: a wrong value derives
+    // the wrong recipient, so the check below — and the on-chain `receive`
+    // re-derivation — reject it (no skim). Cached per scan.
     function deriveInboxAuthority(wallet: PublicKey, minSwapOut: bigint): PublicKey {
       const [pda] = findUserInboxWithMinPda(wallet, minSwapOut, client.program.programId)
       return pda
