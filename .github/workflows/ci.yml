@@ -42,7 +42,7 @@ jobs:
         run: cargo test -p fogo-ntt-relayer --lib
 
   intent-fork:
-    name: intent-fork (audit-carryover source-diff gate)
+    name: intent-fork (audit-carryover gate + fork tests)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -56,6 +56,27 @@ jobs:
         env:
           SKIP_REPRODUCIBLE_BUILD: '1'
         run: scripts/verify-intent-fork.sh
+
+      # The fork is its own workspace (root Cargo.toml `exclude`s it), so the
+      # `rust` job's `cargo test`/`clippy --workspace` never reach it — a
+      # money-path program went untested here while every gate stayed green.
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: programs/intent-transfer
+
+      - name: Fork unit tests
+        working-directory: programs/intent-transfer
+        run: cargo test --lib
+
+      # No `fmt --check`: rustfmt.toml asks for nightly-only options, so on
+      # stable it wants to reflow upstream-identical code — which would only
+      # widen the audit diff the step above pins.
+      - name: Fork clippy
+        working-directory: programs/intent-transfer
+        run: cargo clippy --all-targets -- -D warnings
 
   typescript:
     name: typescript (lint + tests)
