@@ -29,7 +29,7 @@ const BRIDGE_NTT_TOKENS_DISCRIMINATOR = 0x01
 
 /** Pinned by upstream parser `version: 0.2`. */
 const INTENT_VERSION_MAJOR = 0
-const INTENT_VERSION_MINOR = 2
+const INTENT_VERSION_MINOR = 3
 
 const BRIDGE_OUT_MESSAGE_HEADER
   = 'Fogo Bridge\n'
@@ -43,12 +43,12 @@ export interface BuildBridgeOutIntentMessageParams {
   tokenSymbolOrMint: string
   /** Decimal-string amount in human units (e.g. `'12.500000'` for 12.5 USDC). */
   amount: string
-  /** Solana-side recipient — for OnRe, the user-inbox PDA. */
-  recipientAddress: PublicKey
   /** Fee token symbol or mint base58. */
   feeTokenSymbolOrMint: string
   /** Decimal-string fee amount in fee-token human units. */
   feeAmount: string
+  /** Swap floor in destination base units; the recipient PDA derives from it. */
+  minOut: bigint
   /** Monotonic per-(intent_transfer, source-ATA-owner) counter — fetch on-chain. */
   nonce: bigint
 }
@@ -67,7 +67,11 @@ export function buildBridgeOutIntentMessage(
     `to_chain_id: ${params.toChainId}`,
     `token: ${params.tokenSymbolOrMint}`,
     `amount: ${params.amount}`,
-    `recipient_address: ${params.recipientAddress.toBase58()}`,
+    // Base units, not a decimal, and not the address it derives: the on-chain
+    // handler rebuilds `[user_inbox, signer, min_out]` from this number, so it has
+    // to round-trip exactly. Costs 20 B where the address cost 64 — the margin a
+    // Ledger's offchain envelope spends on a tx that clears 1232 B by 17.
+    `min_out: ${params.minOut.toString()}`,
     `fee_token: ${params.feeTokenSymbolOrMint}`,
     `fee_amount: ${params.feeAmount}`,
     `nonce: ${params.nonce.toString()}`,

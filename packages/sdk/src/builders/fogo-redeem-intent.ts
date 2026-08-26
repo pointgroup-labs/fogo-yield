@@ -34,8 +34,8 @@ export interface BuildFogoRedeemIntentParams {
   userWallet: PublicKey
   /** Wallet-adapter `signMessage`; signs the intent bytes verbatim. */
   signMessage: (message: Uint8Array) => Promise<Uint8Array>
-  /** Intent metadata minus the recipient, which we derive from `userWallet`. */
-  intent: Omit<BuildBridgeOutIntentMessageParams, 'recipientAddress'>
+  /** Intent metadata minus the floor, which `minSwapOut` supplies. */
+  intent: Omit<BuildBridgeOutIntentMessageParams, 'minOut'>
   /** Swap floor (output-token atomic units); committed into the recipient PDA. */
   minSwapOut: bigint
   /** `bridge_ntt_tokens` accounts minus the program id (defaulted to the fork). */
@@ -70,7 +70,9 @@ export async function buildFogoRedeemIntentIx(
     params.minSwapOut,
     relayerProgramId,
   )
-  const message = buildBridgeOutIntentMessage({ ...params.intent, recipientAddress })
+  // The message carries the floor; the PDA above is still needed for the account
+  // list, but the signer no longer has to read 44 base58 characters to approve it.
+  const message = buildBridgeOutIntentMessage({ ...params.intent, minOut: params.minSwapOut })
   const signature = await params.signMessage(message)
 
   const verifierIx = buildIntentVerifierIx(params.userWallet, signature, message)
