@@ -1,12 +1,227 @@
++    branch::alt,
 -const BRIDGE_MESSAGE_PREFIX: &str =
 -    "Fogo Bridge Transfer:\nSigning this intent will bridge out the tokens as described below.\n";
 +const BRIDGE_MESSAGE_PREFIX: &str = "Fogo Bridge\n";
++/// Where the bridged value lands.
++///
++/// v0.2 signs the destination address itself. v0.3 signs the swap floor instead
++/// and the handler derives the address from it, because the address *is* a PDA of
++/// `[user_inbox, signer, min_out]` — 44 base58 characters that carry one number
++/// the signer already agreed to. Dropping the derived form takes 44 bytes out of
++/// a transaction that clears the 1232 B packet cap by 17, which is what a
++/// hardware wallet's 20-byte offchain envelope spends.
++#[derive(Debug, PartialEq)]
++pub enum Recipient {
++    /// v0.2: the destination address, verbatim.
++    Address(String),
++    /// v0.3: the swap floor in destination base units; the address derives from it.
++    MinOut(u64),
++}
++
+-    pub recipient_address: String,
++    pub recipient: Recipient,
++    // Both shapes are accepted while clients roll over; 0.2 goes away once the
++    // last one is on 0.3. The two differ only in the recipient line, so `alt`
++    // discriminates on the version it verifies first.
++    alt((message_ntt_v2, message_ntt_v3)).parse(input)
++}
++
++fn message_ntt_v2<I, E>(input: I) -> IResult<I, NttMessage, E>
++where
++    I: Input,
++    I: ParseTo<String>,
++    I: ParseTo<SymbolOrMint>,
++    I: ParseTo<Version>,
++    I: ParseTo<u64>,
++    I: ParseTo<u16>,
++    I: Offset,
++    I: for<'a> Compare<&'a str>,
++    <I as Input>::Item: AsChar,
++    E: ParseError<I>,
++{
+-            recipient_address,
++            recipient: Recipient::Address(recipient_address),
++            fee_amount,
++            fee_symbol_or_mint,
++            nonce,
++        },
++    )
++    .parse(input)
++}
++
++fn message_ntt_v3<I, E>(input: I) -> IResult<I, NttMessage, E>
++where
++    I: Input,
++    I: ParseTo<String>,
++    I: ParseTo<SymbolOrMint>,
++    I: ParseTo<Version>,
++    I: ParseTo<u64>,
++    I: ParseTo<u16>,
++    I: Offset,
++    I: for<'a> Compare<&'a str>,
++    <I as Input>::Item: AsChar,
++    E: ParseError<I>,
++{
++    map(
++        delimited(
++            (tag(BRIDGE_MESSAGE_PREFIX), line_ending),
++            (
++                verify(tag_key_value("version"), |version: &Version| {
++                    version.major == 0 && version.minor == 3
++                }),
++                tag_key_value("from_chain_id"),
++                tag_key_value("to_chain_id"),
++                tag_key_value("token"),
++                tag_key_value("amount"),
++                // Base units, not a decimal: this number is a PDA seed and has to
++                // round-trip exactly. `amount` can be a decimal because the source
++                // mint is an account in the same transaction; the floor is
++                // denominated in the destination token, whose mint is not.
++                tag_key_value("min_out"),
++                tag_key_value("fee_token"),
++                tag_key_value("fee_amount"),
++                tag_key_value("nonce"),
++            ),
++            eof,
++        ),
++        |(
++            version,
++            from_chain_id,
++            to_chain_id,
++            symbol_or_mint,
++            amount,
++            min_out,
++            fee_symbol_or_mint,
++            fee_amount,
++            nonce,
++        )| NttMessage {
++            version,
++            from_chain_id,
++            to_chain_id,
++            symbol_or_mint,
++            amount,
++            recipient: Recipient::MinOut(min_out),
 -            Fogo Bridge Transfer:
 -            Signing this intent will bridge out the tokens as described below.
 +            Fogo Bridge
+-                recipient_address: "0xabc906d4A6074599D5471f04f9d6261030C8debe".to_string(),
++                recipient: Recipient::Address("0xabc906d4A6074599D5471f04f9d6261030C8debe".to_string()),
++    fn test_parse_v3_min_out() {
++        let message = indoc! {"
++            Fogo Bridge
++
++            version: 0.3
++            from_chain_id: fogo-mainnet
++            to_chain_id: solana
++            token: USDC.s
++            amount: 10.000000
++            min_out: 9850000000
++            fee_token: USDC.s
++            fee_amount: 2.000000
++            nonce: 8"};
++
++        assert_eq!(
++            TryInto::<BridgeMessage>::try_into(message.as_bytes().to_vec()).unwrap(),
++            BridgeMessage::Ntt(NttMessage {
++                version: Version { major: 0, minor: 3 },
++                from_chain_id: "fogo-mainnet".to_string(),
++                to_chain_id: "solana".to_string(),
++                symbol_or_mint: SymbolOrMint::Symbol("USDC.s".to_string()),
++                amount: "10.000000".to_string(),
++                recipient: Recipient::MinOut(9_850_000_000),
++                fee_symbol_or_mint: SymbolOrMint::Symbol("USDC.s".to_string()),
++                fee_amount: "2.000000".to_string(),
++                nonce: 8
++            })
++        );
++    }
++
++    /// The whole point of the change: 0.3 is shorter than 0.2 by the margin a
++    /// hardware wallet's offchain envelope needs.
++    #[test]
++    fn test_v3_is_shorter_than_v2_by_the_envelope() {
++        let v2_line = "recipient_address: HaWyUXQZfHmX7ioQqre3cun14exxGcd3MqydjzVKsbyf";
++        let v3_line = "min_out: 9850000000";
++        assert!(v2_line.len() - v3_line.len() >= 20);
++    }
++
++    #[test]
 -            Fogo Bridge Transfer:
 -            Signing this intent will bridge out the tokens as described below.
 +            Fogo Bridge
++        // Only that it is rejected. `alt` over the 0.2/0.3 shapes surfaces the
++        // last branch's error, so pinning the nom code would assert which branch
++        // ran last rather than the property under test.
+-        assert_eq!(
+-            result,
+-            Err(Err::Error(Error {
+-                code: ErrorKind::Eof,
+-                input: "this data should not be here".as_bytes().to_vec()
+-            }))
+-        );
++        assert!(result.is_err());
++    }
++}
++
++#[cfg(test)]
++mod hardware_wallet_envelope {
++    use super::*;
++    use anchor_lang::solana_program::{ed25519_program, instruction::Instruction, pubkey::Pubkey};
++    use solana_intents::Intent;
++
++    /// The exact ed25519 instruction the client emits for a hardware wallet:
++    /// SRFC-3 V0 envelope, with `public_key_offset` pointing at the signer copy
++    /// inside the message instead of carrying a second one.
++    ///
++    /// This needs `solana-intents` >= 0.1.3: 0.1.2 read the public key, signature
++    /// and message *positionally* and ignored the offsets, so dropping the
++    /// duplicate shifted everything and the last read ran off the end.
++    #[test]
++    fn test_srfc3_envelope_with_reused_key() {
++        let signer = [7u8; 32];
++        let msg = b"Fogo Bridge\n\nversion: 0.3\nfrom_chain_id: fogo-mainnet\nto_chain_id: solana\ntoken: USDC.s\namount: 1.000000\nmin_out: 869694908\nfee_token: USDC.s\nfee_amount: 2.000000\nnonce: 1";
++
++        let mut env = Vec::new();
++        env.extend_from_slice(b"\xffsolana offchain");
++        env.push(0); // header V0
++        env.extend_from_slice(&[0u8; 32]); // application domain
++        env.push(1); // LimitedUtf8
++        env.push(1); // one signer
++        env.extend_from_slice(&signer);
++        env.extend_from_slice(&(msg.len() as u16).to_le_bytes());
++        env.extend_from_slice(msg);
++
++        let key_at_in_env = 16 + 1 + 32 + 1 + 1;
++        let sig_off: u16 = 16;
++        let msg_off: u16 = sig_off + 64;
++
++        let mut data = Vec::new();
++        data.push(1); // num_signatures
++        data.push(0); // padding
++        data.extend_from_slice(&sig_off.to_le_bytes());
++        data.extend_from_slice(&u16::MAX.to_le_bytes());
++        data.extend_from_slice(&(msg_off + key_at_in_env as u16).to_le_bytes());
++        data.extend_from_slice(&u16::MAX.to_le_bytes());
++        data.extend_from_slice(&msg_off.to_le_bytes());
++        data.extend_from_slice(&(env.len() as u16).to_le_bytes());
++        data.extend_from_slice(&u16::MAX.to_le_bytes());
++        data.extend_from_slice(&[9u8; 64]); // signature bytes are not checked here
++        data.extend_from_slice(&env);
++
++        let ix = Instruction {
++            program_id: ed25519_program::ID,
++            accounts: vec![],
++            data,
++        };
++        let intent: Intent<BridgeMessage> = ix
++            .try_into()
++            .expect("SRFC-3 envelope with a reused signer key must deserialize");
++        assert_eq!(intent.signer, Pubkey::new_from_array(signer));
++        match intent.message {
++            BridgeMessage::Ntt(m) => assert_eq!(m.recipient, Recipient::MinOut(869_694_908)),
++        }
+-        message::{convert_chain_id_to_wormhole, BridgeMessage, NttMessage, WormholeChainId},
++        message::{convert_chain_id_to_wormhole, BridgeMessage, NttMessage, Recipient, WormholeChainId},
 -        approve, close_account, spl_token::try_ui_amount_into_amount, transfer_checked, Approve,
 -        CloseAccount, Mint, Token, TokenAccount, TransferChecked,
 +        approve, close_account, spl_token::try_ui_amount_into_amount, Approve, CloseAccount, Mint,
@@ -46,6 +261,8 @@
 +        program_signer_seeds: &[&[&[u8]]],
 +            signer_or_session,
 +            program_signer,
+-            recipient_address,
++            recipient,
 -        transfer_checked(
 -            CpiContext::new_with_signer(
 -                token_program.to_account_info(),
@@ -65,8 +282,67 @@
 +            signer_or_session.to_account_info(),
 +            program_signer.to_account_info(),
 +            program_signer_seeds,
+-            recipient_address: parse_recipient_address(&recipient_address)?,
++            recipient_address: resolve_recipient(&recipient, signer)?,
 -        self.verify_and_collect_fee(fee_amount, fee_symbol_or_mint, signer_seeds)
 +        self.verify_and_collect_fee(fee_amount, fee_symbol_or_mint, program_signer_seeds)
++/// Relayer program that owns the user-inbox PDA the floor is committed into.
++/// `onrenRKgX54qtWeK3cuaTBE71xx7dWMXn82ubH61vAp`, seed `user_inbox`; both mirror
++/// `programs/relayer/src/constants.rs`.
++const RELAYER_PROGRAM_ID: Pubkey = pubkey!("onrenRKgX54qtWeK3cuaTBE71xx7dWMXn82ubH61vAp");
++const USER_INBOX_SEED: &[u8] = b"user_inbox";
++
++/// v0.2 signed the destination outright; v0.3 signs the floor and the address
++/// derives from it, so the value can only ever land in the signer's own
++/// min-bearing inbox. Same guarantee `receive` already re-derives, moved to where
++/// the user can read it on a hardware wallet screen.
++fn resolve_recipient(recipient: &Recipient, signer: Pubkey) -> Result<[u8; 32]> {
++    match recipient {
++        Recipient::Address(address_str) => parse_recipient_address(address_str),
++        Recipient::MinOut(min_out) => Ok(Pubkey::find_program_address(
++            &[USER_INBOX_SEED, signer.as_ref(), &min_out.to_le_bytes()],
++            &RELAYER_PROGRAM_ID,
++        )
++        .0
++        .to_bytes()),
++    }
++}
++
++    /// Cross-implementation pin. The client derives the same address with
++    /// `findUserInboxWithMinPda` (TS, `@ignitionfi/fogo-yield-sdk`); these vectors
++    /// were produced there. If the two ever disagree the deposit is swept to an
++    /// address nobody controls, so the agreement is asserted, not assumed.
++    #[test]
++    fn test_min_out_pda_matches_the_client() {
++        for (wallet, min_out, expected) in [
++            (
++                "72dQgPs7YwA3gSYBfFPxGvYAe1bbddbBtnZnjJUuXxGU",
++                9_850_000_000u64,
++                "9Nfph631RZuKd4fMwYyrbQMoNmCP6V5VJAKANEgBmGoq",
++            ),
++            (
++                "72dQgPs7YwA3gSYBfFPxGvYAe1bbddbBtnZnjJUuXxGU",
++                1,
++                "ELyrtR4SpNYFTEvvL2V4ytD2YPzBXwngSs9H2QiKBD37",
++            ),
++            (
++                "11111111111111111111111111111111",
++                0,
++                "7Dyqs6Ets59YjFNmZ9Map6wXHgw34dPvBhvDhGpskDRa",
++            ),
++        ] {
++            let signer: Pubkey = wallet.parse().unwrap();
++            let derived = resolve_recipient(&Recipient::MinOut(min_out), signer).unwrap();
++            assert_eq!(
++                Pubkey::new_from_array(derived).to_string(),
++                expected,
++                "min_out {min_out} under {wallet}"
++            );
++        }
++    }
++
++    use super::*;
++
 +pub mod update_fee_config;
 +use crate::config::access_control::*;
 +use crate::config::state::fee_config::{FeeConfig, FEE_CONFIG_SEED};
