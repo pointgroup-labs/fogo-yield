@@ -84,15 +84,60 @@ export function buildBridgeOutIntentMessage(
  * precede `bridge_ntt_tokens` in the same tx; the handler reads
  * `Sysvar1nstructions` to recover and verify the signature.
  */
+const ED25519_HEADER_LEN = 16
+const CURRENT_IX = 0xFFFF
+
+/** Byte offset of `needle` inside `haystack`, or -1. */
+function indexOfBytes(haystack: Uint8Array, needle: Uint8Array): number {
+  outer: for (let i = 0; i + needle.length <= haystack.length; i++) {
+    for (let j = 0; j < needle.length; j++) {
+      if (haystack[i + j] !== needle[j]) {
+        continue outer
+      }
+    }
+    return i
+  }
+  return -1
+}
+
 export function buildIntentVerifierIx(
   walletPublicKey: PublicKey,
   signature: Uint8Array,
   message: Uint8Array,
 ): TransactionInstruction {
-  return Ed25519Program.createInstructionWithPublicKey({
-    publicKey: walletPublicKey.toBytes(),
-    signature,
-    message,
+  const publicKey = walletPublicKey.toBytes()
+  const embeddedAt = indexOfBytes(message, publicKey)
+  if (embeddedAt === -1) {
+    return Ed25519Program.createInstructionWithPublicKey({ publicKey, signature, message })
+  }
+
+  // A hardware wallet signs the SRFC-3 offchain envelope, which already carries
+  // the signer's key — so `createInstructionWithPublicKey` would write a second
+  // copy. The precompile and the on-chain reader both take the key by offset
+  // (`solana-intents` does `slice_at(.., header.public_key_offset, 32)`, and the
+  // header check copies the offsets rather than pinning them), so pointing at
+  // the copy inside the message is equivalent and 32 bytes lighter — the margin
+  // that keeps an 85-byte envelope inside the 1232 B packet cap.
+  const signatureOffset = ED25519_HEADER_LEN
+  const messageOffset = signatureOffset + signature.length
+  const data = new Uint8Array(messageOffset + message.length)
+  const view = new DataView(data.buffer)
+  data[0] = 1 // one signature
+  data[1] = 0 // padding
+  view.setUint16(2, signatureOffset, true)
+  view.setUint16(4, CURRENT_IX, true)
+  view.setUint16(6, messageOffset + embeddedAt, true)
+  view.setUint16(8, CURRENT_IX, true)
+  view.setUint16(10, messageOffset, true)
+  view.setUint16(12, message.length, true)
+  view.setUint16(14, CURRENT_IX, true)
+  data.set(signature, signatureOffset)
+  data.set(message, messageOffset)
+
+  return new TransactionInstruction({
+    keys: [],
+    programId: Ed25519Program.programId,
+    data: Buffer.from(data),
   })
 }
 

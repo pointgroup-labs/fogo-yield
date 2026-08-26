@@ -1,7 +1,7 @@
 {
   "name": "@ignitionfi/fogo-yield-sdk",
   "type": "module",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Fogo Yield SDK",
   "contributors": [
     "Ignition Team (https://ignitionfi.xyz/)"
