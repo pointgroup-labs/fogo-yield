@@ -89,15 +89,7 @@ const CURRENT_IX = 0xFFFF
 
 /** Byte offset of `needle` inside `haystack`, or -1. */
 function indexOfBytes(haystack: Uint8Array, needle: Uint8Array): number {
-  outer: for (let i = 0; i + needle.length <= haystack.length; i++) {
-    for (let j = 0; j < needle.length; j++) {
-      if (haystack[i + j] !== needle[j]) {
-        continue outer
-      }
-    }
-    return i
-  }
-  return -1
+  return Buffer.from(haystack).indexOf(Buffer.from(needle))
 }
 
 export function buildIntentVerifierIx(
