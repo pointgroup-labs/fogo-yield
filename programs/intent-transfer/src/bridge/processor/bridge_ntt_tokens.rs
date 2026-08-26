@@ -2,7 +2,7 @@ use crate::{
     bridge::{
         be::{U16BE, U64BE},
         cpi::{self, ntt_with_executor::RelayNttMessageArgs},
-        message::{convert_chain_id_to_wormhole, BridgeMessage, NttMessage, WormholeChainId},
+        message::{convert_chain_id_to_wormhole, BridgeMessage, NttMessage, Recipient, WormholeChainId},
     },
     config::state::{
         fee_config::{FeeConfig, FEE_CONFIG_SEED},
@@ -295,7 +295,7 @@ impl<'info> BridgeNttTokens<'info> {
             symbol_or_mint,
             amount: ui_amount,
             to_chain_id,
-            recipient_address,
+            recipient,
             nonce: new_nonce,
             fee_amount,
             fee_symbol_or_mint,
@@ -332,7 +332,7 @@ impl<'info> BridgeNttTokens<'info> {
             recipient_chain: cpi::ntt_manager::ChainId {
                 id: to_chain_id_wormhole.into(),
             },
-            recipient_address: parse_recipient_address(&recipient_address)?,
+            recipient_address: resolve_recipient(&recipient, signer)?,
             should_queue: false,
         };
 
@@ -440,6 +440,28 @@ impl<'info> BridgeNttTokens<'info> {
 
 /// Parses a recipient address string into a 32-byte array.
 /// Supports Solana Pubkey (base58) and hex-encoded addresses (e.g., EVM, Sui).
+/// Relayer program that owns the user-inbox PDA the floor is committed into.
+/// `onrenRKgX54qtWeK3cuaTBE71xx7dWMXn82ubH61vAp`, seed `user_inbox`; both mirror
+/// `programs/relayer/src/constants.rs`.
+const RELAYER_PROGRAM_ID: Pubkey = pubkey!("onrenRKgX54qtWeK3cuaTBE71xx7dWMXn82ubH61vAp");
+const USER_INBOX_SEED: &[u8] = b"user_inbox";
+
+/// v0.2 signed the destination outright; v0.3 signs the floor and the address
+/// derives from it, so the value can only ever land in the signer's own
+/// min-bearing inbox. Same guarantee `receive` already re-derives, moved to where
+/// the user can read it on a hardware wallet screen.
+fn resolve_recipient(recipient: &Recipient, signer: Pubkey) -> Result<[u8; 32]> {
+    match recipient {
+        Recipient::Address(address_str) => parse_recipient_address(address_str),
+        Recipient::MinOut(min_out) => Ok(Pubkey::find_program_address(
+            &[USER_INBOX_SEED, signer.as_ref(), &min_out.to_le_bytes()],
+            &RELAYER_PROGRAM_ID,
+        )
+        .0
+        .to_bytes()),
+    }
+}
+
 fn parse_recipient_address(address_str: &str) -> Result<[u8; 32]> {
     // try to parse as Solana Pubkey first (base58 encoded, 32 bytes)
     if let Ok(pubkey) = address_str.parse::<Pubkey>() {

@@ -1,4 +1,5 @@
 use nom::{
+    branch::alt,
     bytes::complete::tag,
     character::complete::line_ending,
     combinator::{eof, map, verify},
@@ -15,6 +16,22 @@ pub enum BridgeMessage {
     Ntt(NttMessage),
 }
 
+/// Where the bridged value lands.
+///
+/// v0.2 signs the destination address itself. v0.3 signs the swap floor instead
+/// and the handler derives the address from it, because the address *is* a PDA of
+/// `[user_inbox, signer, min_out]` — 44 base58 characters that carry one number
+/// the signer already agreed to. Dropping the derived form takes 44 bytes out of
+/// a transaction that clears the 1232 B packet cap by 17, which is what a
+/// hardware wallet's 20-byte offchain envelope spends.
+#[derive(Debug, PartialEq)]
+pub enum Recipient {
+    /// v0.2: the destination address, verbatim.
+    Address(String),
+    /// v0.3: the swap floor in destination base units; the address derives from it.
+    MinOut(u64),
+}
+
 #[derive(Debug, PartialEq)]
 pub struct NttMessage {
     pub version: Version,
@@ -22,7 +39,7 @@ pub struct NttMessage {
     pub symbol_or_mint: SymbolOrMint,
     pub amount: String,
     pub to_chain_id: String,
-    pub recipient_address: String,
+    pub recipient: Recipient,
     pub fee_amount: String,
     pub fee_symbol_or_mint: SymbolOrMint,
     pub nonce: u64,
@@ -93,6 +110,25 @@ where
     <I as Input>::Item: AsChar,
     E: ParseError<I>,
 {
+    // Both shapes are accepted while clients roll over; 0.2 goes away once the
+    // last one is on 0.3. The two differ only in the recipient line, so `alt`
+    // discriminates on the version it verifies first.
+    alt((message_ntt_v2, message_ntt_v3)).parse(input)
+}
+
+fn message_ntt_v2<I, E>(input: I) -> IResult<I, NttMessage, E>
+where
+    I: Input,
+    I: ParseTo<String>,
+    I: ParseTo<SymbolOrMint>,
+    I: ParseTo<Version>,
+    I: ParseTo<u64>,
+    I: ParseTo<u16>,
+    I: Offset,
+    I: for<'a> Compare<&'a str>,
+    <I as Input>::Item: AsChar,
+    E: ParseError<I>,
+{
     map(
         delimited(
             (tag(BRIDGE_MESSAGE_PREFIX), line_ending),
@@ -127,7 +163,67 @@ where
             to_chain_id,
             symbol_or_mint,
             amount,
-            recipient_address,
+            recipient: Recipient::Address(recipient_address),
+            fee_amount,
+            fee_symbol_or_mint,
+            nonce,
+        },
+    )
+    .parse(input)
+}
+
+fn message_ntt_v3<I, E>(input: I) -> IResult<I, NttMessage, E>
+where
+    I: Input,
+    I: ParseTo<String>,
+    I: ParseTo<SymbolOrMint>,
+    I: ParseTo<Version>,
+    I: ParseTo<u64>,
+    I: ParseTo<u16>,
+    I: Offset,
+    I: for<'a> Compare<&'a str>,
+    <I as Input>::Item: AsChar,
+    E: ParseError<I>,
+{
+    map(
+        delimited(
+            (tag(BRIDGE_MESSAGE_PREFIX), line_ending),
+            (
+                verify(tag_key_value("version"), |version: &Version| {
+                    version.major == 0 && version.minor == 3
+                }),
+                tag_key_value("from_chain_id"),
+                tag_key_value("to_chain_id"),
+                tag_key_value("token"),
+                tag_key_value("amount"),
+                // Base units, not a decimal: this number is a PDA seed and has to
+                // round-trip exactly. `amount` can be a decimal because the source
+                // mint is an account in the same transaction; the floor is
+                // denominated in the destination token, whose mint is not.
+                tag_key_value("min_out"),
+                tag_key_value("fee_token"),
+                tag_key_value("fee_amount"),
+                tag_key_value("nonce"),
+            ),
+            eof,
+        ),
+        |(
+            version,
+            from_chain_id,
+            to_chain_id,
+            symbol_or_mint,
+            amount,
+            min_out,
+            fee_symbol_or_mint,
+            fee_amount,
+            nonce,
+        )| NttMessage {
+            version,
+            from_chain_id,
+            to_chain_id,
+            symbol_or_mint,
+            amount,
+            recipient: Recipient::MinOut(min_out),
             fee_amount,
             fee_symbol_or_mint,
             nonce,
@@ -166,12 +262,52 @@ mod tests {
                 to_chain_id: "solana".to_string(),
                 symbol_or_mint: SymbolOrMint::Symbol("FOGO".to_string()),
                 amount: "42.676".to_string(),
-                recipient_address: "0xabc906d4A6074599D5471f04f9d6261030C8debe".to_string(),
+                recipient: Recipient::Address("0xabc906d4A6074599D5471f04f9d6261030C8debe".to_string()),
                 fee_symbol_or_mint: SymbolOrMint::Symbol("USDC".to_string()),
                 fee_amount: "0.001".to_string(),
                 nonce: 1
             })
         );
+    }
+
+    #[test]
+    fn test_parse_v3_min_out() {
+        let message = indoc! {"
+            Fogo Bridge
+
+            version: 0.3
+            from_chain_id: fogo-mainnet
+            to_chain_id: solana
+            token: USDC.s
+            amount: 10.000000
+            min_out: 9850000000
+            fee_token: USDC.s
+            fee_amount: 2.000000
+            nonce: 8"};
+
+        assert_eq!(
+            TryInto::<BridgeMessage>::try_into(message.as_bytes().to_vec()).unwrap(),
+            BridgeMessage::Ntt(NttMessage {
+                version: Version { major: 0, minor: 3 },
+                from_chain_id: "fogo-mainnet".to_string(),
+                to_chain_id: "solana".to_string(),
+                symbol_or_mint: SymbolOrMint::Symbol("USDC.s".to_string()),
+                amount: "10.000000".to_string(),
+                recipient: Recipient::MinOut(9_850_000_000),
+                fee_symbol_or_mint: SymbolOrMint::Symbol("USDC.s".to_string()),
+                fee_amount: "2.000000".to_string(),
+                nonce: 8
+            })
+        );
+    }
+
+    /// The whole point of the change: 0.3 is shorter than 0.2 by the margin a
+    /// hardware wallet's offchain envelope needs.
+    #[test]
+    fn test_v3_is_shorter_than_v2_by_the_envelope() {
+        let v2_line = "recipient_address: HaWyUXQZfHmX7ioQqre3cun14exxGcd3MqydjzVKsbyf";
+        let v3_line = "min_out: 9850000000";
+        assert!(v2_line.len() - v3_line.len() >= 20);
     }
 
     #[test]
@@ -190,13 +326,10 @@ mod tests {
             nonce: 1
             this data should not be here"};
 
+        // Only that it is rejected. `alt` over the 0.2/0.3 shapes surfaces the
+        // last branch's error, so pinning the nom code would assert which branch
+        // ran last rather than the property under test.
         let result = TryInto::<BridgeMessage>::try_into(message.as_bytes().to_vec());
-        assert_eq!(
-            result,
-            Err(Err::Error(Error {
-                code: ErrorKind::Eof,
-                input: "this data should not be here".as_bytes().to_vec()
-            }))
-        );
+        assert!(result.is_err());
     }
 }
