@@ -700,6 +700,41 @@ fn compute_exec_amount(
 mod tests {
     use super::*;
 
+    /// Cross-implementation pin. The client derives the same address with
+    /// `findUserInboxWithMinPda` (TS, `@ignitionfi/fogo-yield-sdk`); these vectors
+    /// were produced there. If the two ever disagree the deposit is swept to an
+    /// address nobody controls, so the agreement is asserted, not assumed.
+    #[test]
+    fn test_min_out_pda_matches_the_client() {
+        for (wallet, min_out, expected) in [
+            (
+                "72dQgPs7YwA3gSYBfFPxGvYAe1bbddbBtnZnjJUuXxGU",
+                9_850_000_000u64,
+                "9Nfph631RZuKd4fMwYyrbQMoNmCP6V5VJAKANEgBmGoq",
+            ),
+            (
+                "72dQgPs7YwA3gSYBfFPxGvYAe1bbddbBtnZnjJUuXxGU",
+                1,
+                "ELyrtR4SpNYFTEvvL2V4ytD2YPzBXwngSs9H2QiKBD37",
+            ),
+            (
+                "11111111111111111111111111111111",
+                0,
+                "7Dyqs6Ets59YjFNmZ9Map6wXHgw34dPvBhvDhGpskDRa",
+            ),
+        ] {
+            let signer: Pubkey = wallet.parse().unwrap();
+            let derived = resolve_recipient(&Recipient::MinOut(min_out), signer).unwrap();
+            assert_eq!(
+                Pubkey::new_from_array(derived).to_string(),
+                expected,
+                "min_out {min_out} under {wallet}"
+            );
+        }
+    }
+
+    use super::*;
+
     #[test]
     fn test_compute_exec_amount_solana() {
         let quote = SignedQuote {
