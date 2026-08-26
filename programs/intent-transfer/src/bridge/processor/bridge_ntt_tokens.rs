@@ -733,8 +733,6 @@ mod tests {
         }
     }
 
-    use super::*;
-
     #[test]
     fn test_compute_exec_amount_solana() {
         let quote = SignedQuote {

@@ -236,7 +236,6 @@ where
 mod tests {
     use super::*;
     use indoc::indoc;
-    use nom::error::ErrorKind;
 
     #[test]
     fn test_parse() {
