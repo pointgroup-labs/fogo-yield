@@ -16,6 +16,7 @@ import {
   MEMO_PROGRAM_ID,
   ONRE_INTENT_PROGRAM_ID,
   parseMinSwapOutMemo,
+  parseSignedMinOuts,
 } from '@ignitionfi/fogo-yield-sdk'
 import { Ed25519Program, Keypair, PublicKey } from '@solana/web3.js'
 import { describe, expect, it } from 'vitest'
@@ -96,7 +97,7 @@ describe('buildFogoRedeemIntentIx', () => {
     expect(ONRE_INTENT_PROGRAM_ID.equals(INTENT_TRANSFER_PROGRAM_ID)).toBe(false)
   })
 
-  it('commits the floor via the min-bearing inbox PDA in a v0.2 message', async () => {
+  it('signs the floor itself in a v0.3 message, and derives the inbox from it', async () => {
     const [expectedInbox] = findUserInboxWithMinPda(userWallet, MIN_DESTINATION_AMOUNT)
     const { recipientAddress, message } = await buildFogoRedeemIntentIx({
       userWallet,
@@ -107,9 +108,14 @@ describe('buildFogoRedeemIntentIx', () => {
     })
     expect(recipientAddress.equals(expectedInbox)).toBe(true)
     const text = new TextDecoder().decode(message)
-    expect(text).toContain('version: 0.2')
-    expect(text).toContain(`recipient_address: ${expectedInbox.toBase58()}`)
+    expect(text).toContain('version: 0.3')
     expect(text).not.toContain('min_destination_amount')
+    // The number the user signs is the seed the program re-derives the
+    // recipient from, so reading it back has to reproduce the same PDA.
+    const [signedFloor] = parseSignedMinOuts(message)
+    expect(signedFloor).toBe(MIN_DESTINATION_AMOUNT)
+    expect(findUserInboxWithMinPda(userWallet, signedFloor)[0].equals(recipientAddress)).toBe(true)
+    expect(text).not.toContain('recipient_address:')
   })
 
   it('orders ixs [memo, verifier, bridge] with the verifier immediately before the bridge', async () => {
